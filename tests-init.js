@@ -9,18 +9,18 @@ function tests() {
     return simulateColibri(x).state.totalSwapOutGB === 0;
   });
   t('Lower swap trigger starts no later', () => {
-    const base = { ...c, host: 72, context: 20000, output: 16, dcache: 30, minDCache: 30, expertBacking: 'anonymous', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, swap: 0.9, hard: 0.99, swapCapacityGB: 128 } };
+    const base = { ...c, host: 72, context: 20000, output: 16, dcache: 30, minDCache: 30, expertBacking: 'anonymous', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, soft: 0.6, compress: 0.65, swap: 0.9, hard: 0.99, swapCapacityGB: 128 } };
     const a = simulateColibri(base), b = simulateColibri({ ...base, mem: { ...base.mem, swap: 0.7 } });
     const ta = a.state.swapStartToken ?? Infinity, tb = b.state.swapStartToken ?? Infinity;
     return tb <= ta;
   });
   t('File-backed reclaim avoids expert swap writes', () => {
-    const x = { ...c, host: 64, context: 20000, output: 16, dcache: 30, minDCache: 0, expertBacking: 'file', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, soft: 0.65, swap: 0.8, hard: 0.99 } };
+    const x = { ...c, host: 64, context: 20000, output: 16, dcache: 30, minDCache: 0, expertBacking: 'file', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, soft: 0.65, compress: 0.7, swap: 0.8, hard: 0.99 } };
     const r = simulateColibri(x);
     return !r.error && r.state.totalExpertReclaimedGB > 0 && r.state.swapExpertGB === 0;
   });
   t('Anonymous pressure can create swap traffic', () => {
-    const x = { ...c, host: 72, context: 20000, output: 16, dcache: 30, minDCache: 30, expertBacking: 'anonymous', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, swap: 0.75, hard: 0.99, swapCapacityGB: 128 } };
+    const x = { ...c, host: 72, context: 20000, output: 16, dcache: 30, minDCache: 30, expertBacking: 'anonymous', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, soft: 0.65, compress: 0.7, swap: 0.75, hard: 0.99, swapCapacityGB: 128 } };
     const r = simulateColibri(x);
     if (!(r.state.totalSwapOutGB > 0)) throw new Error(`swap=${r.state.totalSwapOutGB} peak=${r.state.peakPhysicalGB} policy=${r.c.mem.policy}`);
     return true;
@@ -30,27 +30,27 @@ function tests() {
     return r.state.peakDramGBs <= 20.001;
   });
   t('More memory delays or removes swap', () => {
-    const x = { ...c, host: 72, context: 20000, output: 16, dcache: 30, minDCache: 30, expertBacking: 'anonymous', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, swap: 0.75, hard: 0.99, swapCapacityGB: 128 } };
+    const x = { ...c, host: 72, context: 20000, output: 16, dcache: 30, minDCache: 30, expertBacking: 'anonymous', mem: { ...c.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, soft: 0.65, compress: 0.7, swap: 0.75, hard: 0.99, swapCapacityGB: 128 } };
     const a = simulateColibri(x), b = simulateColibri({ ...x, host: 128 });
     return (b.state.swapStartToken ?? Infinity) >= (a.state.swapStartToken ?? Infinity);
   });
   t('Pinned Experts create no Expert storage reads', () => {
-    const x = { ...c, prompt: 1, output: 2, host: 512, pinned: 357, dcache: 0, vcache: 0, page: 0, odirect: true };
+    const x = { ...c, prompt: 1, output: 2, host: 512, pinned: 400, dcache: 0, minDCache: 0, vcache: 0, page: 0, odirect: true };
     const r = simulateColibri(x);
     return !r.error && !(r.storageByKind['expert-demand-read'] || 0) && !(r.storageByKind['expert-prefetch-read'] || 0);
   });
   t('Queue depth is applied exactly once', () => {
-    const x = { ...c, prompt: 0, output: 1, layers: 1, experts: 256, active: 8, pinned: 0, dcache: 0, vcache: 0, pf: false, qd: 2, ssdBW: 1000000, lat: 10000, resident: 0, kvKB: 0, attn: 0, ems: 0, par: 8, dramBW: 1000000 };
+    const x = { ...c, prompt: 0, output: 1, layers: 1, experts: 256, active: 8, pinned: 0, dcache: 0, minDCache: 0, vcache: 0, pf: false, qd: 2, ssdBW: 1000000, lat: 10000, resident: 0, kvKB: 0, attn: 0, ems: 0, par: 8, dramBW: 1000000 };
     const r = simulateColibri(x);
     return r.ssdBusy >= 39.9 && r.ssdBusy <= 40.1;
   });
   t('Prefill warms the first decode Expert', () => {
-    const x = { ...c, prompt: 16, output: 1, layers: 1, experts: 1, active: 1, pinned: 0, dcache: 0.02, vcache: 0, pf: false, attn: 0, ems: 0, dramBW: 1000000 };
+    const x = { ...c, prompt: 16, output: 1, layers: 1, experts: 1, active: 1, pinned: 0, dcache: 0.02, minDCache: 0, vcache: 0, pf: false, attn: 0, ems: 0, dramBW: 1000000 };
     const r = simulateColibri(x);
     return !r.error && !(r.storageByKind['expert-demand-read'] || 0) && r.tot.d === 1 && r.prefillBreakdown.storageGB > 0;
   });
   t('Prefill compute changes TTFT', () => {
-    const x = { ...c, prompt: 128, output: 1, arch: 'unified', host: 512, pinned: 357, dcache: 0, vcache: 0, pf: false, attn: 5, dramBW: 1000000 };
+    const x = { ...c, prompt: 128, output: 1, arch: 'unified', host: 512, pinned: 357, dcache: 0, minDCache: 0, vcache: 0, pf: false, attn: 5, dramBW: 1000000 };
     const fast = simulateColibri(x), slow = simulateColibri({ ...x, attn: 20 });
     return !fast.error && !slow.error && slow.ttft - fast.ttft > 300;
   });
@@ -68,7 +68,7 @@ function tests() {
   t('AFM 33rd token is first boundary', () => { const r = simulateAFM({ ...a, output: 33 }); return r.switches.length === 1 && r.tokens[32].boundary; });
   t('AFM active Expert weights remain pinned', () => { const r = simulateAFM({ ...a, host: 32, mem: { ...a.mem, backgroundGB: 0 } }); return !r.error && r.tokens.every(tk => tk.memory.expertCacheGB === d.activeGB); });
   t('KV thrash can produce swap-in and swap-out', () => {
-    const x = { ...a, host: 32, context: 50000, output: 8, mem: { ...a.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, swap: 0.75, hard: 0.99, swapCapacityGB: 128, kvTouchFraction: 1 } };
+    const x = { ...a, host: 32, context: 50000, output: 8, mem: { ...a.mem, backgroundGB: 4, minHeadroomGB: 0, compressionEnabled: false, soft: 0.65, compress: 0.7, swap: 0.75, hard: 0.99, swapCapacityGB: 128, kvTouchFraction: 1 } };
     const r = simulateAFM(x);
     if (r.error || !(r.state.totalSwapOutGB > 0 && r.state.totalSwapInGB > 0)) throw new Error(`error=${r.error || 'none'} in=${r.state?.totalSwapInGB} out=${r.state?.totalSwapOutGB} peak=${r.state?.peakPhysicalGB}`);
     return true;
@@ -95,6 +95,23 @@ function syncPlacement() {
   $('vcache').disabled = auto;
 }
 
+function initializeAccessibility() {
+  document.querySelectorAll('.f').forEach(row => {
+    const label = row.querySelector('label');
+    const control = row.querySelector('input, select, textarea');
+    if (label && control?.id) label.htmlFor = control.id;
+  });
+  const chart = $('chart');
+  const memoryChart = $('memoryChart');
+  chart.setAttribute('role', 'img');
+  chart.setAttribute('aria-label', 'Token performance trace');
+  memoryChart.setAttribute('role', 'img');
+  memoryChart.setAttribute('aria-label', 'Memory and swap trace');
+  $('warn').setAttribute('role', 'alert');
+  $('status').setAttribute('aria-live', 'polite');
+  $('tests').setAttribute('aria-live', 'polite');
+}
+
 $('mode').onchange = () => syncMode(true);
 $('placement').onchange = () => { syncPlacement(); const r = simulate(); render(r); };
 $('afmProfile').onchange = () => { if ($('afmProfile').value !== 'custom') $('afmOverlap').value = $('afmProfile').value; };
@@ -104,3 +121,5 @@ $('pause').onclick = pause;
 $('test').onclick = tests;
 $('speed').onchange = () => { if (anim.timer && !anim.paused) { const sim = Math.max(0, anim.due - performance.now()) * anim.oldSpeed; schedule(anim.action, sim); } };
 syncMode(false);
+initializeReproControls();
+initializeAccessibility();

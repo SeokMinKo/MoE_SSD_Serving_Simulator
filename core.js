@@ -1,10 +1,11 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const val = (id, d = 0) => {
+const val = id => {
   const e = $(id);
-  const v = e ? Number(e.value) : NaN;
-  return Number.isFinite(v) ? v : d;
+  if (!e || typeof e.value !== 'string' || e.value.trim() === '') return NaN;
+  const v = Number(e.value);
+  return Number.isFinite(v) ? v : NaN;
 };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = (v, d = 2) => Number.isFinite(v) ? v.toLocaleString('ko-KR', { maximumFractionDigits: d }) : '—';

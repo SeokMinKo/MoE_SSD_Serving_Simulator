@@ -22,6 +22,8 @@ function createMemoryState(c, mode, initialKvGB, deviceKvCap = 0) {
     peakSwapGB: 0,
     peakDramGBs: 0,
     peakDeviceGB: 0,
+    pendingSwapOutGB: 0,
+    pendingSwapOutJobs: [],
     totalDramTrafficGB: 0,
     totalDramStallMs: 0,
     oom: false,
@@ -66,14 +68,14 @@ function colibriDynamic(c, state, V, D, P, unitGB) {
   const expertGB = expertEntries * unitGB;
   const pageGB = totalEntries(P) * unitGB;
   const fixedGB = c.resident + c.pinned + c.mem.osReservedGB + c.mem.backgroundGB + 3 + (c.arch === 'unified' ? 0.8 : 0);
-  const physicalGB = fixedGB + expertGB + pageGB + kvPhysicalGB(state, c);
+  const physicalGB = fixedGB + expertGB + pageGB + kvPhysicalGB(state, c) + state.pendingSwapOutGB;
   const deviceGB = c.arch === 'discrete' ? totalEntries(V) * unitGB + state.deviceKVGB + 0.8 : 0;
   return { fixedGB, expertGB, pageGB, kvGB: kvPhysicalGB(state, c), physicalGB, deviceGB };
 }
 
 function afmDynamic(c, d, state) {
   const fixedGB = c.commonGB + d.sharedGB + d.routedGB + (c.doubleBuffer ? d.routedGB : 0) + c.mem.osReservedGB + c.mem.backgroundGB + 3 + 0.8;
-  const physicalGB = fixedGB + kvPhysicalGB(state, c);
+  const physicalGB = fixedGB + kvPhysicalGB(state, c) + state.pendingSwapOutGB;
   return { fixedGB, expertGB: d.sharedGB + d.routedGB, pageGB: 0, kvGB: kvPhysicalGB(state, c), physicalGB, deviceGB: 0 };
 }
 
@@ -85,6 +87,40 @@ function growKV(c, state, tokenGB) {
   } else {
     state.kvUncompressedGB += tokenGB;
   }
+}
+
+function completePendingSwapOuts(state, now) {
+  const remaining = [];
+  let completedGB = 0;
+  for (const job of state.pendingSwapOutJobs) {
+    if (job.end <= now + EPS) completedGB += job.gb;
+    else remaining.push(job);
+  }
+  state.pendingSwapOutJobs = remaining;
+  state.pendingSwapOutGB = Math.max(0, state.pendingSwapOutGB - completedGB);
+  return completedGB;
+}
+
+function scheduleSwapOut(c, state, pressure, storage, now, dynamic) {
+  if (pressure.swapOutGB <= EPS) return { blockedUntil: now, job: null };
+  const job = storage.reserveGB(pressure.swapOutGB, now, 'swap-out-write', 1, c.mem.swapWriteRatio);
+  state.pendingSwapOutJobs.push({ end: job.end, gb: pressure.swapOutGB });
+  state.pendingSwapOutGB += pressure.swapOutGB;
+  pressure.dyn = dynamic();
+
+  let blockedUntil = now;
+  const hard = thresholdGB(c, c.mem.hard);
+  if (pressure.dyn.physicalGB > hard + EPS) {
+    blockedUntil = job.end;
+    completePendingSwapOuts(state, blockedUntil);
+    pressure.dyn = dynamic();
+    if (pressure.dyn.physicalGB > hard + EPS) {
+      pressure.state = 'OOM';
+      pressure.oom = true;
+      state.oom = true;
+    }
+  }
+  return { blockedUntil, job };
 }
 
 function touchMemoryAtTokenStart(c, state, storage, now) {
@@ -331,6 +367,7 @@ function memorySnapshot(c, state, dyn, pressure, token, extra = {}) {
     pressureState: pressure.state,
     swapInGB: extra.swapInGB || 0,
     swapOutGB: pressure.swapOutGB || 0,
+    pendingSwapOutGB: state.pendingSwapOutGB,
     pageReclaimGB: pressure.pageReclaimGB || 0,
     expertReclaimGB: pressure.expertReclaimGB || 0,
     compressionTrafficGB: (extra.compressionTrafficGB || 0) + (pressure.compressionTrafficGB || 0),

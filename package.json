@@ -1,0 +1,14 @@
+{
+  "name": "moe-ssd-serving-simulator",
+  "version": "1.5.0",
+  "private": true,
+  "description": "Dependency-free MoE SSD serving sensitivity simulator",
+  "scripts": {
+    "test": "node --test tests/*.cjs",
+    "test:simulator": "node --test tests/simulator.test.cjs",
+    "check": "node tools/check-source.cjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,41 +1,46 @@
+function intVal(id, fallback) {
+  const value = val(id, fallback);
+  return Number.isSafeInteger(value) ? value : NaN;
+}
+
 function readMemoryPolicy() {
-  const soft = clamp(val('softPct', 80) / 100, 0.01, 1);
-  const compress = clamp(Math.max(soft, val('compressPct', 85) / 100), soft, 1);
-  const swap = clamp(Math.max(compress, val('swapPct', 90) / 100), compress, 1);
-  const hard = clamp(Math.max(swap, val('hardPct', 97) / 100), swap, 1);
+  const soft = val('softPct', 80) / 100;
+  const compress = val('compressPct', 85) / 100;
+  const swap = val('swapPct', 90) / 100;
+  const hard = val('hardPct', 97) / 100;
   return {
     policy: $('memPolicy').value,
-    backgroundGB: Math.max(0, val('backgroundGB', 8)),
-    osReservedGB: Math.max(0, val('osReservedGB', 8)),
-    minHeadroomGB: Math.max(0, val('minHeadroomGB', 8)),
+    backgroundGB: val('backgroundGB', 8),
+    osReservedGB: val('osReservedGB', 8),
+    minHeadroomGB: val('minHeadroomGB', 8),
     soft,
     compress,
     swap,
     hard,
     compressionEnabled: $('compressionEnabled').checked,
-    compressionRatio: Math.max(1, val('compressionRatio', 1.6)),
-    compressionBW: Math.max(0.1, val('compressionBW', 25)),
+    compressionRatio: val('compressionRatio', 1.6),
+    compressionBW: val('compressionBW', 25),
     swapEnabled: $('swapEnabled').checked,
-    swapCapacityGB: Math.max(0, val('swapCapacityGB', 32)),
-    swapWriteRatio: Math.max(0.05, val('swapWriteRatio', 0.7)),
-    kvTouchFraction: clamp(val('kvTouchFraction', 1), 0, 1)
+    swapCapacityGB: val('swapCapacityGB', 32),
+    swapWriteRatio: val('swapWriteRatio', 0.7),
+    kvTouchFraction: val('kvTouchFraction', 1)
   };
 }
 
 function readCommon() {
   return {
     mode: $('mode').value,
-    prompt: Math.max(1, val('prompt', 128) | 0),
-    output: clamp(val('output', 64) | 0, 1, 512),
-    context: Math.max(1, val('context', 4096) | 0),
-    conc: Math.max(1, val('conc', 1) | 0),
+    prompt: intVal('prompt', 128),
+    output: intVal('output', 64),
+    context: intVal('context', 4096),
+    conc: intVal('conc', 1),
     arch: $('arch').value,
-    host: Math.max(1, val('host', 128)),
-    vram: Math.max(0, val('vram', 8)),
-    dramBW: Math.max(0.1, val('dramBW', 273)),
-    pcieBW: Math.max(0.1, val('pcieBW', 24)),
-    ssdBW: Math.max(0.05, val('ssdBW', 9.2)),
-    lat: Math.max(0, val('lat', 120)),
+    host: val('host', 128),
+    vram: val('vram', 8),
+    dramBW: val('dramBW', 273),
+    pcieBW: val('pcieBW', 24),
+    ssdBW: val('ssdBW', 9.2),
+    lat: val('lat', 120),
     seed: 260730,
     mem: readMemoryPolicy()
   };
@@ -122,77 +127,75 @@ function readColibri() {
     ...b,
     cold: $('cold').checked,
     placement: $('placement').value,
-    layers: val('layers', 75) | 0,
-    experts: val('experts', 256) | 0,
-    active: val('active', 8) | 0,
-    esize: Math.max(0.01, val('esize', 19)),
-    resident: Math.max(0, val('resident', 9.9)),
-    kvKB: Math.max(0, val('kv', 182)),
-    vcache: Math.max(0, val('vcache', 4)),
-    dcache: Math.max(0, val('dcache', 30)),
-    minDCache: Math.max(0, val('minDCache', 4)),
+    layers: intVal('layers', 75),
+    experts: intVal('experts', 256),
+    active: intVal('active', 8),
+    esize: val('esize', 19),
+    resident: val('resident', 9.9),
+    kvKB: val('kv', 182),
+    vcache: val('vcache', 4),
+    dcache: val('dcache', 30),
+    minDCache: val('minDCache', 4),
     expertBacking: $('expertBacking').value,
-    pinned: Math.max(0, val('pinned', 6)),
-    page: Math.max(0, val('page', 5)),
+    pinned: val('pinned', 6),
+    page: val('page', 5),
     odirect: $('odirect').checked,
-    corr: clamp(val('corr', 0.52), 0, 1),
-    qd: Math.max(1, val('qd', 8) | 0),
-    attn: Math.max(0, val('attn', 28)),
-    ems: Math.max(0, val('ems', 0.7)),
-    par: Math.max(1, val('par', 4) | 0),
-    prefillSpeedup: Math.max(0.1, val('prefillSpeedup', 4.5)),
+    corr: val('corr', 0.52),
+    qd: intVal('qd', 8),
+    attn: val('attn', 28),
+    ems: val('ems', 0.7),
+    par: intVal('par', 4),
+    prefillSpeedup: val('prefillSpeedup', 4.5),
     pf: $('pf').checked,
-    recall: clamp(val('recall', 0.716), 0, 1),
-    precision: clamp(val('precision', 0.78), 0.01, 1),
-    budget: Math.max(0, val('budget', 160))
+    prefetchPolicy: $('prefetchPolicy').value,
+    recall: val('recall', 0.716),
+    precision: val('precision', 0.78),
+    budget: val('budget', 160)
   };
-  c.layers = clamp(c.layers, 1, 500);
-  c.experts = clamp(c.experts, 1, 4096);
-  c.active = clamp(c.active, 1, c.experts);
-  c.minDCache = Math.min(c.minDCache, c.dcache);
   if (c.odirect) c.page = 0;
   return c;
 }
 
 function readAFM() {
   const b = readCommon();
-  const active = Math.max(1, val('afmActive', 46) | 0);
-  const shared = clamp(val('afmShared', 23) | 0, 0, active);
-  const expertWidth = Math.max(1, val('afmExpertWidth', 256) | 0);
-  const layers = Math.max(1, val('afmLayers', 44) | 0);
-  const hidden = Math.max(1, val('afmHidden', 1536) | 0);
-  const projections = Math.max(1, val('afmProjections', 3) | 0);
-  const chunks = Math.max(1, val('afmChunks', 2) | 0);
-  const bits = clamp(val('afmBits', 2), 1, 16);
-  const packing = Math.max(1, val('afmPacking', 1.08));
-  const overlap = clamp(val('afmOverlap', 0.65), 0, 1);
+  const active = intVal('afmActive', 46);
+  const shared = intVal('afmShared', 23);
+  const expertWidth = intVal('afmExpertWidth', 256);
+  const layers = intVal('afmLayers', 44);
+  const hidden = intVal('afmHidden', 1536);
+  const projections = intVal('afmProjections', 3);
+  const chunks = intVal('afmChunks', 2);
+  const bits = val('afmBits', 2);
+  const packing = val('afmPacking', 1.08);
+  const overlap = val('afmOverlap', 0.65);
   return {
     ...b,
+    mode: 'afm3',
     arch: 'unified',
     qd: 1,
-    totalB: Math.max(1, val('afmTotalB', 20)),
+    totalB: val('afmTotalB', 20),
     layers,
     hidden,
     active,
     shared,
     routed: active - shared,
     expertWidth,
-    activeDim: Math.max(1, val('afmActiveDim', 11776) | 0),
+    activeDim: intVal('afmActiveDim', 11776),
     projections,
     chunks,
     bits,
     packing,
-    commonGB: Math.max(0, val('afmCommonGB', 1.4)),
-    freq: Math.max(1, val('afmFreq', 32) | 0),
+    commonGB: val('afmCommonGB', 1.4),
+    freq: intVal('afmFreq', 32),
     overlap,
-    initSel: Math.max(0, val('afmInitSel', 10)),
-    periodicSel: Math.max(0, val('afmPeriodicSel', 3)),
-    patchBase: Math.max(0, val('afmPatchBase', 2)),
-    patchBW: Math.max(0.1, val('afmPatchBW', 60)),
-    attn: Math.max(0, val('afmAttn', 18)),
-    ffn: Math.max(0, val('afmFFN', 22)),
-    runtime: Math.max(0, val('afmRuntime', 2)),
-    prefillTPS: Math.max(0.1, val('afmPrefillTPS', 80)),
+    initSel: val('afmInitSel', 10),
+    periodicSel: val('afmPeriodicSel', 3),
+    patchBase: val('afmPatchBase', 2),
+    patchBW: val('afmPatchBW', 60),
+    attn: val('afmAttn', 18),
+    ffn: val('afmFFN', 22),
+    runtime: val('afmRuntime', 2),
+    prefillTPS: val('afmPrefillTPS', 80),
     chunkMode: $('afmChunkMode').value,
     doubleBuffer: $('afmDoubleBuffer').checked,
     kvKB: 182
@@ -208,6 +211,140 @@ function afmDerived(c) {
   const activeFFNParams = c.layers * c.projections * c.hidden * c.activeDim;
   const totalNandGB = c.totalB * c.bits / 8 * c.packing;
   return { expertParams, rawExpertGB, expertGB, sharedGB, routedGB, activeGB: sharedGB + routedGB, activeFFNParams, totalNandGB };
+}
+
+function validateSimulationConfig(c) {
+  const errors = [];
+  const add = (path, code, message) => errors.push({ path, code, message });
+  const finite = (path, value, min, max = Infinity) => {
+    if (!Number.isFinite(value) || value < min || value > max) add(path, 'OUT_OF_RANGE', `${path} must be between ${min} and ${max}.`);
+  };
+  const integer = (path, value, min, max) => {
+    finite(path, value, min, max);
+    if (Number.isFinite(value) && !Number.isSafeInteger(value)) add(path, 'NOT_SAFE_INTEGER', `${path} must be a safe integer.`);
+  };
+  const enumValue = (path, value, allowed) => {
+    if (!allowed.includes(value)) add(path, 'INVALID_ENUM', `${path} must be one of ${allowed.join(', ')}.`);
+  };
+  const boolean = (path, value) => {
+    if (typeof value !== 'boolean') add(path, 'INVALID_BOOLEAN', `${path} must be boolean.`);
+  };
+
+  if (!c || typeof c !== 'object') return { valid: false, errors: [{ path: 'config', code: 'INVALID_CONFIG', message: 'Configuration must be an object.' }] };
+  enumValue('mode', c.mode, ['colibri', 'afm3']);
+  enumValue('arch', c.arch, ['unified', 'discrete']);
+  integer('prompt', c.prompt, 0, 1_000_000);
+  integer('output', c.output, 1, 1024);
+  integer('context', c.context, 1, 10_000_000);
+  integer('conc', c.conc, 1, 64);
+  integer('seed', c.seed, 0, Number.MAX_SAFE_INTEGER);
+  finite('host', c.host, 0.001, 4096);
+  finite('vram', c.vram, 0, 1024);
+  finite('dramBW', c.dramBW, 0.001, 1_000_000_000_000);
+  finite('pcieBW', c.pcieBW, c.arch === 'discrete' ? 0.001 : 0, 1_000_000_000_000);
+  finite('ssdBW', c.ssdBW, 0.001, 1_000_000_000_000);
+  finite('lat', c.lat, 0, 10_000_000);
+
+  if (!c.mem || typeof c.mem !== 'object') {
+    add('mem', 'INVALID_OBJECT', 'mem policy is required.');
+  } else {
+    enumValue('mem.policy', c.mem.policy, ['strict', 'reclaim', 'swap']);
+    finite('mem.backgroundGB', c.mem.backgroundGB, 0, 4096);
+    finite('mem.osReservedGB', c.mem.osReservedGB, 0, 4096);
+    finite('mem.minHeadroomGB', c.mem.minHeadroomGB, 0, 4096);
+    for (const key of ['soft', 'compress', 'swap', 'hard']) finite(`mem.${key}`, c.mem[key], 0.01, 1);
+    if (!(c.mem.soft <= c.mem.compress && c.mem.compress <= c.mem.swap && c.mem.swap <= c.mem.hard)) {
+      add('mem.thresholds', 'INVALID_ORDER', 'Memory thresholds must satisfy soft <= compress <= swap <= hard.');
+    }
+    boolean('mem.compressionEnabled', c.mem.compressionEnabled);
+    finite('mem.compressionRatio', c.mem.compressionRatio, 1, 100);
+    finite('mem.compressionBW', c.mem.compressionBW, 0.001, 100_000);
+    boolean('mem.swapEnabled', c.mem.swapEnabled);
+    finite('mem.swapCapacityGB', c.mem.swapCapacityGB, 0, 16_384);
+    finite('mem.swapWriteRatio', c.mem.swapWriteRatio, 0.001, 1);
+    finite('mem.kvTouchFraction', c.mem.kvTouchFraction, 0, 1);
+  }
+
+  if (c.mode === 'colibri') {
+    boolean('cold', c.cold);
+    enumValue('placement', c.placement, ['auto', 'manual']);
+    integer('layers', c.layers, 1, 500);
+    integer('experts', c.experts, 1, 4096);
+    integer('active', c.active, 1, c.experts);
+    integer('qd', c.qd, 1, 4096);
+    integer('par', c.par, 1, 4096);
+    finite('esize', c.esize, 0.001, 1_000_000);
+    finite('resident', c.resident, 0, 4096);
+    finite('kvKB', c.kvKB, 0, 1_000_000);
+    finite('dcache', c.dcache, 0, 4096);
+    finite('minDCache', c.minDCache, 0, 4096);
+    finite('vcache', c.vcache, 0, 1024);
+    finite('pinned', c.pinned, 0, 4096);
+    finite('page', c.page, 0, 4096);
+    enumValue('expertBacking', c.expertBacking, ['file', 'anonymous']);
+    boolean('odirect', c.odirect);
+    finite('corr', c.corr, 0, 1);
+    finite('attn', c.attn, 0, 1_000_000);
+    finite('ems', c.ems, 0, 1_000_000);
+    finite('prefillSpeedup', c.prefillSpeedup, 0.001, 1_000_000);
+    boolean('pf', c.pf);
+    enumValue('prefetchPolicy', c.prefetchPolicy || 'previous-token', ['none', 'previous-token', 'popularity']);
+    finite('recall', c.recall, 0, 1);
+    finite('precision', c.precision, 0.001, 1);
+    finite('budget', c.budget, 0, 1_000_000);
+    if (c.placement === 'manual' && Number.isFinite(c.minDCache) && Number.isFinite(c.dcache) && c.minDCache > c.dcache) {
+      add('minDCache', 'CAPACITY_EXCEEDED', 'minDCache cannot exceed dcache.');
+    }
+    if (c.arch === 'discrete' && c.placement === 'manual' && Number.isFinite(c.vcache) && Number.isFinite(c.vram) && c.vcache + 0.8 > c.vram + EPS) {
+      add('vcache', 'CAPACITY_EXCEEDED', 'Manual VRAM Expert cache plus the 0.8GB device reserve cannot exceed physical VRAM.');
+    }
+    const routeWork = c.layers * c.active * c.output * c.conc;
+    const cacheWork = c.layers * c.experts;
+    if (Number.isFinite(routeWork) && (routeWork > 20_000_000 || cacheWork > 1_000_000)) {
+      add('complexity', 'COMPLEXITY_LIMIT', 'Scenario exceeds the interactive browser work budget.');
+    }
+  } else if (c.mode === 'afm3') {
+    if (c.arch !== 'unified') add('arch', 'INVALID_RELATION', 'AFM 3 requires unified memory.');
+    integer('layers', c.layers, 1, 500);
+    integer('hidden', c.hidden, 1, 1_000_000);
+    integer('active', c.active, 1, 4096);
+    integer('shared', c.shared, 0, c.active);
+    integer('routed', c.routed, 0, c.active);
+    integer('expertWidth', c.expertWidth, 1, 1_000_000);
+    integer('activeDim', c.activeDim, 1, 100_000_000);
+    integer('projections', c.projections, 1, 16);
+    integer('chunks', c.chunks, 1, 128);
+    integer('freq', c.freq, 1, 1_000_000);
+    finite('totalB', c.totalB, 0.001, 1_000_000);
+    finite('bits', c.bits, 1, 16);
+    finite('packing', c.packing, 1, 10);
+    finite('commonGB', c.commonGB, 0, 4096);
+    finite('overlap', c.overlap, 0, 1);
+    finite('initSel', c.initSel, 0, 1_000_000);
+    finite('periodicSel', c.periodicSel, 0, 1_000_000);
+    finite('patchBase', c.patchBase, 0, 1_000_000);
+    finite('patchBW', c.patchBW, 0.001, 1_000_000_000_000);
+    finite('attn', c.attn, 0, 1_000_000);
+    finite('ffn', c.ffn, 0, 1_000_000);
+    finite('runtime', c.runtime, 0, 1_000_000);
+    finite('prefillTPS', c.prefillTPS, 0.001, 1_000_000);
+    finite('kvKB', c.kvKB, 0, 1_000_000);
+    enumValue('chunkMode', c.chunkMode, ['sequential', 'pipelined']);
+    boolean('doubleBuffer', c.doubleBuffer);
+    if (Number.isFinite(c.active) && Number.isFinite(c.shared) && c.routed !== c.active - c.shared) {
+      add('routed', 'DIMENSION_MISMATCH', 'routed must equal active - shared.');
+    }
+    if (Number.isFinite(c.active) && Number.isFinite(c.expertWidth) && c.activeDim !== c.active * c.expertWidth) {
+      add('activeDim', 'DIMENSION_MISMATCH', 'activeDim must equal active * expertWidth.');
+    }
+    const work = c.layers * c.active * c.output * c.conc;
+    if (Number.isFinite(work) && work > 20_000_000) add('complexity', 'COMPLEXITY_LIMIT', 'Scenario exceeds the interactive browser work budget.');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function formatConfigErrors(validation) {
+  return validation.errors.map(error => `${error.path}: ${error.message}`).join(' ');
 }
 
 function thresholdGB(c, ratio) {

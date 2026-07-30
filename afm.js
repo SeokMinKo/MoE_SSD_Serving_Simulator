@@ -1,8 +1,9 @@
 function simulateAFM(c = readAFM()) {
-  const d = afmDerived(c);
-  if (c.activeDim !== c.active * c.expertWidth) {
-    return { error: `AFM configuration mismatch: active_ffn_dim ${c.activeDim} != active_experts × expert_width ${c.active * c.expertWidth}`, c, d, mode: 'afm3' };
+  const validation = validateSimulationConfig(c);
+  if (!validation.valid) {
+    return { error: `Invalid configuration: ${formatConfigErrors(validation)}`, validationErrors: validation.errors, c, mode: 'afm3' };
   }
+  const d = afmDerived(c);
   const R = rng(c.seed);
   const storage = new StorageResource(c);
   const tokens = [], switches = [];
@@ -19,7 +20,8 @@ function simulateAFM(c = readAFM()) {
   let periodicGB = 0, boundaryTotal = 0, changedTotal = 0;
 
   const initialPressure = applyPressureAFM(c, d, state, 0);
-  if (initialPressure.swapOutGB > EPS) storage.reserveGB(initialPressure.swapOutGB, now, 'swap-out-write', 1, c.mem.swapWriteRatio);
+  const initialSwap = scheduleSwapOut(c, state, initialPressure, storage, now, () => afmDynamic(c, d, state));
+  now = Math.max(now, initialSwap.blockedUntil);
   if (initialPressure.oom) return { error: `Unified memory OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, d, mode: 'afm3' };
 
   for (let i = 0; i < c.output; i++) {
@@ -27,8 +29,10 @@ function simulateAFM(c = readAFM()) {
     let boundary = false, changed = 0, readGB = 0, selectMs = 0, readMs = 0, patchMs = 0, exposed = 0;
     const window = Math.floor(i / c.freq);
 
+    completePendingSwapOuts(state, now);
     const touch = touchMemoryAtTokenStart(c, state, storage, now);
     now = Math.max(now, touch.readyAt) + touch.compressionCpuMs;
+    completePendingSwapOuts(state, now);
 
     if (i > 0 && i % c.freq === 0) {
       boundary = true;
@@ -40,7 +44,8 @@ function simulateAFM(c = readAFM()) {
       readMs = job.service + job.wait;
       patchMs = changed ? c.patchBase + readGB / c.patchBW * 1000 : 0;
       const loadPath = readMs + patchMs;
-      exposed = c.chunkMode === 'pipelined' ? Math.max(0, loadPath - chunkCompute) : loadPath;
+      const canPipeline = c.chunkMode === 'pipelined' && c.doubleBuffer;
+      exposed = canPipeline ? Math.max(0, loadPath - chunkCompute) : loadPath;
       now += exposed;
       periodicGB += readGB;
       boundaryTotal += selectMs + exposed;
@@ -49,9 +54,11 @@ function simulateAFM(c = readAFM()) {
     }
 
     now += steadyBase;
+    completePendingSwapOuts(state, now);
     growKV(c, state, kvPerTokenGB);
     const pressure = applyPressureAFM(c, d, state, i + 1);
-    if (pressure.swapOutGB > EPS) storage.reserveGB(pressure.swapOutGB, now, 'swap-out-write', 1, c.mem.swapWriteRatio);
+    const swapSchedule = scheduleSwapOut(c, state, pressure, storage, now, () => afmDynamic(c, d, state));
+    now = Math.max(now, swapSchedule.blockedUntil);
 
     const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
     const windowWriteGB = readGB;
@@ -79,6 +86,9 @@ function simulateAFM(c = readAFM()) {
     tokens.push({
       tpot: finalElapsed,
       ssdGB: readGB,
+      pcieGB: 0,
+      computeMs: steadyBase + selectMs + patchMs + pressure.compressionCpuMs,
+      storageRequests: changed ? c.chunks : 0,
       hit: c.overlap,
       boundary,
       changed,

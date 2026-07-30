@@ -6,7 +6,7 @@ function renderPressure(r) {
     ['Swap start token', s.swapStartToken === null ? 'None' : s.swapStartToken],
     ['Peak physical memory', `${fmt(s.peakPhysicalGB, 2)} / ${fmt(r.c.host, 1)} GB`],
     ['Minimum free memory', `${fmt(s.minFreeGB, 2)} GB`],
-    ['Peak swap resident', `${fmt(s.peakSwapGB, 2)} GB`],
+    ['Peak swap allocated / in-flight', `${fmt(s.peakSwapGB, 2)} GB`],
     ['Total swap-in / out', `${fmt(s.totalSwapInGB, 2)} / ${fmt(s.totalSwapOutGB, 2)} GB`],
     ['Page / Expert reclaimed', `${fmt(s.totalPageReclaimedGB, 2)} / ${fmt(s.totalExpertReclaimedGB, 2)} GB`],
     ['Thrash ratio', pct(thrash)],
@@ -27,6 +27,12 @@ function renderColibri(r) {
   };
   const criticalPath = Object.entries(prefillPaths).sort((a, b) => b[1] - a[1])[0][0];
   $('summary').innerHTML = rows([
+    ...(r.serving ? [
+      ['Event scheduler throughput', `${fmt(r.serving.throughputTPS, 2)} tok/s`],
+      ['Requests / completed tokens', `${r.serving.requests.length} / ${r.serving.completedTokens}`],
+      ['Serving P50 / P95 token', `${ms(r.serving.p50TokenMs)} / ${ms(r.serving.p95TokenMs)}`],
+      ['Shared SSD queue', ms(r.serving.resources.ssd.queueMs)]
+    ] : []),
     ['Aggregate capacity upper bound', `${fmt(r.agg, 2)} tok/s`],
     ['Placement / DRAM / VRAM cache', `${r.c.placementInfo.policy} / ${fmt(r.c.dcache, 2)} / ${fmt(r.c.vcache, 2)} GB`],
     ['Prefill critical path', `${criticalPath} · ${ms(r.prefill)}`],
@@ -48,12 +54,12 @@ function renderColibri(r) {
     ['Page Cache', `${fmt(last.pageCacheGB, 2)} GB`],
     ['KV resident', `${fmt(last.kvResidentGB, 3)} GB`],
     ['Compressed original', `${fmt(last.compressedOriginalGB, 3)} GB`],
-    ['Swap resident', `${fmt(last.swapGB, 3)} GB`],
+    ['Swap allocated / in-flight', `${fmt(last.swapGB, 3)} GB`],
     ['Device KV', `${fmt(r.state.deviceKVGB, 3)} GB`],
     ['Device cache / KV / reserve', `${fmt(last.deviceUsedGB, 3)} / ${fmt(r.c.vram, 1)} GB`],
     ['O_DIRECT', r.c.odirect ? 'Enabled' : 'Disabled']
   ]);
-  $('modelStatus').innerHTML = `<b>Colibri V1.4 HW-sensitivity model</b><br>Prefill warms the Expert tiers and TTFT uses the maximum of calibrated compute, storage, PCIe, and DRAM paths. Decode Demand, Prefetch, Swap-in and Swap-out share one storage timeline. Auto placement derives cache budgets from RAM/VRAM capacity.<br><br><b>Interpretation:</b> Single TPS and TTFT are approximate trend estimates. Aggregate capacity is a resource upper bound, not a scheduler or continuous-batching prediction. GPU VRAM bandwidth and OS page-level behavior remain outside this model.`;
+  $('modelStatus').innerHTML = `<b>Estimated · Colibri V1.5 event/resource model</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>Prefill warms the Expert tiers. Demand, causal Prefetch, Swap-in and Swap-out share storage. Concurrency &gt; 1 uses an event queue with shared SSD, PCIe, DRAM and batched compute resources.<br><br><b>Interpretation:</b> Results remain uncalibrated sensitivity estimates, not measured hardware predictions. Cross-request Expert-cache sharing, GPU VRAM bandwidth, and OS page-level behavior remain outside this model.`;
 }
 function renderAFM(r) {
   $('tpotLabel').textContent = 'Effective TPOT';
@@ -63,6 +69,12 @@ function renderAFM(r) {
   const avgChanged = r.switches.length ? r.tot.changedTotal / r.switches.length : 0;
   const avgSwitch = r.switches.length ? r.tot.periodicGB / r.switches.length : 0;
   $('summary').innerHTML = rows([
+    ...(r.serving ? [
+      ['Event scheduler throughput', `${fmt(r.serving.throughputTPS, 2)} tok/s`],
+      ['Requests / completed tokens', `${r.serving.requests.length} / ${r.serving.completedTokens}`],
+      ['Serving P50 / P95 token', `${ms(r.serving.p50TokenMs)} / ${ms(r.serving.p95TokenMs)}`],
+      ['Shared SSD queue', ms(r.serving.resources.ssd.queueMs)]
+    ] : []),
     ['Steady TPS / TPOT', `${fmt(r.steadyTPS, 2)} / ${ms(r.steady)}`],
     ['Boundary TPOT', ms(r.boundaryTPOT)],
     ['P95 TPOT', ms(r.p95)],
@@ -83,14 +95,36 @@ function renderAFM(r) {
     ['Current Routed weights', `${fmt(r.d.routedGB, 3)} GB`],
     ['Double buffer', `${fmt(r.c.doubleBuffer ? r.d.routedGB : 0, 3)} GB`],
     ['KV resident', `${fmt(last.kvResidentGB, 3)} GB`],
-    ['Swap resident', `${fmt(last.swapGB, 3)} GB`],
+    ['Swap allocated / in-flight', `${fmt(last.swapGB, 3)} GB`],
     ['Estimated full 20B NAND', `${fmt(r.d.totalNandGB, 3)} GB`]
   ]);
-  $('modelStatus').innerHTML = `<b>AFM 3 V1.4 window-routed IFP model</b><br>Shared and current Routed Expert sets remain pinned. Memory pressure is applied primarily to KV Cache. Window reads, Swap I/O and DRAM traffic affect boundary and steady TPOT. Aggregate capacity is a resource upper bound, not a scheduler prediction.<br><br><span class="afmMark">Constant Table 없음:</span> actual Expert IDs and layer masks are not reconstructed; overlap-driven delta loading is used.`;
+  $('modelStatus').innerHTML = `<b>Estimated · AFM 3 V1.5 event/resource model</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>Shared and current Routed Expert sets remain pinned. Concurrency &gt; 1 uses shared event-driven resources and batched compute.<br><br><span class="afmMark">Constant Table 없음:</span> actual Expert IDs and layer masks are not reconstructed; overlap-driven delta loading is used.`;
 }
+function clearRenderedResult() {
+  if (typeof stop === 'function') stop();
+  if (typeof anim === 'object' && anim) {
+    anim.result = null;
+    anim.parts = [];
+    anim.index = 0;
+    anim.action = null;
+    anim.paused = false;
+  }
+  for (const id of ['ttft', 'tpot', 'tps', 'ssdpt', 'hit', 'mem']) $(id).textContent = '—';
+  for (const id of ['summary', 'pressureSummary', 'memory', 'modelStatus', 'comparisonSummary', 'traceSummary']) $(id).innerHTML = '';
+  $('token').innerHTML = '';
+  $('status').textContent = 'Invalid result';
+  $('progress').style.width = '0';
+  $('pause').textContent = 'Ⅱ Pause';
+  for (const id of ['chart', 'memoryChart']) {
+    const canvas = $(id);
+    if (canvas && typeof canvas.getContext === 'function') canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
 function render(r) {
   lastResult = r;
   if (r.error) {
+    clearRenderedResult();
     $('warn').hidden = false;
     $('warn').textContent = r.error;
     return;
@@ -105,8 +139,14 @@ function render(r) {
   $('mem').textContent = `${fmt(r.state.peakPhysicalGB, 1)} GB peak`;
   r.mode === 'afm3' ? renderAFM(r) : renderColibri(r);
   renderPressure(r);
+  renderTraceTable(r);
   drawPerformance(r);
   drawMemory(r);
+}
+
+function renderTraceTable(r) {
+  const rows = r.tokens.map((token, index) => `<tr><th scope="row">Token ${index + 1}</th><td>${fmt(token.tpot, 3)} ms</td><td>${fmt(token.ssdGB || 0, 6)} GB</td><td>${fmt(token.memory.physicalUsedGB, 3)} GB</td><td>${fmt(token.memory.swapGB, 3)} GB</td><td>${token.memory.pressureState}</td></tr>`).join('');
+  $('traceSummary').innerHTML = `<caption>Token performance and memory trace</caption><thead><tr><th scope="col">Token</th><th scope="col">TPOT</th><th scope="col">SSD</th><th scope="col">Physical memory</th><th scope="col">Swap allocated / in-flight</th><th scope="col">Pressure</th></tr></thead><tbody>${rows}</tbody>`;
 }
 
 function drawPerformance(r) {
