@@ -3,20 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MoE SSD Serving Simulator V1.2</title>
+<title>MoE SSD Serving Simulator V1.3</title>
 <style>
 :root{color-scheme:dark;--b:#07111e;--p:#101d2e;--p2:#071525;--l:#29445f;--t:#edf5ff;--m:#9db0c8;--a:#67d9ff;--g:#72e3a6;--w:#ffd36b;--r:#ff8696;--violet:#a78bfa}
-*{box-sizing:border-box}body{margin:0;background:var(--b);color:var(--t);font:14px system-ui,-apple-system,sans-serif}.wrap{max-width:1580px;margin:auto;padding:16px}h1{margin:0;font-size:24px}.sub{color:var(--m);margin:4px 0 14px}.grid{display:grid;grid-template-columns:385px 1fr;gap:14px}.panel{background:var(--p);border:1px solid var(--l);border-radius:14px;padding:14px}.controls{display:grid;gap:8px;align-content:start}.section{font-weight:800;border-top:1px solid var(--l);padding-top:10px;margin-top:4px}.f{display:grid;grid-template-columns:1fr 138px;gap:10px;align-items:center}.f label{color:#cfdded;font-size:12px}.f small{grid-column:1/-1;color:var(--m);font-size:10px;margin-top:-5px}input,select,button,textarea{width:100%;padding:8px;border:1px solid var(--l);border-radius:8px;background:var(--p2);color:var(--t)}input[type=checkbox]{width:19px;justify-self:end}button{background:#155f7b;font-weight:750;cursor:pointer}.buttons{display:grid;grid-template-columns:2fr 1fr 1fr;gap:7px}.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}.kpi{background:var(--p2);border:1px solid var(--l);border-radius:10px;padding:11px}.kpi b{font-size:20px;display:block;margin-top:4px}.kpi span{color:var(--m);font-size:10px}.token{min-height:165px;background:#050d17;border:1px solid var(--l);border-radius:10px;padding:14px;font:14px/1.65 ui-monospace,monospace;white-space:pre-wrap}.bar{height:8px;background:#06111e;border-radius:99px;overflow:hidden;margin-top:10px}.bar div{height:100%;background:linear-gradient(90deg,var(--a),#8e83ff);width:0}.rows{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.tbl{width:100%;border-collapse:collapse}.tbl td{padding:7px;border-bottom:1px solid #21364f}.tbl td:last-child{text-align:right}.warn{border:1px solid #725d26;background:#3c3217;padding:10px;border-radius:9px;color:#ffe5a3;margin-bottom:12px}.bad{color:var(--r)}.good{color:var(--g)}.afmMark{color:var(--violet);font-weight:700}canvas{width:100%;height:250px;background:var(--p2);border:1px solid var(--l);border-radius:10px}.status{color:var(--m);font-size:11px;margin-top:8px}.tests{white-space:pre-wrap;font:11px ui-monospace,monospace;background:#06111e;padding:9px;border-radius:8px;max-height:210px;overflow:auto}.note{font-size:11px;color:var(--m);line-height:1.5}.cursor{display:inline-block;width:7px;height:15px;background:var(--a);vertical-align:text-bottom;animation:blink 1s step-end infinite}.modeBadge{display:inline-block;padding:2px 7px;border-radius:99px;border:1px solid var(--l);font-size:10px;color:var(--a);margin-left:6px}.hidden{display:none!important}@keyframes blink{50%{opacity:0}}@media(max-width:1150px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.rows{grid-template-columns:1fr}}
+*{box-sizing:border-box}body{margin:0;background:var(--b);color:var(--t);font:14px system-ui,-apple-system,sans-serif}.wrap{max-width:1580px;margin:auto;padding:16px}h1{margin:0;font-size:24px}.sub{color:var(--m);margin:4px 0 14px}.grid{display:grid;grid-template-columns:385px 1fr;gap:14px}.panel{background:var(--p);border:1px solid var(--l);border-radius:14px;padding:14px}.controls{display:grid;gap:8px;align-content:start}.section{font-weight:800;border-top:1px solid var(--l);padding-top:10px;margin-top:4px}.f{display:grid;grid-template-columns:1fr 138px;gap:10px;align-items:center}.f label{color:#cfdded;font-size:12px}.f small{grid-column:1/-1;color:var(--m);font-size:10px;margin-top:-5px}input,select,button,textarea{width:100%;padding:8px;border:1px solid var(--l);border-radius:8px;background:var(--p2);color:var(--t)}input[type=checkbox]{width:19px;justify-self:end}button{background:#155f7b;font-weight:750;cursor:pointer}.buttons{display:grid;grid-template-columns:2fr 1fr 1fr;gap:7px}.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}.kpi{background:var(--p2);border:1px solid var(--l);border-radius:10px;padding:11px}.kpi b{font-size:20px;display:block;margin-top:4px}.kpi span{color:var(--m);font-size:10px}.token{min-height:165px;background:#050d17;border:1px solid var(--l);border-radius:10px;padding:14px;font:14px/1.65 ui-monospace,monospace;white-space:pre-wrap}.bar{height:8px;background:#06111e;border-radius:99px;overflow:hidden;margin-top:10px}.bar div{height:100%;background:linear-gradient(90deg,var(--a),#8e83ff);width:0}.rows{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.tbl{width:100%;border-collapse:collapse}.tbl td{padding:7px;border-bottom:1px solid #21364f}.tbl td:last-child{text-align:right}.warn{border:1px solid #725d26;background:#3c3217;padding:10px;border-radius:9px;color:#ffe5a3;margin-bottom:12px}.bad{color:var(--r)}.good{color:var(--g)}.afmMark{color:var(--violet);font-weight:700}canvas{width:100%;height:250px;background:var(--p2);border:1px solid var(--l);border-radius:10px}.status{color:var(--m);font-size:11px;margin-top:8px}.tests{white-space:pre-wrap;font:11px ui-monospace,monospace;background:#06111e;padding:9px;border-radius:8px;max-height:210px;overflow:auto}.note{font-size:11px;color:var(--m);line-height:1.5}.cursor{display:inline-block;width:7px;height:15px;background:var(--a);vertical-align:text-bottom;animation:blink 1s step-end infinite}.modeBadge{display:inline-block;padding:2px 7px;border-radius:99px;border:1px solid var(--l);font-size:10px;color:var(--a);margin-left:6px}.hidden{display:none!important}.pressureNormal{color:var(--g)}.pressureReclaim{color:var(--w)}.pressureSwap{color:var(--r)}@keyframes blink{50%{opacity:0}}@media(max-width:1150px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.rows{grid-template-columns:1fr}}
 </style>
 </head>
 <body><div class="wrap">
-<h1>MoE SSD Serving Simulator <small>V1.2</small><span id="modeBadge" class="modeBadge">Colibri</span></h1>
-<div class="sub">Token-routed Colibri + window-routed AFM 3 Core Advanced · resource-conserving storage timeline · real-time token playback</div>
+<h1>MoE SSD Serving Simulator <small>V1.3</small><span id="modeBadge" class="modeBadge">Colibri</span></h1>
+<div class="sub">Token-routed Colibri + window-routed AFM 3 · DRAM pressure, reclaim, compression and swap · real-time token playback</div>
 <div id="warn" class="warn" hidden></div>
 <div class="grid">
 <aside class="panel controls">
 <div class="section" style="border-top:0;padding-top:0">Serving Architecture</div>
 <div class="f"><label>Model / execution engine</label><select id="mode"><option value="colibri">Colibri Token-Routed MoE</option><option value="afm3">AFM 3 Core Advanced IFP</option></select><small>AFM 3은 32-token window 동안 선택된 subnetwork를 유지합니다.</small></div>
+
 <div class="section">Workload / Playback</div>
 <div class="f"><label>Prompt tokens</label><input id="prompt" type="number" value="128" min="1"></div>
 <div class="f"><label>Output tokens</label><input id="output" type="number" value="64" min="1" max="512"></div>
@@ -24,6 +25,7 @@
 <div class="f"><label>Concurrent sequences</label><input id="conc" type="number" value="1" min="1"></div>
 <div class="f colibriOnly"><label>Cold expert cache</label><input id="cold" type="checkbox" checked></div>
 <div class="f"><label>Playback speed</label><select id="speed"><option value="1" selected>1× 실시간</option><option value="2">2×</option><option value="10">10×</option><option value="100">100×</option></select></div>
+
 <div class="colibriOnly">
 <div class="section">Colibri MoE Model</div>
 <div class="f"><label>MoE layers</label><input id="layers" type="number" value="75" min="1"></div>
@@ -33,6 +35,7 @@
 <div class="f"><label>Resident weights (GB)</label><input id="resident" type="number" value="9.9" min="0" step="0.1"></div>
 <div class="f"><label>KV KB / token</label><input id="kv" type="number" value="182" min="0"></div>
 </div>
+
 <div class="afmOnly hidden">
 <div class="section">AFM 3 Core Advanced</div>
 <div class="f"><label>Total model parameters (B)</label><input id="afmTotalB" type="number" value="20" min="1" step="0.1"></div>
@@ -48,6 +51,7 @@
 <div class="f"><label>Packing overhead</label><input id="afmPacking" type="number" value="1.08" min="1" step="0.01"></div>
 <div class="f"><label>Common resident weights (GB)</label><input id="afmCommonGB" type="number" value="1.4" min="0" step="0.1"><small>공개 설정에 없는 calibration 입력입니다.</small></div>
 </div>
+
 <div class="section">System / Storage</div>
 <div class="f"><label>Architecture</label><select id="arch"><option value="discrete">Discrete GPU</option><option value="unified">Unified Memory</option></select></div>
 <div class="f"><label>Host / Unified memory (GB)</label><input id="host" type="number" value="128" min="1"></div>
@@ -57,10 +61,30 @@
 <div class="f"><label>Effective SSD / NAND BW (GB/s)</label><input id="ssdBW" type="number" value="9.2" min="0.05" step="0.1"></div>
 <div class="f"><label>Storage base latency (µs)</label><input id="lat" type="number" value="120" min="0"></div>
 <div class="f colibriOnly"><label>Queue depth / workers</label><input id="qd" type="number" value="8" min="1"></div>
+
+<div class="section">Memory Pressure / Swap</div>
+<div class="f"><label>Memory policy</label><select id="memPolicy"><option value="strict">Strict budget</option><option value="reclaim">Reclaim only</option><option value="swap" selected>Compression + Swap</option></select></div>
+<div class="f"><label>Background apps (GB)</label><input id="backgroundGB" type="number" value="8" min="0" step="0.5"></div>
+<div class="f"><label>OS reserved (GB)</label><input id="osReservedGB" type="number" value="8" min="0" step="0.5"></div>
+<div class="f"><label>Minimum free headroom (GB)</label><input id="minHeadroomGB" type="number" value="8" min="0" step="0.5"></div>
+<div class="f"><label>Soft pressure trigger (%)</label><input id="softPct" type="number" value="80" min="1" max="100" step="1"></div>
+<div class="f"><label>Compression trigger (%)</label><input id="compressPct" type="number" value="85" min="1" max="100" step="1"></div>
+<div class="f"><label>Swap trigger (%)</label><input id="swapPct" type="number" value="90" min="1" max="100" step="1"></div>
+<div class="f"><label>Hard pressure trigger (%)</label><input id="hardPct" type="number" value="97" min="1" max="100" step="1"></div>
+<div class="f"><label>Compression enabled</label><input id="compressionEnabled" type="checkbox" checked></div>
+<div class="f"><label>Compression ratio</label><input id="compressionRatio" type="number" value="1.6" min="1" step="0.1"></div>
+<div class="f"><label>Compression BW (GB/s)</label><input id="compressionBW" type="number" value="25" min="0.1" step="1"></div>
+<div class="f"><label>Swap enabled</label><input id="swapEnabled" type="checkbox" checked></div>
+<div class="f"><label>Swap capacity (GB)</label><input id="swapCapacityGB" type="number" value="32" min="0" step="1"></div>
+<div class="f"><label>Swap write BW ratio</label><input id="swapWriteRatio" type="number" value="0.7" min="0.05" max="2" step="0.05"></div>
+<div class="f"><label>KV touch fraction</label><input id="kvTouchFraction" type="number" value="1" min="0" max="1" step="0.05"><small>Swap된 KV 중 매 token에서 다시 접근하는 비율입니다.</small></div>
+
 <div class="colibriOnly">
 <div class="section">Colibri Cache / Compute / Prefetch</div>
 <div class="f"><label>VRAM expert cache (GB)</label><input id="vcache" type="number" value="4" min="0"></div>
 <div class="f"><label>DRAM expert cache (GB)</label><input id="dcache" type="number" value="30" min="0"></div>
+<div class="f"><label>DRAM Expert backing</label><select id="expertBacking"><option value="file" selected>File-backed / discardable</option><option value="anonymous">Anonymous / swappable</option></select></div>
+<div class="f"><label>Minimum DRAM Expert Cache (GB)</label><input id="minDCache" type="number" value="4" min="0" step="1"></div>
 <div class="f"><label>Pinned hot store (GB)</label><input id="pinned" type="number" value="6" min="0"></div>
 <div class="f"><label>OS page cache (GB)</label><input id="page" type="number" value="5" min="0"></div>
 <div class="f"><label>O_DIRECT</label><input id="odirect" type="checkbox" checked></div>
@@ -73,6 +97,7 @@
 <div class="f"><label>Prefetch precision</label><input id="precision" type="number" value="0.78" min="0.01" max="1" step="0.01"></div>
 <div class="f"><label>Prefetch budget (MB/layer)</label><input id="budget" type="number" value="160" min="0"></div>
 </div>
+
 <div class="afmOnly hidden">
 <div class="section">IFP Window / Compute</div>
 <div class="f"><label>Selection frequency (tokens)</label><input id="afmFreq" type="number" value="32" min="1"></div>
@@ -90,9 +115,11 @@
 <div class="f"><label>Double buffer next set</label><input id="afmDoubleBuffer" type="checkbox"></div>
 <small class="note">Constant Table이 없어 실제 Expert ID와 Layer별 mask 대신 overlap 기반 집계 모델을 사용합니다. Chunk는 동일 FFN dimension으로 분할합니다.</small>
 </div>
+
 <div class="buttons"><button id="run">▶ Run</button><button id="pause">Ⅱ Pause</button><button id="test">Self-test</button></div>
 <div id="tests" class="tests">Self-test not run.</div>
 </aside>
+
 <main>
 <section class="panel"><div class="kpis">
 <div class="kpi"><span>TTFT</span><b id="ttft">—</b></div>
@@ -104,6 +131,14 @@
 </div>
 <div id="token" class="token">Run the simulation.<span class="cursor"></span></div><div class="bar"><div id="progress"></div></div><div id="status" class="status">Idle</div></section>
 <div class="rows"><section class="panel"><h3>Performance trace</h3><canvas id="chart" width="930" height="250"></canvas></section><section class="panel"><h3>Resource summary</h3><table class="tbl" id="summary"></table></section></div>
+<div class="rows"><section class="panel"><h3>Memory / Swap trace</h3><canvas id="memoryChart" width="930" height="250"></canvas></section><section class="panel"><h3>Memory pressure summary</h3><table class="tbl" id="pressureSummary"></table></section></div>
 <div class="rows"><section class="panel"><h3>Memory budget</h3><table class="tbl" id="memory"></table></section><section class="panel"><h3>Model status</h3><div id="modelStatus" class="note"></div></section></div>
 </main></div></div>
-<script src="app.js"></script></body></html>
+<script src="core.js"></script>
+<script src="config.js"></script>
+<script src="memory.js"></script>
+<script src="colibri.js"></script>
+<script src="afm.js"></script>
+<script src="playback.js"></script>
+<script src="render.js"></script>
+<script src="tests-init.js"></script></body></html>
