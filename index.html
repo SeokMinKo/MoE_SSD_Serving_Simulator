@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoE SSD Serving Simulator</title>
+<style>
+:root{color-scheme:dark;--bg:#08111e;--p:#101d2e;--l:#2a405b;--t:#ecf4ff;--m:#9db0c8;--a:#67d9ff;--g:#72e3a6;--w:#ffd36b;--r:#ff8696}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--t);font:14px system-ui,-apple-system,sans-serif}.wrap{max-width:1500px;margin:auto;padding:18px}h1{font-size:24px;margin:0 0 4px}.sub{color:var(--m);margin-bottom:16px}.grid{display:grid;grid-template-columns:360px 1fr;gap:14px}.panel{background:var(--p);border:1px solid var(--l);border-radius:14px;padding:14px}.controls{display:grid;gap:10px}.f{display:grid;grid-template-columns:1fr 125px;gap:10px;align-items:center}.f label{color:#cfdded}.f small{grid-column:1/-1;color:var(--m)}input,select,button{width:100%;padding:8px;border:1px solid var(--l);border-radius:8px;background:#071525;color:var(--t)}button{background:#155f7b;font-weight:700;cursor:pointer}.buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.kpi{background:#071525;border:1px solid var(--l);border-radius:10px;padding:12px}.kpi b{font-size:22px;display:block;margin-top:5px}.kpi span{color:var(--m);font-size:11px}.token{margin-top:12px;min-height:140px;background:#050d17;border:1px solid var(--l);border-radius:10px;padding:14px;font:14px/1.65 ui-monospace,monospace}.bar{height:8px;background:#06111e;border-radius:99px;overflow:hidden;margin-top:10px}.bar div{height:100%;background:linear-gradient(90deg,var(--a),#8e83ff);width:0}.rows{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.tbl{width:100%;border-collapse:collapse}.tbl td{padding:8px;border-bottom:1px solid #21364f}.tbl td:last-child{text-align:right}.warn{border:1px solid #725d26;background:#3c3217;padding:10px;border-radius:9px;color:#ffe5a3;margin-bottom:12px}.bad{color:var(--r)}.good{color:var(--g)}canvas{width:100%;height:230px;background:#071525;border:1px solid var(--l);border-radius:10px}@media(max-width:1000px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:1fr 1fr}.rows{grid-template-columns:1fr}}
+</style>
+</head>
+<body><div class="wrap">
+<h1>MoE SSD Serving Simulator</h1>
+<div class="sub">Colibri-style SSD expert offloading conceptual simulator · Alpha</div>
+<div class="warn">현재 버전은 완전한 discrete-event simulator가 아니라 layer-wise analytic model입니다. 절대 성능 예측보다 구조 이해와 민감도 비교에 사용하십시오.</div>
+<div class="grid">
+<section class="panel controls">
+<h2>Configuration</h2>
+<div class="f"><label>Prompt tokens</label><input id="prompt" type="number" value="128" min="1"></div>
+<div class="f"><label>Output tokens</label><input id="output" type="number" value="64" min="1"></div>
+<div class="f"><label>MoE layers</label><input id="layers" type="number" value="75" min="1"></div>
+<div class="f"><label>Experts/layer</label><input id="experts" type="number" value="256" min="1"></div>
+<div class="f"><label>Active experts</label><input id="active" type="number" value="8" min="1"></div>
+<div class="f"><label>Expert size (MB)</label><input id="esize" type="number" value="19" min="0.1" step="0.1"></div>
+<div class="f"><label>Resident weights (GB)</label><input id="resident" type="number" value="9.9" min="0" step="0.1"></div>
+<div class="f"><label>DRAM expert cache (GB)</label><input id="cache" type="number" value="32" min="0" step="1"></div>
+<div class="f"><label>VRAM expert cache (GB)</label><input id="vram" type="number" value="6" min="0" step="1"></div>
+<div class="f"><label>System memory (GB)</label><input id="mem" type="number" value="64" min="1"></div>
+<div class="f"><label>SSD effective BW (GB/s)</label><input id="ssd" type="number" value="10" min="0.1" step="0.1"></div>
+<div class="f"><label>SSD latency (µs)</label><input id="lat" type="number" value="120" min="0"></div>
+<div class="f"><label>Expert compute/layer (ms)</label><input id="comp" type="number" value="2.2" min="0" step="0.1"></div>
+<div class="f"><label>Cache hit rate</label><input id="hit" type="number" value="0.35" min="0" max="1" step="0.01"></div>
+<div class="f"><label>Prefetch recall</label><input id="recall" type="number" value="0.716" min="0" max="1" step="0.001"></div>
+<div class="f"><label>Prefetch precision</label><input id="precision" type="number" value="0.75" min="0.01" max="1" step="0.01"></div>
+<div class="f"><label>Compute/I/O overlap</label><input id="overlap" type="number" value="0.65" min="0" max="1" step="0.01"></div>
+<div class="f"><label>Cold start</label><select id="cold"><option value="1">Cold</option><option value="0">Warm</option></select></div>
+<div class="buttons"><button id="run">Run</button><button id="reset">Reset</button></div>
+</section>
+<main>
+<section class="panel">
+<div class="kpis">
+<div class="kpi"><span>TTFT</span><b id="ttft">—</b></div>
+<div class="kpi"><span>TPOT</span><b id="tpot">—</b></div>
+<div class="kpi"><span>TPS</span><b id="tps">—</b></div>
+<div class="kpi"><span>SSD read/token</span><b id="read">—</b></div>
+</div>
+<div id="token" class="token">Simulation output appears here.</div><div class="bar"><div id="prog"></div></div>
+</section>
+<div class="rows">
+<section class="panel"><h2>Breakdown</h2><table class="tbl"><tbody id="breakdown"></tbody></table></section>
+<section class="panel"><h2>Validation</h2><table class="tbl"><tbody id="validation"></tbody></table></section>
+</div>
+<section class="panel" style="margin-top:14px"><h2>TPOT sensitivity</h2><canvas id="chart" width="900" height="230"></canvas></section>
+</main></div></div>
+<script>
+const $=id=>document.getElementById(id),num=id=>Number($(id).value),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const sample='The simulator visualizes how SSD bandwidth, expert cache hits, prefetch accuracy, and compute overlap affect token generation latency. ';
+function validate(c){const e=[],w=[];if(c.active>c.experts)e.push('Active experts cannot exceed experts per layer.');if(c.resident+c.cache>c.mem)w.push('Host memory budget may be exceeded.');if(c.hit<0||c.hit>1)e.push('Cache hit rate must be between 0 and 1.');if(c.ssd<=0)e.push('SSD bandwidth must be positive.');return{e,w}}
+function sim(mult=1){const c={prompt:num('prompt'),output:num('output'),layers:num('layers'),experts:num('experts'),active:num('active'),esize:num('esize'),resident:num('resident'),cache:num('cache'),vram:num('vram'),mem:num('mem'),ssd:num('ssd')*mult,lat:num('lat')/1000,comp:num('comp'),hit:num('hit'),recall:num('recall'),precision:num('precision'),overlap:num('overlap'),cold:$('cold').value==='1'};const v=validate(c);if(v.e.length)return{error:v.e.join(' '),v,c};const expertGB=c.esize/1000;const totalExperts=c.layers*c.active;const misses=totalExperts*(1-c.hit);const usefulPrefetch=misses*c.recall;const falsePrefetch=usefulPrefetch*(1/c.precision-1);const demandMiss=Math.max(0,misses-usefulPrefetch);const bytesTokenGB=(demandMiss+usefulPrefetch+falsePrefetch)*expertGB;const rawIO=bytesTokenGB/c.ssd*1000+(demandMiss+usefulPrefetch+falsePrefetch)*c.lat;const compute=c.layers*c.comp;const exposedIO=Math.max(0,rawIO-compute*c.overlap);const tpot=compute+exposedIO;const prefillFactor=0.18;const prefillCompute=c.prompt*c.layers*c.comp*prefillFactor;const coldMaterial=c.cold?Math.min(c.layers*c.active*expertGB/c.ssd*1000,30000):0;const ttft=prefillCompute+coldMaterial+tpot;return{c,v,tpot,ttft,tps:1000/tpot,bytesTokenGB,rawIO,compute,exposedIO,demandGB:demandMiss*expertGB,prefetchGB:(usefulPrefetch+falsePrefetch)*expertGB,wasteGB:falsePrefetch*expertGB,total:ttft+tpot*Math.max(0,c.output-1)}}
+function fmt(v,d=1){return Number.isFinite(v)?v.toFixed(d):'—'}
+function render(r){if(r.error){$('token').innerHTML='<span class="bad">'+r.error+'</span>';return}$('ttft').textContent=fmt(r.ttft/1000,2)+' s';$('tpot').textContent=fmt(r.tpot,1)+' ms';$('tps').textContent=fmt(r.tps,2);$('read').textContent=fmt(r.bytesTokenGB,2)+' GB';$('breakdown').innerHTML=[['Compute',fmt(r.compute,1)+' ms'],['Raw SSD I/O',fmt(r.rawIO,1)+' ms'],['Exposed I/O stall',fmt(r.exposedIO,1)+' ms'],['Demand read',fmt(r.demandGB,2)+' GB/token'],['Prefetch read',fmt(r.prefetchGB,2)+' GB/token'],['Wasted prefetch',fmt(r.wasteGB,2)+' GB/token'],['Total generation',fmt(r.total/1000,2)+' s']].map(x=>`<tr><td>${x[0]}</td><td>${x[1]}</td></tr>`).join('');const maxBytes=r.c.ssd*(r.tpot/1000);const checks=[['Input constraints',r.v.e.length===0],['SSD byte conservation',r.bytesTokenGB<=maxBytes+1e-9],['Memory budget warning',r.c.resident+r.c.cache<=r.c.mem],['Finite TPOT/TPS',Number.isFinite(r.tpot)&&Number.isFinite(r.tps)]];$('validation').innerHTML=checks.map(([n,ok])=>`<tr><td>${n}</td><td class="${ok?'good':'bad'}">${ok?'PASS':'FAIL'}</td></tr>`).join('');animate(r);draw(r)}
+function animate(r){const out=$('token'),p=$('prog');out.textContent='';p.style.width='0';const tokens=(sample.repeat(Math.ceil(r.c.output/18))).split(/(\s+)/).filter(Boolean).slice(0,r.c.output);let i=0;const speed=Math.max(12,Math.min(150,r.tpot/20));function step(){if(i>=tokens.length)return;out.textContent+=tokens[i++];p.style.width=(i/tokens.length*100)+'%';setTimeout(step,speed)}setTimeout(step,Math.min(1000,r.ttft/30))}
+function draw(base){const cvs=$('chart'),x=cvs.getContext('2d'),W=cvs.width,H=cvs.height;x.clearRect(0,0,W,H);const pts=[.5,.75,1,1.25,1.5,2,3].map(m=>({m,r:sim(m)}));const max=Math.max(...pts.map(p=>p.r.tpot))*1.1;x.strokeStyle='#2a405b';x.fillStyle='#9db0c8';x.font='12px system-ui';for(let i=0;i<5;i++){const y=25+(H-50)*i/4;x.beginPath();x.moveTo(45,y);x.lineTo(W-20,y);x.stroke();x.fillText(fmt(max*(1-i/4),0)+' ms',4,y+4)}x.strokeStyle='#67d9ff';x.lineWidth=3;x.beginPath();pts.forEach((p,i)=>{const px=55+(W-90)*i/(pts.length-1),py=25+(H-50)*(1-p.r.tpot/max);i?x.lineTo(px,py):x.moveTo(px,py);x.fillStyle='#ecf4ff';x.fillText(p.m+'×',px-8,H-8)});x.stroke()}
+$('run').onclick=()=>render(sim());$('reset').onclick=()=>location.reload();render(sim());
+</script></body></html>
