@@ -69,8 +69,8 @@ function numeric(value) {
 const csvBytes = fs.readFileSync(csvPath);
 assert.equal(
   crypto.createHash('sha256').update(csvBytes).digest('hex'),
-  '5c391ed51b6226fc1806d876fbd4d7cb3d569475d83472af71cb7d22c00d47cb',
-  'Repository CSV differs from the supplied source artifact.'
+  '47033e8b10be92661e417b3d3105eaedaa9960f3faa2ab022f2945c6c7d91789',
+  'Repository CSV differs from the reviewed catalog snapshot.'
 );
 const rows = parseCsv(csvBytes.toString('utf8'));
 const eligible = rows.filter(row => ['moe_layers', 'routed_experts_per_moe_layer', 'topk_routed_per_moe_layer']
@@ -96,7 +96,7 @@ const numericFields = new Set([
 ]);
 
 assert.equal(rows.length, 31, 'The repository CSV must retain all 31 supplied rows.');
-assert.equal(eligible.length, 28, 'Exactly 28 rows must have complete routed topology.');
+assert.equal(eligible.length, 29, 'Exactly 29 rows must have complete routed topology.');
 assert.equal(presets.length, eligible.length, 'Preset count must match eligible CSV rows.');
 
 for (let index = 0; index < eligible.length; index++) {
@@ -111,5 +111,5 @@ for (let index = 0; index < eligible.length; index++) {
 }
 
 const excluded = rows.filter(row => !eligible.includes(row)).map(row => row.model);
-assert.deepEqual(excluded, ['Qwen3.7-Max', 'Kimi K3', 'Qwen3.8-Max-Preview']);
+assert.deepEqual(excluded, ['Qwen3.7-Max', 'Qwen3.8-Max-Preview']);
 console.log(`Preset provenance checked: ${rows.length} CSV rows, ${presets.length} eligible presets, 0 mismatches.`);

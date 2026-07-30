@@ -7,14 +7,15 @@ Accepted for V1.5 Alpha.
 ## Source
 
 - Repository dataset: `data/moe_model_trend_with_layers_2026-07-21.csv`
-- SHA-256: `5c391ed51b6226fc1806d876fbd4d7cb3d569475d83472af71cb7d22c00d47cb`
+- SHA-256: `47033e8b10be92661e417b3d3105eaedaa9960f3faa2ab022f2945c6c7d91789`
 - Dataset rows: 31
-- Eligible topology presets: 28
-- Excluded because required topology is undisclosed: Qwen3.7-Max, Kimi K3, Qwen3.8-Max-Preview
+- Eligible topology presets: 29
+- Excluded because required topology is undisclosed: Qwen3.7-Max, Qwen3.8-Max-Preview
+- Kimi K3 was refreshed on 2026-07-31 from the official [`moonshotai/Kimi-K3` model card](https://huggingface.co/moonshotai/Kimi-K3) and [`config.json`](https://huggingface.co/moonshotai/Kimi-K3/blob/main/config.json) after its open-weight release.
 - Each preset retains its supplied release date, family, model name, parameter metadata, layer schedule note, disclosure status, and source URL.
 
 The CSV is input metadata, not an independent performance oracle.
-`npm run check` executes `tools/check-presets.cjs`, which deterministically verifies all retained CSV metadata, source URLs, the 31-row source count, the 28 eligible rows, and the three named exclusions against `presets.js`.
+`npm run check` executes `tools/check-presets.cjs`, which deterministically verifies all retained CSV metadata, source URLs, the 31-row source count, the 29 eligible rows, and the two named exclusions against `presets.js`.
 
 ## Goal
 
@@ -63,7 +64,8 @@ The supplied table does not uniquely determine those quantities. Deriving them f
 
 ## Acceptance criteria
 
-- Exactly 28 eligible presets are available, plus Custom.
+- Exactly 29 eligible presets are available, plus Custom.
+- Kimi K3 maps its official text-decoder topology to 92 MoE layers, 896 Experts/layer, and top-k 16; the dense first layer and vision encoder remain metadata only.
 - DeepSeek-V3 / R1 maps to 58 layers, 256 Experts/layer, top-k 8.
 - Mixtral 8x7B maps to 32 layers, 8 Experts/layer, top-k 2.
 - Applying a preset preserves Expert size, resident weights, KV size, workload, and hardware controls.

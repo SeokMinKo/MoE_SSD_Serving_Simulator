@@ -1,6 +1,6 @@
 function tests() {
   const log = [], t = (n, f) => { try { log.push((f() ? 'PASS ' : 'FAIL ') + n); } catch (e) { log.push(`ERROR ${n} ${e.message}`); } };
-  const c = { ...readColibri(), placement: 'manual' };
+  const c = { ...readColibri(), placement: 'manual', layers: 75, experts: 256, active: 8 };
   t('Deterministic Colibri result', () => simulateColibri(c).avg === simulateColibri(c).avg);
   t('SSD BW increase does not reduce TPS', () => simulateColibri({ ...c, ssdBW: c.ssdBW * 2 }).tps >= simulateColibri(c).tps);
   t('DRAM BW decrease does not increase TPS', () => simulateColibri({ ...c, dramBW: c.dramBW / 2 }).tps <= simulateColibri(c).tps + EPS);

@@ -53,20 +53,23 @@ const sandbox = {
 vm.createContext(sandbox);
 vm.runInContext(`${moduleSource}\n${selfTestSource}`, sandbox, { filename: 'browser-self-test-bundle.js' });
 
-test('P1: topology preset catalog exposes exactly the 28 complete CSV models', () => {
+test('P1: topology preset catalog exposes Kimi K3 and all 29 complete CSV models', () => {
   const inventory = vm.runInContext(`typeof MOE_MODEL_PRESETS === 'undefined' ? null : ({
     count: MOE_MODEL_PRESETS.length,
     deepseek: MOE_MODEL_PRESETS.find(p => p.model === 'DeepSeek-V3 / R1'),
+    kimiK3: MOE_MODEL_PRESETS.find(p => p.model === 'Kimi K3'),
     mixtral: MOE_MODEL_PRESETS.find(p => p.model === 'Mixtral 8x7B'),
     valid: MOE_MODEL_PRESETS.every(p => Number.isSafeInteger(p.layers) && p.layers > 0 && Number.isSafeInteger(p.experts) && p.experts > 0 && Number.isSafeInteger(p.active) && p.active > 0 && p.active <= p.experts && p.sourceUrl.startsWith('https://')),
     uniqueIds: new Set(MOE_MODEL_PRESETS.map(p => p.id)).size
   })`, sandbox);
   assert.ok(inventory, 'MOE_MODEL_PRESETS must be defined');
-  assert.equal(inventory.count, 28);
+  assert.equal(inventory.count, 29);
   assert.equal(inventory.valid, true);
-  assert.equal(inventory.uniqueIds, 28);
+  assert.equal(inventory.uniqueIds, 29);
   assert.deepEqual(JSON.parse(JSON.stringify(inventory.deepseek && [inventory.deepseek.layers, inventory.deepseek.experts, inventory.deepseek.active])), [58, 256, 8]);
   assert.deepEqual(JSON.parse(JSON.stringify(inventory.mixtral && [inventory.mixtral.layers, inventory.mixtral.experts, inventory.mixtral.active])), [32, 8, 2]);
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory.kimiK3 && [inventory.kimiK3.layers, inventory.kimiK3.experts, inventory.kimiK3.active])), [92, 896, 16]);
+  assert.equal(inventory.kimiK3?.disclosureStatus, 'official open weights/config');
 });
 
 test('P1: applying a topology preset changes only mapped routing controls', () => {
@@ -85,6 +88,15 @@ test('P1: applying a topology preset changes only mapped routing controls', () =
   assert.match(result.summary, /Topology only/);
   assert.match(result.summary, /DeepSeek-V3 \/ R1/);
   assert.match(result.summary, /Disclosure: public/);
+  for (const id of protectedIds) assert.equal(elements.get(id).value, before[id], id);
+  const kimi = vm.runInContext(`(() => {
+    $('modelPreset').value = 'kimi-kimi-k3';
+    const applied = applySelectedModelPreset();
+    return { applied, layers: $('layers').value, experts: $('experts').value, active: $('active').value, summary: $('presetSummary').innerHTML };
+  })()`, sandbox);
+  assert.equal(kimi.applied, true);
+  assert.deepEqual([kimi.layers, kimi.experts, kimi.active], ['92', '896', '16']);
+  assert.match(kimi.summary, /Disclosure: official open weights\/config/);
   for (const id of protectedIds) assert.equal(elements.get(id).value, before[id], id);
   for (const id of ['layers', 'experts', 'active']) elements.get(id).value = before[id];
 });
@@ -296,6 +308,24 @@ test('P1: mobile controls meet 44px targets, avoid sticky overlap, and respect r
 test('browser Self-test reports every scenario passing', () => {
   vm.runInContext('tests()', sandbox);
   const output = elements.get('tests').textContent;
+  assert.equal(output.includes('FAIL'), false, output);
+  assert.equal(output.includes('ERROR'), false, output);
+  assert.match(output, /20\/20 passed$/);
+});
+
+test('P1: browser Self-test remains independent of the selected Kimi K3 topology', () => {
+  const snapshot = new Map([...elements].map(([id, element]) => [id, { value: element.value, checked: element.checked }]));
+  const output = vm.runInContext(`(() => {
+    $('modelPreset').value = 'kimi-kimi-k3';
+    applySelectedModelPreset();
+    tests();
+    return $('tests').textContent;
+  })()`, sandbox);
+  for (const [id, state] of snapshot) {
+    const element = elements.get(id);
+    element.value = state.value;
+    element.checked = state.checked;
+  }
   assert.equal(output.includes('FAIL'), false, output);
   assert.equal(output.includes('ERROR'), false, output);
   assert.match(output, /20\/20 passed$/);

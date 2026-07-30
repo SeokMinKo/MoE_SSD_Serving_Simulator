@@ -463,6 +463,23 @@ const MOE_MODEL_PRESETS = Object.freeze([
     "sourceUrl": "https://huggingface.co/moonshotai/Kimi-K2.7-Code/blob/main/config.json"
   },
   {
+    "id": "kimi-kimi-k3",
+    "releaseDate": "2026-07-16",
+    "family": "Kimi",
+    "model": "Kimi K3",
+    "totalParamsB": 2800,
+    "activeParamsB": 104,
+    "transformerLayers": 93,
+    "layers": 92,
+    "denseLayers": 1,
+    "experts": 896,
+    "active": 16,
+    "sharedExperts": 2,
+    "layerScheduleNotes": "text decoder 첫 1개 dense, 이후 92개 MoE; vision encoder 제외",
+    "disclosureStatus": "official open weights/config",
+    "sourceUrl": "https://huggingface.co/moonshotai/Kimi-K3/blob/main/config.json"
+  },
+  {
     "id": "motif-technologies-motif-3-beta",
     "releaseDate": "2026-07-21",
     "family": "Motif Technologies",

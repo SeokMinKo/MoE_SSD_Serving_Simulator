@@ -42,7 +42,7 @@ node tools/hardware-sweep.cjs
 
 ## Published topology presets
 
-[`data/moe_model_trend_with_layers_2026-07-21.csv`](data/moe_model_trend_with_layers_2026-07-21.csv)에서 MoE layer 수, routed Expert 수, top-k가 모두 공개된 28개 모델을 선택할 수 있습니다. `npm run check`는 저장소 CSV와 프리셋의 전체 retained metadata를 결정적으로 대조합니다. 프리셋은 다음 세 입력만 변경합니다.
+[`data/moe_model_trend_with_layers_2026-07-21.csv`](data/moe_model_trend_with_layers_2026-07-21.csv)에서 MoE layer 수, routed Expert 수, top-k가 모두 공개된 29개 모델을 선택할 수 있습니다. `npm run check`는 저장소 CSV와 프리셋의 전체 retained metadata를 결정적으로 대조합니다. 프리셋은 다음 세 입력만 변경합니다.
 
 - `MoE layers`
 - `Experts / layer`
@@ -61,7 +61,7 @@ node tools/hardware-sweep.cjs
 - 단일 요청에서는 analytic token timeline을 보존하고, 다중 요청에서는 그 baseline에 공유 자원의 queue contention을 추가
 - Swap read/write를 shared SSD contention에 포함하고 AFM selector/initial patch/prefill을 TTFT event chain에 포함
 - `moe-ssd-sim/v1` JSON export/import, deterministic Run ID, baseline diff, replay 결과 검증
-- 공개 구조가 완전한 28개 MoE 모델의 topology-only 프리셋과 원본 config provenance
+- 공개 구조가 완전한 29개 MoE 모델의 topology-only 프리셋과 원본 config provenance
 - Node 22 syntax/test CI, mobile 44px touch targets, reduced-motion, canvas와 동등한 token trace 표
 
 ## DRAM·Swap 기능
