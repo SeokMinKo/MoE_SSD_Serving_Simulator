@@ -72,11 +72,11 @@ class StorageResource {
     this.queue = 0;
     this.byKind = Object.create(null);
   }
-  reserveGB(gb, now, kind, chunks = 1, bwRatio = 1) {
+  reserveGB(gb, now, kind, requests = 1, bwRatio = 1) {
     if (!(gb > 0)) return { start: now, end: now, service: 0, gb: 0, wait: 0, kind };
     const start = Math.max(now, this.free);
     const qd = Math.max(1, this.c.qd || 1);
-    const waves = Math.ceil(Math.max(1, chunks) / qd);
+    const waves = Math.ceil(Math.max(1, requests) / qd);
     const bw = Math.max(0.01, this.c.ssdBW * Math.max(0.01, bwRatio));
     const service = waves * this.c.lat / 1000 + gb / bw * 1000;
     const end = start + service;

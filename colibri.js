@@ -10,7 +10,131 @@ function zipfPick(r, n, a = 1.05) {
   return n - 1;
 }
 
+function zipfTopMass(n, top, a = 1.05) {
+  if (top <= 0 || n <= 0) return 0;
+  if (top >= n) return 1;
+  let selected = 0;
+  let total = 0;
+  for (let i = 1; i <= n; i++) {
+    const weight = 1 / Math.pow(i, a);
+    total += weight;
+    if (i <= top) selected += weight;
+  }
+  return selected / total;
+}
+
+function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
+  const prompt = Math.max(0, c.prompt | 0);
+  const empty = {
+    ms: 0,
+    computeMs: 0,
+    storageMs: 0,
+    transferMs: 0,
+    dramMs: 0,
+    storageGB: 0,
+    transferGB: 0,
+    dramTrafficGB: 0,
+    uniquePerLayer: 0,
+    activatedEntries: 0,
+    storageRequests: 0,
+    transferEntries: 0,
+    warmedDramEntries: 0,
+    warmedVramEntries: 0
+  };
+  if (!prompt) return empty;
+
+  const sequenceUnion = 1 + Math.log2(Math.max(1, c.conc)) * 0.35;
+  const totalActivationsPerLayer = prompt * c.active * c.conc;
+  const uniquePerLayer = Math.min(
+    c.experts,
+    totalActivationsPerLayer,
+    Math.ceil(c.active * (1 + Math.log2(prompt) * 1.6) * sequenceUnion)
+  );
+  const repeatedActivationsPerLayer = Math.max(0, totalActivationsPerLayer - uniquePerLayer);
+  let storageRequests = 0;
+  let transferEntries = 0;
+  for (let l = 0; l < c.layers; l++) {
+    let compulsoryStorage = 0;
+    let compulsoryTransfer = 0;
+    for (let e = 0; e < uniquePerLayer; e++) {
+      if (V[l].has(e)) continue;
+      if (c.arch === 'discrete') compulsoryTransfer++;
+      const resident = e < pin || D[l].has(e) || (!c.odirect && P[l].has(e));
+      if (!resident) compulsoryStorage++;
+    }
+    const storageHotEntries = Math.min(
+      uniquePerLayer,
+      Math.max(pin + D[l].cap, pin + P[l].cap, V[l].cap)
+    );
+    storageRequests += compulsoryStorage + Math.ceil(
+      repeatedActivationsPerLayer * (1 - zipfTopMass(uniquePerLayer, storageHotEntries))
+    );
+    if (c.arch === 'discrete') {
+      const vramHotEntries = Math.min(uniquePerLayer, V[l].cap);
+      transferEntries += compulsoryTransfer + Math.ceil(
+        repeatedActivationsPerLayer * (1 - zipfTopMass(uniquePerLayer, vramHotEntries))
+      );
+    }
+  }
+
+  const storageGB = storageRequests * unitGB;
+  const prefillStorage = new StorageResource(c);
+  const storageJob = prefillStorage.reserveGB(storageGB, 0, 'prefill-expert-read', Math.max(1, storageRequests), 1);
+  const transferGB = transferEntries * unitGB;
+  const transferMs = c.arch === 'discrete'
+    ? transferGB / Math.max(0.01, Math.min(c.pcieBW, c.dramBW)) * 1000
+    : 0;
+  const perTokenComputeMs = c.attn + c.layers * (0.39 + Math.ceil(c.active / c.par) * c.ems);
+  const computeMs = prompt * perTokenComputeMs / Math.max(0.1, c.prefillSpeedup || 4.5);
+
+  const kvPerTokenGB = c.kvKB * 1024 * c.conc / 1e9;
+  const initialKvGB = (c.context + prompt) * kvPerTokenGB;
+  const deviceKvCap = c.arch === 'discrete' ? Math.max(0, c.vram - c.vcache - 0.8) : 0;
+  const hostKvFraction = initialKvGB > EPS ? Math.max(0, initialKvGB - deviceKvCap) / initialKvGB : 0;
+  const kvAttentionGB = prompt * (c.context + prompt / 2) * kvPerTokenGB * c.mem.kvTouchFraction;
+  const activeWeightGB = prompt * (c.resident + c.layers * c.active * rawUnitGB);
+  const dramTrafficGB = storageGB +
+    (c.arch === 'unified' ? activeWeightGB + kvAttentionGB : transferGB + kvAttentionGB * hostKvFraction);
+  const dramMs = dramTrafficGB / Math.max(0.1, c.dramBW) * 1000;
+
+  let warmedDramEntries = 0;
+  let warmedVramEntries = 0;
+  for (let l = 0; l < c.layers; l++) {
+    for (let e = uniquePerLayer - 1; e >= 0; e--) {
+      if (e >= pin) {
+        const wasInDram = D[l].has(e);
+        D[l].put(e);
+        if (!wasInDram && D[l].has(e)) warmedDramEntries++;
+        if (!c.odirect) P[l].put(e);
+      }
+      if (c.arch === 'discrete') {
+        const wasInVram = V[l].has(e);
+        V[l].put(e);
+        if (!wasInVram && V[l].has(e)) warmedVramEntries++;
+      }
+    }
+  }
+
+  return {
+    ms: Math.max(computeMs, storageJob.service, transferMs, dramMs),
+    computeMs,
+    storageMs: storageJob.service,
+    transferMs,
+    dramMs,
+    storageGB,
+    transferGB,
+    dramTrafficGB,
+    uniquePerLayer,
+    activatedEntries: uniquePerLayer * c.layers,
+    storageRequests,
+    transferEntries,
+    warmedDramEntries,
+    warmedVramEntries
+  };
+}
+
 function simulateColibri(c = readColibri()) {
+  c = applyColibriPlacement(c);
   const R = rng(c.seed);
   const unitGB = c.esize * 1.03 / 1024;
   const rawUnitGB = c.esize / 1024;
@@ -19,7 +143,7 @@ function simulateColibri(c = readColibri()) {
   const V = Array.from({ length: c.layers }, () => new LRU(cpl(c.vcache, c)));
   const D = Array.from({ length: c.layers }, () => new LRU(cpl(c.dcache, c)));
   const P = Array.from({ length: c.layers }, () => new LRU(c.odirect ? 0 : cpl(c.page, c)));
-  const pin = cpl(c.pinned, c);
+  const pin = Math.min(c.experts, cpl(c.pinned, c));
   const last = Array.from({ length: c.layers }, () => []);
   const pending = new Map();
   const ready = new Set();
@@ -28,21 +152,23 @@ function simulateColibri(c = readColibri()) {
   const initialKvGB = (c.context + c.prompt) * kvPerTokenGB;
   const deviceKvCap = c.arch === 'discrete' ? Math.max(0, c.vram - c.vcache - 0.8) : 0;
   const state = createMemoryState(c, 'colibri', initialKvGB, deviceKvCap);
-  const tot = { act: 0, v: 0, d: 0, p: 0, pin: 0, demandGB: 0, pfGB: 0, pfIssued: 0, pfUseful: 0, pfLate: 0, pcieGB: 0, stall: 0, swapExpertInGB: 0 };
-  let now = 0;
+  const tot = { act: 0, v: 0, d: 0, p: 0, pin: 0, vPromotions: 0, demandGB: 0, pfGB: 0, pfIssued: 0, pfUseful: 0, pfLate: 0, pcieGB: 0, stall: 0, swapExpertInGB: 0 };
 
   if (!c.cold) {
     for (let l = 0; l < c.layers; l++) {
-      for (let e = 0; e < Math.max(cpl(c.dcache, c), cpl(c.vcache, c)); e++) {
-        D[l].put(e);
-        if (e < cpl(c.vcache, c)) V[l].put(e);
-      }
+      for (let e = 0; e < Math.min(c.experts, cpl(c.vcache, c)); e++) V[l].put(e);
+      for (let e = pin; e < Math.min(c.experts, pin + cpl(c.dcache, c)); e++) D[l].put(e);
     }
   }
 
+  const prefillBreakdown = simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB);
+  let now = prefillBreakdown.ms;
   const initialPressure = applyPressureColibri(c, state, V, D, P, unitGB, 0);
   if (initialPressure.swapOutGB > EPS) storage.reserveGB(initialPressure.swapOutGB, now, 'swap-out-write', 1, c.mem.swapWriteRatio);
   if (initialPressure.oom) return { error: `Memory pressure OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, mode: 'colibri' };
+  if (c.arch === 'discrete' && initialPressure.dyn.deviceGB > c.vram + EPS) {
+    return { error: `Device memory OOM before decode: ${fmt(initialPressure.dyn.deviceGB, 1)} / ${fmt(c.vram, 1)} GB`, c, mode: 'colibri' };
+  }
 
   const key = (l, e) => `${l}:${e}`;
   const flush = t => {
@@ -83,20 +209,21 @@ function simulateColibri(c = readColibri()) {
       const start = now;
       flush(start);
       const misses = [];
+      const hostSources = [];
       let hostN = 0, readyAt = start;
       for (const e of routes[l]) {
         tot.act++;
         const k = key(l, e);
-        if (e < pin) {
-          tot.pin++; hits++; hostN++;
-        } else if (V[l].get(e)) {
+        if (V[l].get(e)) {
           tot.v++; hits++;
           if (ready.delete(k)) tot.pfUseful++;
+        } else if (e < pin) {
+          tot.pin++; hits++; hostN++; hostSources.push(e);
         } else if (D[l].get(e)) {
-          tot.d++; hits++; hostN++;
+          tot.d++; hits++; hostN++; hostSources.push(e);
           if (ready.delete(k)) tot.pfUseful++;
         } else if (!c.odirect && P[l].get(e)) {
-          tot.p++; hits++; hostN++;
+          tot.p++; hits++; hostN++; hostSources.push(e);
           D[l].put(e);
           if (ready.delete(k)) tot.pfUseful++;
         } else if (state.swappedExperts.has(k)) {
@@ -108,7 +235,7 @@ function simulateColibri(c = readColibri()) {
           state.totalSwapInGB += unitGB;
           tokenSwapInGB += unitGB;
           tot.swapExpertInGB += unitGB;
-          hostN++;
+          hostN++; hostSources.push(e);
           D[l].put(e);
         } else if (pending.has(k)) {
           const x = pending.get(k);
@@ -116,16 +243,16 @@ function simulateColibri(c = readColibri()) {
           tot.pfUseful++;
           if (x.end > start) tot.pfLate++;
           readyAt = Math.max(readyAt, x.end);
-          hostN++;
+          hostN++; hostSources.push(e);
           D[l].put(e);
         } else {
           misses.push(e);
-          hostN++;
+          hostN++; hostSources.push(e);
         }
       }
 
       const demandGB = misses.length * unitGB;
-      const dj = storage.reserveGB(demandGB, start, 'expert-demand-read', Math.max(1, Math.ceil(misses.length / c.qd)), 1);
+      const dj = storage.reserveGB(demandGB, start, 'expert-demand-read', Math.max(1, misses.length), 1);
       readyAt = Math.max(readyAt, dj.end);
       tot.demandGB += dj.gb;
       tokenSSDGB += dj.gb;
@@ -146,21 +273,33 @@ function simulateColibri(c = readColibri()) {
       for (const e of misses) {
         D[l].put(e);
         if (!c.odirect) P[l].put(e);
-        if (c.arch === 'discrete' && lj.end <= now) V[l].put(e);
+      }
+      if (c.arch === 'discrete' && lj.end <= now) {
+        for (const e of hostSources) {
+          const wasInVram = V[l].has(e);
+          V[l].put(e);
+          if (!wasInVram && V[l].has(e)) tot.vPromotions++;
+        }
       }
 
       if (c.pf && l + 1 < c.layers) {
         const actual = routes[l + 1], cand = [];
         for (const e of actual) if (R() < c.recall) cand.push(e);
-        const max = Math.floor(c.budget / c.esize);
+        const max = Math.min(c.experts, Math.floor(c.budget / c.esize));
         const target = Math.min(max, Math.ceil(cand.length / c.precision));
         while (cand.length < target) {
           const e = Math.floor(R() * c.experts);
           if (!cand.includes(e)) cand.push(e);
         }
-        const filtered = cand.filter(e => !V[l + 1].has(e) && !D[l + 1].has(e) && !pending.has(key(l + 1, e)) && !state.swappedExperts.has(key(l + 1, e))).slice(0, max);
+        const filtered = cand.filter(e =>
+          e >= pin &&
+          !V[l + 1].has(e) &&
+          !D[l + 1].has(e) &&
+          !pending.has(key(l + 1, e)) &&
+          !state.swappedExperts.has(key(l + 1, e))
+        ).slice(0, max);
         const pfGB = filtered.length * unitGB;
-        const pj = storage.reserveGB(pfGB, start, 'expert-prefetch-read', Math.max(1, Math.ceil(filtered.length / c.qd)), 1);
+        const pj = storage.reserveGB(pfGB, start, 'expert-prefetch-read', Math.max(1, filtered.length), 1);
         for (const e of filtered) pending.set(key(l + 1, e), { l: l + 1, e, end: pj.end });
         tot.pfIssued += filtered.length;
         tot.pfGB += pj.gb;
@@ -175,8 +314,13 @@ function simulateColibri(c = readColibri()) {
     tokenCompressionCpuMs += pressure.compressionCpuMs;
 
     const dyn = pressure.dyn;
+    if (c.arch === 'discrete' && dyn.deviceGB > c.vram + EPS) {
+      pressure.state = 'OOM';
+      pressure.oom = true;
+      state.oom = true;
+    }
     const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
-    const loadWriteGB = tokenSSDGB + tokenSwapInGB;
+    const loadWriteGB = tokenSSDGB;
     const swapTrafficGB = tokenSwapInGB + pressure.swapOutGB;
     const activeWeightGB = c.arch === 'unified' ? c.layers * c.active * rawUnitGB + c.resident : tokenPcieGB;
     const dramTrafficGB = activeWeightGB + kvTouchGB + loadWriteGB + swapTrafficGB + tokenCompressionTrafficGB;
@@ -219,10 +363,7 @@ function simulateColibri(c = readColibri()) {
   const totalStorageGB = storage.gb;
   const ssdPt = totalStorageGB / tokens.length;
   const hit = (tot.v + tot.d + tot.p + tot.pin) / Math.max(1, tot.act);
-  const prefillUnique = Math.min(c.experts, c.active * (1 + Math.log2(Math.max(1, c.prompt)) * 1.6));
-  const coverage = c.cold ? c.pinned / (c.layers * c.experts * c.esize / 1024) : (c.pinned + (c.dcache + c.vcache + c.page) * 0.1) / (c.layers * c.experts * c.esize / 1024);
-  const prefillGB = prefillUnique * c.layers * c.esize / 1024 * (1 - clamp(coverage, 0, 1));
-  const prefill = Math.max(c.prompt / 28 * 1000, prefillGB / c.ssdBW * 1000);
+  const prefill = prefillBreakdown.ms;
   const ttft = prefill + tokens[0].tpot;
   const pciePt = tot.pcieGB / tokens.length;
   const ssdBound = ssdPt ? c.ssdBW / ssdPt : Infinity;
@@ -230,11 +371,11 @@ function simulateColibri(c = readColibri()) {
   const dramPt = state.totalDramTrafficGB / tokens.length;
   const dramBound = dramPt ? c.dramBW / dramPt : Infinity;
   const agg = Math.min(c.conc * tps, ssdBound, pcieBound, dramBound);
-  const elapsed = Math.max(tokens.reduce((a, x) => a + x.tpot, 0), storage.free);
+  const elapsed = Math.max(tokens.reduce((a, x) => a + x.tpot, 0), storage.free - prefill);
   const observed = storage.gb / Math.max(EPS, elapsed / 1000);
   const ev = V.reduce((a, x) => a + x.ev, 0) + D.reduce((a, x) => a + x.ev, 0) + P.reduce((a, x) => a + x.ev, 0);
   return {
-    mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, hit, prefill, ttft, agg,
+    mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, hit, prefill, prefillBreakdown, ttft, agg,
     ssdBound, pcieBound, dramBound, observed, ssdBusy: storage.busy, ssdQueue: storage.queue,
     storageByKind: storage.byKind, ev, oom: state.oom
   };
