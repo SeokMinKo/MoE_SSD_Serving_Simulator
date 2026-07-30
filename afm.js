@@ -54,7 +54,7 @@ function simulateAFM(c = readAFM()) {
     if (pressure.swapOutGB > EPS) storage.reserveGB(pressure.swapOutGB, now, 'swap-out-write', 1, c.mem.swapWriteRatio);
 
     const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
-    const windowWriteGB = readGB + touch.swapInGB;
+    const windowWriteGB = readGB;
     const swapTrafficGB = touch.swapInGB + pressure.swapOutGB;
     const dramTrafficGB = d.activeGB + c.commonGB + kvTouchGB + windowWriteGB + swapTrafficGB + touch.compressionTrafficGB + pressure.compressionTrafficGB;
     const baseElapsed = now - ts + pressure.compressionCpuMs;

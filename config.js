@@ -41,11 +41,87 @@ function readCommon() {
   };
 }
 
+function colibriCapacity(c) {
+  const expertPoolGB = Math.max(0, c.layers * c.experts * c.esize * 1.03 / 1024);
+  const pinnedExpertsPerLayer = Math.min(
+    c.experts,
+    Math.max(0, Math.floor(c.pinned * 1024 / c.esize / c.layers))
+  );
+  const hostExpertPoolGB = Math.max(
+    0,
+    c.layers * (c.experts - pinnedExpertsPerLayer) * c.esize * 1.03 / 1024
+  );
+  const anticipatedKvGB = Math.max(0, (c.context + c.prompt + c.output) * c.kvKB * 1024 * c.conc / 1e9);
+  return { expertPoolGB, hostExpertPoolGB, pinnedExpertsPerLayer, anticipatedKvGB };
+}
+
+function applyColibriPlacement(input) {
+  const c = { ...input };
+  const { expertPoolGB, hostExpertPoolGB, pinnedExpertsPerLayer, anticipatedKvGB } = colibriCapacity(c);
+  if (c.placement !== 'auto') {
+    c.placement = 'manual';
+    c.placementInfo = {
+      policy: 'manual',
+      expertPoolGB,
+      hostExpertPoolGB,
+      pinnedExpertsPerLayer,
+      anticipatedKvGB,
+      dcacheGB: c.dcache,
+      vcacheGB: c.vcache
+    };
+    return c;
+  }
+
+  const deviceReserveGB = c.arch === 'discrete' ? 0.8 : 0;
+  const deviceBudgetGB = Math.max(0, c.vram - deviceReserveGB);
+  const deviceKvGB = c.arch === 'discrete' ? Math.min(anticipatedKvGB, deviceBudgetGB) : 0;
+  const hostKvGB = anticipatedKvGB - deviceKvGB;
+  const vcacheGB = c.arch === 'discrete'
+    ? Math.min(expertPoolGB, Math.max(0, deviceBudgetGB - deviceKvGB))
+    : 0;
+  const placementTargetRatio = c.mem.policy === 'strict' ? c.mem.hard : c.mem.soft;
+  const hostBudgetGB = Math.max(0, Math.min(
+    c.host * placementTargetRatio,
+    c.host - c.mem.minHeadroomGB
+  ));
+  const hostFixedGB =
+    c.resident +
+    c.pinned +
+    c.page +
+    c.mem.osReservedGB +
+    c.mem.backgroundGB +
+    3 +
+    (c.arch === 'unified' ? 0.8 : 0) +
+    hostKvGB;
+  const dcacheGB = Math.min(hostExpertPoolGB, Math.max(0, hostBudgetGB - hostFixedGB));
+
+  c.vcache = vcacheGB;
+  c.dcache = dcacheGB;
+  c.minDCache = Math.min(c.minDCache, dcacheGB);
+  c.placementInfo = {
+    policy: 'auto',
+    expertPoolGB,
+    hostExpertPoolGB,
+    pinnedExpertsPerLayer,
+    anticipatedKvGB,
+    placementTargetRatio,
+    hostBudgetGB,
+    hostFixedGB,
+    hostKvGB,
+    deviceKvGB,
+    deviceReserveGB,
+    dcacheGB,
+    vcacheGB
+  };
+  return c;
+}
+
 function readColibri() {
   const b = readCommon();
   const c = {
     ...b,
     cold: $('cold').checked,
+    placement: $('placement').value,
     layers: val('layers', 75) | 0,
     experts: val('experts', 256) | 0,
     active: val('active', 8) | 0,
@@ -64,6 +140,7 @@ function readColibri() {
     attn: Math.max(0, val('attn', 28)),
     ems: Math.max(0, val('ems', 0.7)),
     par: Math.max(1, val('par', 4) | 0),
+    prefillSpeedup: Math.max(0.1, val('prefillSpeedup', 4.5)),
     pf: $('pf').checked,
     recall: clamp(val('recall', 0.716), 0, 1),
     precision: clamp(val('precision', 0.78), 0.01, 1),

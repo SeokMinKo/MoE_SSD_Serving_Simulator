@@ -21,6 +21,7 @@ function createMemoryState(c, mode, initialKvGB, deviceKvCap = 0) {
     minFreeGB: Infinity,
     peakSwapGB: 0,
     peakDramGBs: 0,
+    peakDeviceGB: 0,
     totalDramTrafficGB: 0,
     totalDramStallMs: 0,
     oom: false,
@@ -315,10 +316,12 @@ function memorySnapshot(c, state, dyn, pressure, token, extra = {}) {
   state.peakPhysicalGB = Math.max(state.peakPhysicalGB, dyn.physicalGB);
   state.minFreeGB = Math.min(state.minFreeGB, freeGB);
   state.peakSwapGB = Math.max(state.peakSwapGB, swapGB);
+  state.peakDeviceGB = Math.max(state.peakDeviceGB, dyn.deviceGB);
   state.lastState = pressure.state;
   return {
     token,
     physicalUsedGB: dyn.physicalGB,
+    deviceUsedGB: dyn.deviceGB,
     expertCacheGB: dyn.expertGB,
     pageCacheGB: dyn.pageGB,
     kvResidentGB: dyn.kvGB,

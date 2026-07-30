@@ -19,14 +19,26 @@ function renderColibri(r) {
   $('tpsLabel').textContent = 'Single TPS';
   $('storageLabel').textContent = 'Storage / token';
   $('hitLabel').textContent = 'Cache hit';
+  const prefillPaths = {
+    Compute: r.prefillBreakdown.computeMs,
+    Storage: r.prefillBreakdown.storageMs,
+    PCIe: r.prefillBreakdown.transferMs,
+    DRAM: r.prefillBreakdown.dramMs
+  };
+  const criticalPath = Object.entries(prefillPaths).sort((a, b) => b[1] - a[1])[0][0];
   $('summary').innerHTML = rows([
-    ['Aggregate TPS', fmt(r.agg, 2)],
+    ['Aggregate capacity upper bound', `${fmt(r.agg, 2)} tok/s`],
+    ['Placement / DRAM / VRAM cache', `${r.c.placementInfo.policy} / ${fmt(r.c.dcache, 2)} / ${fmt(r.c.vcache, 2)} GB`],
+    ['Prefill critical path', `${criticalPath} · ${ms(r.prefill)}`],
+    ['Prefill compute/storage/PCIe/DRAM', `${ms(prefillPaths.Compute)} / ${ms(prefillPaths.Storage)} / ${ms(prefillPaths.PCIe)} / ${ms(prefillPaths.DRAM)}`],
+    ['Prefill Expert storage/transfer', `${fmt(r.prefillBreakdown.storageGB, 2)} / ${fmt(r.prefillBreakdown.transferGB, 2)} GB`],
     ['SSD / PCIe / DRAM bound', `${fmt(r.ssdBound, 2)} / ${Number.isFinite(r.pcieBound) ? fmt(r.pcieBound, 2) : 'N/A'} / ${fmt(r.dramBound, 2)}`],
     ['Storage observed/configured', `${fmt(r.observed, 2)} / ${fmt(r.c.ssdBW, 2)} GB/s`],
     ['Storage busy / queue', `${ms(r.ssdBusy)} / ${ms(r.ssdQueue)}`],
     ['Expert demand / prefetch', `${fmt(r.storageByKind['expert-demand-read'] || 0, 2)} / ${fmt(r.storageByKind['expert-prefetch-read'] || 0, 2)} GB`],
     ['Swap read / write', `${fmt(r.storageByKind['swap-in-read'] || 0, 2)} / ${fmt(r.storageByKind['swap-out-write'] || 0, 2)} GB`],
     ['Prefetch useful/wasted/late', `${r.tot.pfUseful} / ${r.tot.pfWasted} / ${r.tot.pfLate}`],
+    ['VRAM promotions', r.tot.vPromotions],
     ['Cache evictions', r.ev]
   ]);
   const last = r.tokens[r.tokens.length - 1].memory;
@@ -38,9 +50,10 @@ function renderColibri(r) {
     ['Compressed original', `${fmt(last.compressedOriginalGB, 3)} GB`],
     ['Swap resident', `${fmt(last.swapGB, 3)} GB`],
     ['Device KV', `${fmt(r.state.deviceKVGB, 3)} GB`],
+    ['Device cache / KV / reserve', `${fmt(last.deviceUsedGB, 3)} / ${fmt(r.c.vram, 1)} GB`],
     ['O_DIRECT', r.c.odirect ? 'Enabled' : 'Disabled']
   ]);
-  $('modelStatus').innerHTML = `<b>Colibri V1.3 memory-pressure model</b><br>Expert demand, prefetch, swap-in and swap-out share one storage timeline. DRAM Expert backing is <b>${r.c.expertBacking}</b>. Page Cache and file-backed Expert are reclaimed before anonymous KV/Expert swap. DRAM traffic applies a roofline floor to TPOT.<br><br>GPU VRAM bandwidth and OS page-level heuristics remain outside this aggregate model.`;
+  $('modelStatus').innerHTML = `<b>Colibri V1.4 HW-sensitivity model</b><br>Prefill warms the Expert tiers and TTFT uses the maximum of calibrated compute, storage, PCIe, and DRAM paths. Decode Demand, Prefetch, Swap-in and Swap-out share one storage timeline. Auto placement derives cache budgets from RAM/VRAM capacity.<br><br><b>Interpretation:</b> Single TPS and TTFT are approximate trend estimates. Aggregate capacity is a resource upper bound, not a scheduler or continuous-batching prediction. GPU VRAM bandwidth and OS page-level behavior remain outside this model.`;
 }
 function renderAFM(r) {
   $('tpotLabel').textContent = 'Effective TPOT';
@@ -60,7 +73,7 @@ function renderAFM(r) {
     ['Average read / switch', mb(avgSwitch)],
     ['Swap read / write', `${fmt(r.storageByKind['swap-in-read'] || 0, 2)} / ${fmt(r.storageByKind['swap-out-write'] || 0, 2)} GB`],
     ['NAND observed/configured', `${fmt(r.observed, 3)} / ${fmt(r.c.ssdBW, 2)} GB/s`],
-    ['Aggregate capacity-bound TPS', fmt(r.agg, 2)]
+    ['Aggregate capacity upper bound', `${fmt(r.agg, 2)} tok/s`]
   ]);
   const last = r.tokens[r.tokens.length - 1].memory;
   $('memory').innerHTML = rows([
@@ -73,7 +86,7 @@ function renderAFM(r) {
     ['Swap resident', `${fmt(last.swapGB, 3)} GB`],
     ['Estimated full 20B NAND', `${fmt(r.d.totalNandGB, 3)} GB`]
   ]);
-  $('modelStatus').innerHTML = `<b>AFM 3 V1.3 window-routed IFP model</b><br>Shared and current Routed Expert sets remain pinned. Memory pressure is applied primarily to KV Cache. Window reads, Swap I/O and DRAM traffic affect boundary and steady TPOT.<br><br><span class="afmMark">Constant Table 없음:</span> actual Expert IDs and layer masks are not reconstructed; overlap-driven delta loading is used.`;
+  $('modelStatus').innerHTML = `<b>AFM 3 V1.4 window-routed IFP model</b><br>Shared and current Routed Expert sets remain pinned. Memory pressure is applied primarily to KV Cache. Window reads, Swap I/O and DRAM traffic affect boundary and steady TPOT. Aggregate capacity is a resource upper bound, not a scheduler prediction.<br><br><span class="afmMark">Constant Table 없음:</span> actual Expert IDs and layer masks are not reconstructed; overlap-driven delta loading is used.`;
 }
 function render(r) {
   lastResult = r;

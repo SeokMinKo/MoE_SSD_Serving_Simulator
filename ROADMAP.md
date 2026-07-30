@@ -26,7 +26,8 @@
 
 - [ ] Previous-token, statistical-hot and synthetic PILOT prefetch policies
 - [ ] Ready, late and wasted prefetch classification
-- [ ] Prefill routing union and cold materialization
+- [x] Aggregate prefill routing union and cold materialization (V1.4)
+- [ ] Trace-driven prefill routing and cache reuse
 - [ ] Multi-request scheduling and continuous batching
 - [ ] Router-score-based Expert top-p
 - [ ] MTP draft, verify and acceptance model
