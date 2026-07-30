@@ -113,6 +113,8 @@ function initializeAccessibility() {
 }
 
 $('mode').onchange = () => syncMode(true);
+$('modelPreset').onchange = () => { applySelectedModelPreset(); const r = simulate(); render(r); };
+for (const id of ['layers', 'experts', 'active']) $(id).oninput = markModelPresetCustom;
 $('placement').onchange = () => { syncPlacement(); const r = simulate(); render(r); };
 $('afmProfile').onchange = () => { if ($('afmProfile').value !== 'custom') $('afmOverlap').value = $('afmProfile').value; };
 $('afmOverlap').oninput = () => { $('afmProfile').value = 'custom'; };
@@ -120,6 +122,7 @@ $('run').onclick = () => { const r = simulate(); render(r); if (!r.error) startA
 $('pause').onclick = pause;
 $('test').onclick = tests;
 $('speed').onchange = () => { if (anim.timer && !anim.paused) { const sim = Math.max(0, anim.due - performance.now()) * anim.oldSpeed; schedule(anim.action, sim); } };
+initializeModelPresets();
 syncMode(false);
 initializeReproControls();
 initializeAccessibility();

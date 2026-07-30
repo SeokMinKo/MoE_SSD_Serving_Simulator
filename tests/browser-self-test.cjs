@@ -8,6 +8,7 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const elements = new Map();
 
 for (const match of html.matchAll(/<input\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
@@ -35,10 +36,12 @@ const document = {
   }
 };
 
-const moduleSource = ['core.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'repro.js', 'playback.js', 'render.js']
+const moduleSource = ['core.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'repro.js', 'playback.js', 'render.js']
+  .filter(file => fs.existsSync(path.join(root, file)))
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
   .join('\n');
-const selfTestSource = fs.readFileSync(path.join(root, 'tests-init.js'), 'utf8')
+const testsInitFull = fs.readFileSync(path.join(root, 'tests-init.js'), 'utf8');
+const selfTestSource = testsInitFull
   .split('function syncMode')[0];
 const sandbox = {
   console,
@@ -49,6 +52,96 @@ const sandbox = {
 };
 vm.createContext(sandbox);
 vm.runInContext(`${moduleSource}\n${selfTestSource}`, sandbox, { filename: 'browser-self-test-bundle.js' });
+
+test('P1: topology preset catalog exposes exactly the 28 complete CSV models', () => {
+  const inventory = vm.runInContext(`typeof MOE_MODEL_PRESETS === 'undefined' ? null : ({
+    count: MOE_MODEL_PRESETS.length,
+    deepseek: MOE_MODEL_PRESETS.find(p => p.model === 'DeepSeek-V3 / R1'),
+    mixtral: MOE_MODEL_PRESETS.find(p => p.model === 'Mixtral 8x7B'),
+    valid: MOE_MODEL_PRESETS.every(p => Number.isSafeInteger(p.layers) && p.layers > 0 && Number.isSafeInteger(p.experts) && p.experts > 0 && Number.isSafeInteger(p.active) && p.active > 0 && p.active <= p.experts && p.sourceUrl.startsWith('https://')),
+    uniqueIds: new Set(MOE_MODEL_PRESETS.map(p => p.id)).size
+  })`, sandbox);
+  assert.ok(inventory, 'MOE_MODEL_PRESETS must be defined');
+  assert.equal(inventory.count, 28);
+  assert.equal(inventory.valid, true);
+  assert.equal(inventory.uniqueIds, 28);
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory.deepseek && [inventory.deepseek.layers, inventory.deepseek.experts, inventory.deepseek.active])), [58, 256, 8]);
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory.mixtral && [inventory.mixtral.layers, inventory.mixtral.experts, inventory.mixtral.active])), [32, 8, 2]);
+});
+
+test('P1: applying a topology preset changes only mapped routing controls', () => {
+  const apiAvailable = vm.runInContext("typeof initializeModelPresets === 'function' && typeof applySelectedModelPreset === 'function'", sandbox);
+  assert.equal(apiAvailable, true, 'preset UI API must be defined');
+  const protectedIds = ['esize', 'resident', 'kv', 'prompt', 'output', 'host', 'vram', 'ssdBW'];
+  const before = Object.fromEntries([...protectedIds, 'layers', 'experts', 'active'].map(id => [id, elements.get(id).value]));
+  const result = vm.runInContext(`(() => {
+    initializeModelPresets();
+    $('modelPreset').value = 'deepseek-deepseek-v3-r1';
+    const applied = applySelectedModelPreset();
+    return { applied, layers: $('layers').value, experts: $('experts').value, active: $('active').value, summary: $('presetSummary').innerHTML };
+  })()`, sandbox);
+  assert.equal(result.applied, true);
+  assert.deepEqual([result.layers, result.experts, result.active], ['58', '256', '8']);
+  assert.match(result.summary, /Topology only/);
+  assert.match(result.summary, /DeepSeek-V3 \/ R1/);
+  assert.match(result.summary, /Disclosure: public/);
+  for (const id of protectedIds) assert.equal(elements.get(id).value, before[id], id);
+  for (const id of ['layers', 'experts', 'active']) elements.get(id).value = before[id];
+});
+
+test('P1: editing mapped topology controls returns the preset selector to Custom', () => {
+  const apiAvailable = vm.runInContext("typeof markModelPresetCustom === 'function'", sandbox);
+  assert.equal(apiAvailable, true, 'manual topology API must be defined');
+  const before = Object.fromEntries(['layers', 'experts', 'active'].map(id => [id, elements.get(id).value]));
+  const state = vm.runInContext(`(() => {
+    initializeModelPresets();
+    $('modelPreset').value = 'mistral-mixtral-8x7b';
+    applySelectedModelPreset();
+    markModelPresetCustom();
+    return { selected: $('modelPreset').value, summary: $('presetSummary').innerHTML };
+  })()`, sandbox);
+  assert.equal(state.selected, 'custom');
+  assert.match(state.summary, /Custom \/ manual topology/);
+  for (const id of ['layers', 'experts', 'active']) elements.get(id).value = before[id];
+});
+
+test('P1: topology preset control is accessible and wired into the browser entry point', () => {
+  assert.match(html, /<select id="modelPreset"/);
+  assert.match(html, /class="f presetControl"/);
+  assert.match(html, /\.f\.presetControl\{grid-template-columns:1fr\}/);
+  assert.match(html, /id="presetSummary"[^>]*role="status"/);
+  assert.ok(html.indexOf('<script src="core.js"></script>') < html.indexOf('<script src="presets.js"></script>'));
+  assert.ok(html.indexOf('<script src="presets.js"></script>') < html.indexOf('<script src="config.js"></script>'));
+  assert.match(testsInitFull, /initializeModelPresets\(\)/);
+  assert.match(testsInitFull, /\$\('modelPreset'\)\.onchange/);
+  assert.match(testsInitFull, /for \(const id of \['layers', 'experts', 'active'\]\) \$\(id\)\.oninput = markModelPresetCustom/);
+});
+
+test('P1: topology preset provenance is repository-local and checked by the quality gate', () => {
+  assert.equal(fs.existsSync(path.join(root, 'data', 'moe_model_trend_with_layers_2026-07-21.csv')), true);
+  assert.equal(fs.existsSync(path.join(root, 'tools', 'check-presets.cjs')), true);
+  assert.match(packageJson.scripts.check, /check-presets\.cjs/);
+});
+
+test('P1: scenario import clears stale published-model attribution', () => {
+  const before = Object.fromEntries(['layers', 'experts', 'active'].map(id => [id, elements.get(id).value]));
+  const state = vm.runInContext(`(() => {
+    initializeModelPresets();
+    $('modelPreset').value = 'deepseek-deepseek-v3-r1';
+    applySelectedModelPreset();
+    applyScenarioConfig({ ...readColibri(), layers: 32, experts: 8, active: 2 });
+    return { selected: $('modelPreset').value, summary: $('presetSummary').innerHTML };
+  })()`, sandbox);
+  assert.equal(state.selected, 'custom');
+  assert.match(state.summary, /Custom \/ manual topology/);
+  for (const id of ['layers', 'experts', 'active']) elements.get(id).value = before[id];
+});
+
+test('P0: preset summary rejects non-HTTPS source links', () => {
+  vm.runInContext("renderModelPresetSummary({ ...MOE_MODEL_PRESETS[0], sourceUrl: 'javascript:alert(1)' })", sandbox);
+  assert.doesNotMatch(elements.get('presetSummary').innerHTML, /javascript:/i);
+  assert.match(elements.get('presetSummary').innerHTML, /source unavailable/);
+});
 
 test('P0: browser input rejects unsafe integers instead of wrapping them', () => {
   const prompt = elements.get('prompt');
@@ -193,10 +286,11 @@ test('P1: swap UI distinguishes allocated or in-flight bytes from completed resi
   assert.doesNotMatch(elements.get('memory').innerHTML, /Swap resident/);
 });
 
-test('P1: mobile controls meet 44px targets and reduced motion disables the cursor animation', () => {
+test('P1: mobile controls meet 44px targets, avoid sticky overlap, and respect reduced motion', () => {
   assert.match(html, /min-height:\s*44px/);
   assert.match(html, /prefers-reduced-motion/);
   assert.match(html, /\.cursor\s*\{[^}]*animation:\s*none/);
+  assert.match(html, /\.buttons:has\(#run\)\{position:static/);
 });
 
 test('browser Self-test reports every scenario passing', () => {

@@ -29,6 +29,7 @@ node tools/hardware-sweep.cjs
 
 - **Colibri Token-Routed MoE**
   - Token/Layer routing
+  - 28개 공개 모델의 topology-only 프리셋
   - VRAM/DRAM/Page Cache 계층
   - Demand 및 Prefetch 공유 Storage timeline
   - file-backed 또는 anonymous DRAM Expert Cache
@@ -38,6 +39,16 @@ node tools/hardware-sweep.cjs
   - 32-token selection window
   - Delta Routed Expert loading
   - Shared/Current Routed weight pinned
+
+## Published topology presets
+
+[`data/moe_model_trend_with_layers_2026-07-21.csv`](data/moe_model_trend_with_layers_2026-07-21.csv)에서 MoE layer 수, routed Expert 수, top-k가 모두 공개된 28개 모델을 선택할 수 있습니다. `npm run check`는 저장소 CSV와 프리셋의 전체 retained metadata를 결정적으로 대조합니다. 프리셋은 다음 세 입력만 변경합니다.
+
+- `MoE layers`
+- `Experts / layer`
+- `Active experts / token`
+
+총/활성 parameter, dense/shared Expert 구성과 원본 Hugging Face config 링크는 설명용 metadata로만 표시됩니다. CSV만으로 확정할 수 없는 Expert size, resident weights, KV bytes, compute latency, precision, hardware 및 workload는 변경하지 않습니다. 따라서 모델명을 선택해도 해당 모델의 성능이 calibration되었다는 뜻이 아닙니다. 상세 계약은 [`docs/model-presets.md`](docs/model-presets.md)를 참조하십시오.
 
 ## V1.5 주요 변경
 
@@ -50,6 +61,7 @@ node tools/hardware-sweep.cjs
 - 단일 요청에서는 analytic token timeline을 보존하고, 다중 요청에서는 그 baseline에 공유 자원의 queue contention을 추가
 - Swap read/write를 shared SSD contention에 포함하고 AFM selector/initial patch/prefill을 TTFT event chain에 포함
 - `moe-ssd-sim/v1` JSON export/import, deterministic Run ID, baseline diff, replay 결과 검증
+- 공개 구조가 완전한 28개 MoE 모델의 topology-only 프리셋과 원본 config provenance
 - Node 22 syntax/test CI, mobile 44px touch targets, reduced-motion, canvas와 동등한 token trace 표
 
 ## DRAM·Swap 기능
@@ -99,6 +111,7 @@ npm test
 - V1.4 요구사항: [`docs/V1.4_HW_SENSITIVITY_SPEC.md`](docs/V1.4_HW_SENSITIVITY_SPEC.md)
 - V1.4 검증 결과: [`docs/v1.4-validation.md`](docs/v1.4-validation.md)
 - V1.5 검증 결과와 신뢰 경계: [`docs/v1.5-validation.md`](docs/v1.5-validation.md)
+- 모델 프리셋 매핑과 제외 범위: [`docs/model-presets.md`](docs/model-presets.md)
 - 상세 계획 및 검토: [`docs/DRAM_SWAP_IMPLEMENTATION_PLAN.md`](docs/DRAM_SWAP_IMPLEMENTATION_PLAN.md)
 - AFM 3 모델: [`docs/afm3-model.md`](docs/afm3-model.md)
 
