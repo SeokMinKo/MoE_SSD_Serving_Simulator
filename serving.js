@@ -142,7 +142,9 @@ function tokenWork(token) {
     ssdRequests: Math.max(1, token.storageRequests || 1),
     pcieGB: Math.max(0, token.pcieGB || 0),
     criticalDramGB: Math.max(0, (token.memory?.dramTrafficGB || 0) - prefetchGB - swapOutGB),
-    computeMs: Math.max(0, token.computeMs ?? token.tpot ?? 0)
+    computeMs: Math.max(0, token.computeMs ?? token.tpot ?? 0),
+    computeOnlyMs: Math.max(0, token.computeOnlyMs ?? token.computeMs ?? token.tpot ?? 0),
+    patchMs: Math.max(0, token.patchMs || 0)
   };
 }
 
@@ -206,6 +208,7 @@ function simulateServing(config, requestSpecs, options = {}) {
     ssd: new SharedServingResource('ssd', config.ssdBW, config.lat / 1000, config.qd || 1),
     pcie: new SharedServingResource('pcie', Math.min(config.pcieBW || Infinity, config.dramBW), 0, 1),
     dram: new SharedServingResource('dram', config.dramBW, 0, 1),
+    patch: new SharedServingResource('patch'),
     compute: new SharedServingResource('compute')
   };
   const queue = new EventQueue();
@@ -223,7 +226,7 @@ function simulateServing(config, requestSpecs, options = {}) {
         const selector = resources.compute.reserveMs(config.initSel, event.time, 'prefill');
         const storage = resources.ssd.reserveGB(request.trace.tot.initialReadGB, selector.end, config.chunks, 'prefill');
         const initialPatchMs = config.patchBase + request.trace.tot.initialReadGB / config.patchBW * 1000;
-        const patch = resources.compute.reserveMs(initialPatchMs, storage.end, 'prefill');
+        const patch = resources.patch.reserveMs(initialPatchMs, storage.end, 'prefill');
         const prefill = resources.compute.reserveMs(config.prompt / config.prefillTPS * 1000, patch.end, 'prefill');
         readyAt = prefill.end;
       } else {
@@ -273,16 +276,21 @@ function simulateServing(config, requestSpecs, options = {}) {
         const swapSource = resources.dram.reserveGB(item.work.swapOutGB, item.time, 1, item.phase);
         resources.ssd.reserveGB(item.work.swapOutGB, swapSource.end, 1, item.phase);
       }
-      const maxCompute = Math.max(...batch.map(item => item.work.computeMs));
+      const maxItem = batch.reduce((current, item) => item.work.computeMs > current.work.computeMs ? item : current, batch[0]);
+      const maxCompute = maxItem.work.computeMs;
       const batchService = maxCompute * (1 + 0.08 * Math.max(0, batch.length - 1));
       const batchPhases = new Set(batch.map(item => item.phase));
       const computePhase = batchPhases.size === 1 ? batch[0].phase : 'mixed';
-      const compute = resources.compute.reserveMs(batchService, batchReady, computePhase);
+      const patchRatio = maxCompute > EPS ? Math.min(1, maxItem.work.patchMs / maxCompute) : 0;
+      const patchService = batchService * patchRatio;
+      const computeService = batchService - patchService;
+      const patch = resources.patch.reserveMs(patchService, batchReady, computePhase);
+      const compute = resources.compute.reserveMs(computeService, patch.end, computePhase);
       const batchOverhead = Math.max(0, batchService - maxCompute);
       for (const item of batch) {
         const admissionDelay = batchReady - item.time;
-        const computeWait = isSingleRequest ? 0 : compute.wait;
-        const completeAt = item.baselineCompleteAt + admissionDelay + computeWait + batchOverhead;
+        const resourceWait = isSingleRequest ? 0 : patch.wait + compute.wait;
+        const completeAt = item.baselineCompleteAt + admissionDelay + resourceWait + batchOverhead;
         queue.push({ time: completeAt, type: 'complete', request: item.request, token: item.token, batchSize: batch.length });
       }
     } else if (event.type === 'complete') {

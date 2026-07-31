@@ -119,7 +119,7 @@ function advisorTimedResources(tokens, c, phaseElapsedMs, mode, capacitySnapshot
   const dramStallMs = advisorAverage(tokens, token => token?.memory?.dramStallMs);
   const computeMs = advisorAverage(tokens, token => token?.computeOnlyMs ?? token?.computeMs);
   const storageQueue = advisorQueueFraction(serving, 'ssd', phase);
-  const movementQueue = Math.max(advisorQueueFraction(serving, 'pcie', phase), advisorQueueFraction(serving, 'dram', phase));
+  const movementQueue = Math.max(advisorQueueFraction(serving, 'pcie', phase), advisorQueueFraction(serving, 'dram', phase), advisorQueueFraction(serving, 'patch', phase));
   const computeQueue = advisorQueueFraction(serving, 'compute', phase);
   const storagePhase = advisorPhaseResource(serving, 'ssd', phase);
   const computePhase = advisorPhaseResource(serving, 'compute', phase);
@@ -132,7 +132,7 @@ function advisorTimedResources(tokens, c, phaseElapsedMs, mode, capacitySnapshot
   const capacity = advisorCapacityScore(capacitySnapshot, c);
   return [
     advisorResource('storage', Math.max(advisorScore(storageMs, elapsed), advisorScore(exactStorageQueueMs, elapsed), Math.round(storageQueue * 100)), 'round(clamp(max(avg exact StorageResource service, avg exact StorageResource queue) ÷ phase elapsed, shared phase queue fraction) × 100))', [advisorEvidence('Average Expert/window storage reads', demandGB, 'GB'), advisorEvidence('Average prefetch reads', prefetchGB, 'GB'), advisorEvidence('Average swap read/write', swapGB, 'GB'), cacheHitEvidence, advisorEvidence('Average exact storage service', storageMs, 'ms'), advisorEvidence('Average exact storage queue', exactStorageQueueMs, 'ms'), advisorEvidence('Average swap read/write service', swapServiceMs, 'ms'), advisorEvidence('Shared SSD queue', storagePhase?.queueMs, 'ms', serving ? `${phase} event-scheduler contention only.` : 'No concurrent serving queue.'), advisorEvidence('Phase elapsed', elapsed, 'ms', note)], mode),
-    advisorResource('data-movement', Math.max(advisorScore(Math.max(pcieMs, dramStallMs, patchMs), elapsed), Math.round(movementQueue * 100)), 'round(clamp(max(PCIe service, AFM patch materialization, exposed DRAM stall, shared phase queue fraction) × 100))', [advisorEvidence('Average PCIe service demand', pcieMs, 'ms'), advisorEvidence('Average AFM patch materialization', patchMs, 'ms'), advisorEvidence('Average exposed DRAM stall', dramStallMs, 'ms'), advisorEvidence('Shared PCIe/DRAM queue fraction', movementQueue * 100, '%'), advisorEvidence('Phase elapsed', elapsed, 'ms')], mode),
+    advisorResource('data-movement', Math.max(advisorScore(Math.max(pcieMs, dramStallMs, patchMs), elapsed), Math.round(movementQueue * 100)), 'round(clamp(max(PCIe service, AFM patch materialization, exposed DRAM stall, shared phase queue fraction) × 100))', [advisorEvidence('Average PCIe service demand', pcieMs, 'ms'), advisorEvidence('Average AFM patch materialization', patchMs, 'ms'), advisorEvidence('Average exposed DRAM stall', dramStallMs, 'ms'), advisorEvidence('Shared PCIe/DRAM/patch queue fraction', movementQueue * 100, '%'), advisorEvidence('Phase elapsed', elapsed, 'ms')], mode),
     advisorResource('compute', Math.max(advisorScore(computeMs, elapsed), Math.round(computeQueue * 100)), 'round(clamp(max(avg modeled compute demand ÷ phase elapsed, shared phase compute queue ÷ (queue + busy)) × 100))', [advisorEvidence('Average compute demand', computeMs, 'ms'), advisorEvidence('Shared compute queue', computePhase?.queueMs, 'ms', serving ? `${phase} event-scheduler contention only.` : 'No concurrent serving queue.'), advisorEvidence('Phase elapsed', elapsed, 'ms')], mode),
     advisorResource('capacity-policy', capacity, 'round(clamp(max(memory utilization, modeled pressure-state severity) × 100))', [advisorEvidence('Physical memory used', capacitySnapshot?.physicalUsedGB, 'GB'), advisorEvidence('Host / unified capacity', c?.host, 'GB'), advisorEvidence('Pressure-state severity', advisorPressureSeverity(capacitySnapshot?.pressureState) * 100, '%', note)], mode)
   ];
@@ -142,7 +142,7 @@ function advisorPrefillResources(r) {
   const c = r.c || {};
   const firstMemory = r.tokens?.[0]?.memory || {};
   const storageQueue = advisorQueueFraction(r.serving, 'ssd', 'prefill');
-  const movementQueue = Math.max(advisorQueueFraction(r.serving, 'pcie', 'prefill'), advisorQueueFraction(r.serving, 'dram', 'prefill'));
+  const movementQueue = Math.max(advisorQueueFraction(r.serving, 'pcie', 'prefill'), advisorQueueFraction(r.serving, 'dram', 'prefill'), advisorQueueFraction(r.serving, 'patch', 'prefill'));
   const computeQueue = advisorQueueFraction(r.serving, 'compute', 'prefill');
   const storagePhase = advisorPhaseResource(r.serving, 'ssd', 'prefill');
   if (r.mode === 'afm3') {
@@ -154,7 +154,7 @@ function advisorPrefillResources(r) {
     const capacity = advisorCapacityScore(firstMemory, c);
     return [
       advisorResource('storage', Math.max(advisorScore(storageMs, elapsed), Math.round(storageQueue * 100)), 'round(clamp(max(initial window-read service ÷ modeled prefill path, shared prefill queue fraction) × 100))', [advisorEvidence('Initial window read', storageMs, 'ms'), advisorEvidence('Shared SSD queue', storagePhase?.queueMs, 'ms', 'Prefill event-scheduler contention only.'), advisorEvidence('Modeled prefill path', elapsed, 'ms')], r.mode),
-      advisorResource('data-movement', Math.max(advisorScore(patchMs, elapsed), Math.round(movementQueue * 100)), 'round(clamp(max(initial patch-transfer ÷ modeled prefill path, shared prefill data-movement queue fraction) × 100))', [advisorEvidence('Initial patch transfer', patchMs, 'ms'), advisorEvidence('Shared PCIe/DRAM queue fraction', movementQueue * 100, '%'), advisorEvidence('Modeled prefill path', elapsed, 'ms')], r.mode),
+      advisorResource('data-movement', Math.max(advisorScore(patchMs, elapsed), Math.round(movementQueue * 100)), 'round(clamp(max(initial patch-transfer ÷ modeled prefill path, shared prefill data-movement queue fraction) × 100))', [advisorEvidence('Initial patch transfer', patchMs, 'ms'), advisorEvidence('Shared PCIe/DRAM/patch queue fraction', movementQueue * 100, '%'), advisorEvidence('Modeled prefill path', elapsed, 'ms')], r.mode),
       advisorResource('compute', Math.max(advisorScore(computeMs, elapsed), Math.round(computeQueue * 100)), 'round(clamp(max(selector + prompt compute ÷ modeled prefill path, shared prefill compute queue fraction) × 100))', [advisorEvidence('Selector + prompt compute', computeMs, 'ms'), advisorEvidence('Shared compute queue fraction', computeQueue * 100, '%'), advisorEvidence('Modeled prefill path', elapsed, 'ms')], r.mode),
       advisorResource('capacity-policy', capacity, 'round(clamp(max(first-token memory utilization, modeled pressure-state severity) × 100))', [advisorEvidence('First-token physical memory proxy', firstMemory.physicalUsedGB, 'GB', 'No separate prefill memory trace is exposed.'), advisorEvidence('Host / unified capacity', c.host, 'GB')], r.mode)
     ];

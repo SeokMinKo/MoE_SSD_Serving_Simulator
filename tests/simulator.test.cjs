@@ -537,6 +537,36 @@ test('P1: AFM periodic patch materialization is data movement rather than comput
   assert.ok(result.tokens.slice(1).every(token => token.patchMs > 0 && token.computeOnlyMs === 0));
 });
 
+test('P1: concurrent AFM patch-only work queues as data movement, never compute', () => {
+  const config = afmConfig({
+    conc: 4, host: 512, context: 1, prompt: 0, output: 3,
+    routed: 1, shared: 0, freq: 1, overlap: 0,
+    initSel: 0, periodicSel: 0, patchBase: 1_000, patchBW: 1_000_000,
+    ssdBW: 1_000_000, attn: 0, ffn: 0, runtime: 0
+  });
+  const result = simulator.simulateAFM(config);
+  assert.equal(result.error, undefined, result.error);
+  result.serving = simulator.simulateServing(config, Array.from({ length: 4 }, (_, index) => ({ id: `r${index}`, arrivalMs: 0, output: config.output })));
+  assert.equal(result.serving.error, undefined, result.serving.error);
+  const prefillCompute = result.serving.resources.compute.phases.prefill;
+  const prefillPatch = result.serving.resources.patch?.phases?.prefill;
+  const decodeCompute = result.serving.resources.compute.phases.decode;
+  const decodePatch = result.serving.resources.patch?.phases?.decode;
+  assert.equal(prefillCompute?.busyMs || 0, 0);
+  assert.equal(prefillCompute?.queueMs || 0, 0);
+  assert.ok(prefillPatch?.busyMs > 0 && prefillPatch?.queueMs > 0, JSON.stringify(result.serving.resources));
+  assert.equal(decodeCompute?.busyMs || 0, 0);
+  assert.equal(decodeCompute?.queueMs || 0, 0);
+  assert.ok(decodePatch?.busyMs > 0 && decodePatch?.queueMs > 0, JSON.stringify(result.serving.resources));
+  const insight = simulator.createBottleneckInsight(result);
+  for (const phaseId of ['prefill', 'decode']) {
+    const phase = insight.phases.find(entry => entry.id === phaseId);
+    const scores = Object.fromEntries(phase.resources.map(resource => [resource.id, resource.score]));
+    assert.equal(scores.compute, 0, `${phaseId}: ${JSON.stringify(scores)}`);
+    assert.ok(scores['data-movement'] > 0, `${phaseId}: ${JSON.stringify(scores)}`);
+  }
+});
+
 test('P1: Colibri Advisor uses exact per-job StorageResource service accounting', () => {
   const result = simulator.simulateColibri(colibriConfig({
     prompt: 0, output: 1, context: 1, layers: 2, experts: 1, active: 1,

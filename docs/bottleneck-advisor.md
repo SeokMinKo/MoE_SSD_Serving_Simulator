@@ -36,7 +36,7 @@ For capacity pressure:
 score = round(clamp(max(memory utilization, modeled pressure-state severity) × 100, 0, 100))
 ```
 
-The UI must display the exact numerator, denominator, and formula basis used by every score. Overlapped resources may each score highly, so scores do not need to sum to 100. For concurrent runs, Prefill, first-token, and decode take the maximum of component pressure and their own phase-local `queue / (queue + busy)` pressure. Scheduler reservations retain phase-local queue/busy accounting; mixed-phase compute batches remain labeled `mixed` rather than being silently assigned to one phase.
+The UI must display the exact numerator, denominator, and formula basis used by every score. Overlapped resources may each score highly, so scores do not need to sum to 100. For concurrent runs, Prefill, first-token, and decode take the maximum of component pressure and their own phase-local `queue / (queue + busy)` pressure. Scheduler reservations retain phase-local queue/busy accounting. AFM patch/materialization work uses a dedicated shared `patch` resource and contributes to Data movement queue pressure, never Compute queue pressure. Mixed-phase compute batches remain labeled `mixed` rather than being silently assigned to one phase.
 
 ### Prefill
 
