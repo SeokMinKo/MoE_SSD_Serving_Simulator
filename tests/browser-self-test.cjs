@@ -36,7 +36,7 @@ const document = {
   }
 };
 
-const moduleSource = ['core.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'advisor.js', 'repro.js', 'playback.js', 'render.js']
+const moduleSource = ['core.js', 'help.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'advisor.js', 'storage-io.js', 'sweep.js', 'repro.js', 'playback.js', 'render.js', 'sweep-ui.js']
   .filter(file => fs.existsSync(path.join(root, file)))
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
   .join('\n');
@@ -155,6 +155,14 @@ test('P0: preset summary rejects non-HTTPS source links', () => {
   assert.match(elements.get('presetSummary').innerHTML, /source unavailable/);
 });
 
+test('P0: browser input preserves safe integer seeds without Float32 rounding', () => {
+  elements.get('seed').value = String(Number.MAX_SAFE_INTEGER);
+  const config = vm.runInContext('readColibri()', sandbox);
+  assert.equal(config.seed, Number.MAX_SAFE_INTEGER);
+  assert.equal(vm.runInContext('validateSimulationConfig(readColibri()).valid', sandbox), true);
+  elements.get('seed').value = '260730';
+});
+
 test('P0: browser input rejects unsafe integers instead of wrapping them', () => {
   const prompt = elements.get('prompt');
   const original = prompt.value;
@@ -271,6 +279,153 @@ test('P1: normalized export and replay produce the same deterministic run ID', (
   assert.equal(ids[3], true);
 });
 
+test('P1: sticky action toolbar and Storage I/O workspace expose the approved controls', () => {
+  const toolbarIndex = html.indexOf('id="actionToolbar"');
+  const gridIndex = html.indexOf('<div class="grid">');
+  assert.ok(toolbarIndex >= 0 && toolbarIndex < gridIndex, `${toolbarIndex}/${gridIndex}`);
+  assert.match(html, /class="[^"]*actionToolbar[^"]*"/);
+  for (const id of ['run', 'pause', 'openSweep', 'test', 'exportScenario', 'importScenario', 'setBaseline']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, />App integrity test</);
+  for (const id of ['graphViewMode', 'storageXAxis', 'storageYAxis', 'storageChart', 'storageTraceSummary']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /<option value="tabs"/);
+  assert.match(html, /<option value="stacked"/);
+  assert.match(html, /<option value="overlay"/);
+  assert.match(html, /<script src="storage-io\.js"><\/script>[\s\S]*<script src="render\.js"><\/script>/);
+});
+
+test('P1: Storage I/O renderer exposes read/write data and graph view switching', () => {
+  assert.equal(vm.runInContext("typeof renderStorageIO === 'function' && typeof syncGraphView === 'function'", sandbox), true);
+  const result = vm.runInContext('simulateColibri(readColibri())', sandbox);
+  sandbox.__storageResult = result;
+  const output = vm.runInContext(`(() => {
+    $('storageXAxis').value = 'completion-time';
+    $('storageYAxis').value = 'gb';
+    renderStorageIO(__storageResult);
+    return $('storageTraceSummary').innerHTML;
+  })()`, sandbox);
+  delete sandbox.__storageResult;
+  assert.match(output, /Prefill/);
+  assert.match(output, /Expert \/ window read/);
+  assert.match(output, /Prefetch read/);
+  assert.match(output, /Swap-in read/);
+  assert.match(output, /Swap-out write/);
+  assert.doesNotMatch(output, /undefined|NaN|Infinity/);
+});
+
+test('P1: parameter help describes meaning, config key, unit, engine, and synthetic direction', () => {
+  assert.equal(vm.runInContext("typeof parameterHelpForControl === 'function' && typeof initializeParameterHelp === 'function'", sandbox), true);
+  const help = vm.runInContext("parameterHelpForControl('ssdBW')", sandbox);
+  assert.match(help, /SSD/);
+  assert.match(help, /ssdBW/);
+  assert.match(help, /GB\/s/);
+  assert.match(help, /Colibri.*AFM|모든 엔진/);
+  assert.match(help, /simulator|시뮬레이터/i);
+  const helpSource = fs.readFileSync(path.join(root, 'help.js'), 'utf8');
+  assert.match(helpSource, /tabIndex\s*=\s*0|tabindex/i);
+  assert.match(helpSource, /aria-describedby|aria-label/);
+});
+
+test('P1: browser sweep and successful import never rerun accepted simulations on the main thread', () => {
+  const sweepSource = fs.readFileSync(path.join(root, 'sweep-ui.js'), 'utf8');
+  const reproSource = fs.readFileSync(path.join(root, 'repro.js'), 'utf8');
+  const workerSource = fs.readFileSync(path.join(root, 'replay-worker.js'), 'utf8');
+  assert.doesNotMatch(sweepSource, /simulateSweepConfig\s*\(/);
+  assert.match(sweepSource, /new Worker\(['"]simulation-worker\.js['"]\)/);
+  assert.match(sweepSource, /const baselineConfig = baselineRun\.config/);
+  assert.match(sweepSource, /sweepScenarioInFlight[\s\S]*scheduleSweepTick/);
+  assert.match(sweepSource, /if \(!activeSweepExecution \|\| sweepScenarioInFlight/);
+  assert.match(sweepSource, /finally\s*\{\s*sweepScenarioInFlight = false/);
+  assert.match(sweepSource, /execution\.status = 'failed'/);
+  assert.doesNotMatch(reproSource.match(/async function importScenarioFile[\s\S]*?\n\}/)?.[0] || '', /syncMode\s*\(/);
+  assert.match(workerSource, /replayResult/);
+  assert.equal(fs.existsSync(path.join(root, 'simulation-worker.js')), true);
+});
+
+test('P1: artifact import requires a Worker and serializes import/sweep operations', () => {
+  const reproSource = fs.readFileSync(path.join(root, 'repro.js'), 'utf8');
+  const sweepSource = fs.readFileSync(path.join(root, 'sweep-ui.js'), 'utf8');
+  const workerSource = fs.readFileSync(path.join(root, 'replay-worker.js'), 'utf8');
+  assert.doesNotMatch(reproSource, /typeof Worker === 'undefined'\) return Promise\.resolve/);
+  assert.match(reproSource, /scenarioImportGeneration/);
+  assert.match(reproSource, /AbortController/);
+  assert.match(reproSource, /sweepPreparing/);
+  assert.match(reproSource, /scenarioImportInProgress/);
+  assert.match(reproSource, /generation !== scenarioImportGeneration[\s\S]*scenarioImportAbortError/);
+  assert.match(reproSource, /compactReplayResultForUI/);
+  assert.match(workerSource, /REPLAY_RESULT_MAX_BYTES/);
+  assert.match(workerSource, /TextEncoder/);
+  const compaction = vm.runInContext(`(() => {
+    const original = { tokens: [{ token: 1 }], state: { peakPhysicalGB: 1, swappedExperts: new Set(['1:1']), pending: new Map([['x', 1]]) }, serving: { completedTokens: 1000, requests: [{ id: 'request-1', output: 1000, tokens: Array.from({ length: 1000 }, (_, index) => ({ token: index })) }] } };
+    const compact = compactReplayResultForUI(original);
+    return { originalTokens: original.serving.requests[0].tokens.length, compactHasTokens: Object.prototype.hasOwnProperty.call(compact.serving.requests[0], 'tokens'), completedTokens: compact.serving.completedTokens, topTokens: compact.tokens.length, stateHasSet: Object.values(compact.state).some(value => value instanceof Set), stateHasMap: Object.values(compact.state).some(value => value instanceof Map) };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(compaction)), { originalTokens: 1000, compactHasTokens: false, completedTokens: 1000, topTokens: 1, stateHasSet: false, stateHasMap: false });
+  assert.match(sweepSource, /scenarioImportInProgress/);
+});
+
+test('P1: browser artifact replay runs in a bounded worker instead of blocking the UI thread', () => {
+  const reproSource = fs.readFileSync(path.join(root, 'repro.js'), 'utf8');
+  assert.match(reproSource, /new Worker\(['"]replay-worker\.js['"]\)/);
+  assert.match(reproSource, /worker\.terminate\(\)/);
+  assert.match(reproSource, /30-second work budget[\s\S]*30000\)/);
+  assert.match(reproSource, /await verifyScenarioArtifactAsync/);
+  assert.equal(fs.existsSync(path.join(root, 'replay-worker.js')), true);
+});
+
+test('P1: scenario import represents deterministic seed and clears a null sweep atomically', () => {
+  assert.match(html, /<input[^>]+id="seed"[^>]+type="hidden"|<input[^>]+type="hidden"[^>]+id="seed"/);
+  const reproSource = fs.readFileSync(path.join(root, 'repro.js'), 'utf8');
+  assert.match(reproSource, /seed:\s*'seed'/);
+  assert.match(reproSource, /else\s+resetSweepResults\(\)/);
+  assert.match(reproSource, /catch\s*\([^)]*\)\s*\{[\s\S]*restoreScenarioUIState/);
+});
+
+test('P1: parameter help first pointer click remains open after focus', () => {
+  assert.equal(vm.runInContext('parameterHelpClickShouldShow(true, false)', sandbox), true);
+  assert.equal(vm.runInContext('parameterHelpClickShouldShow(false, false)', sandbox), false);
+  assert.equal(vm.runInContext('parameterHelpClickShouldShow(false, true)', sandbox), true);
+});
+
+test('P1: OOM sweep metrics render as chart gaps and non-numeric table cells', () => {
+  const calls = [];
+  const context = {
+    clearRect() {}, fillRect() {}, beginPath() {}, moveTo(...args) { calls.push(['moveTo', ...args]); },
+    lineTo(...args) { calls.push(['lineTo', ...args]); }, stroke() {}, fillText() {},
+    set fillStyle(value) {}, set strokeStyle(value) {}, set lineWidth(value) {}, set font(value) {}
+  };
+  elements.set('gapChart', { width: 200, height: 100, getContext: () => context });
+  elements.set('sweepResults', { innerHTML: '' });
+  const table = vm.runInContext(`(() => {
+    const rows = [
+      { index: 0, changes: { host: 1 }, metrics: { status: 'completed', oom: false, reason: '', ttftMeanMs: 10, ttftP50Ms: 10, ttftP95Ms: 10, singleTPS: 1, aggregateTPS: 1 } },
+      { index: 1, changes: { host: 0.5 }, metrics: { status: 'oom', oom: true, reason: 'OOM', ttftMeanMs: 20, ttftP50Ms: 20, ttftP95Ms: 20, singleTPS: 2, aggregateTPS: 2 } },
+      { index: 2, changes: { host: 2 }, metrics: { status: 'completed', oom: false, reason: '', ttftMeanMs: 30, ttftP50Ms: 30, ttftP95Ms: 30, singleTPS: 3, aggregateTPS: 3 } }
+    ];
+    drawSweepMetricChart('gapChart', rows, ['ttftMeanMs'], ['#fff'], 'gap');
+    renderSweepTable({ baselineMetrics: rows[0].metrics, results: rows.slice(1) });
+    return $('sweepResults').innerHTML;
+  })()`, sandbox);
+  assert.equal(calls.filter(call => call[0] === 'lineTo').length, 5, JSON.stringify(calls));
+  assert.match(table, /<td>oom<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td>/);
+});
+
+test('P1: Sweep Lab exposes parameter selection, OAT/Grid execution controls, charts, table, and CSV', () => {
+  for (const id of ['sweepLab', 'sweepMode', 'parameterSearch', 'parameterCategory', 'parameterChecklist', 'selectAllSweep', 'clearSweep', 'sweepSelectedCount', 'sweepProjectedCount', 'sweepParameters', 'runSweep', 'pauseSweep', 'resumeSweep', 'cancelSweep', 'exportSweepCsv', 'sweepProgress', 'sweepTruncation', 'sweepTTFTChart', 'sweepTPSChart', 'sweepResults']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /One-at-a-time/);
+  assert.match(html, /Grid/);
+  assert.match(html, /TTFT mean \/ p50 \/ p95/);
+  assert.match(html, /Single-sequence TPS \/ aggregate TPS/);
+  assert.match(html, /Estimated sensitivity simulator \/ Unvalidated Alpha/);
+  assert.match(html, /<script src="sweep\.js"><\/script>/);
+  assert.equal(vm.runInContext("typeof initializeSweepLab === 'function' && typeof renderSweepResults === 'function' && typeof exportSweepCsv === 'function'", sandbox), true);
+});
+
 test('P1: successful render exposes an equivalent token trace table for non-canvas access', () => {
   const result = vm.runInContext('simulateColibri(readColibri())', sandbox);
   sandbox.__traceResult = result;
@@ -343,7 +498,7 @@ test('P1: mobile controls meet 44px targets, avoid sticky overlap, and respect r
   assert.match(html, /\.buttons:has\(#run\)\{position:static/);
 });
 
-test('browser Self-test reports every scenario passing', () => {
+test('browser App integrity test reports every scenario passing', () => {
   vm.runInContext('tests()', sandbox);
   const output = elements.get('tests').textContent;
   assert.equal(output.includes('FAIL'), false, output);
@@ -351,7 +506,18 @@ test('browser Self-test reports every scenario passing', () => {
   assert.match(output, /22\/22 passed$/);
 });
 
-test('P1: browser Self-test remains independent of the selected Kimi K3 topology', () => {
+test('P1: App integrity test is independent from edited form controls', () => {
+  const previousHost = elements.get('host').value;
+  elements.get('host').value = '1';
+  vm.runInContext('tests()', sandbox);
+  const output = elements.get('tests').textContent;
+  elements.get('host').value = previousHost;
+  assert.equal(output.includes('FAIL'), false, output);
+  assert.equal(output.includes('ERROR'), false, output);
+  assert.match(output, /22\/22 passed$/);
+});
+
+test('P1: browser App integrity test remains independent of the selected Kimi K3 topology', () => {
   const snapshot = new Map([...elements].map(([id, element]) => [id, { value: element.value, checked: element.checked }]));
   const output = vm.runInContext(`(() => {
     $('modelPreset').value = 'kimi-kimi-k3';

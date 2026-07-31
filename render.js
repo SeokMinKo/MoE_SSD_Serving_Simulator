@@ -138,12 +138,12 @@ function clearRenderedResult() {
     anim.paused = false;
   }
   for (const id of ['ttft', 'tpot', 'tps', 'ssdpt', 'hit', 'mem']) $(id).textContent = '—';
-  for (const id of ['summary', 'pressureSummary', 'memory', 'modelStatus', 'comparisonSummary', 'traceSummary']) $(id).innerHTML = '';
+  for (const id of ['summary', 'pressureSummary', 'memory', 'modelStatus', 'comparisonSummary', 'traceSummary', 'storageTraceSummary']) $(id).innerHTML = '';
   $('token').innerHTML = '';
   $('status').textContent = 'Invalid result';
   $('progress').style.width = '0';
   $('pause').textContent = 'Ⅱ Pause';
-  for (const id of ['chart', 'memoryChart']) {
+  for (const id of ['chart', 'storageChart', 'memoryChart']) {
     const canvas = $(id);
     if (canvas && typeof canvas.getContext === 'function') canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
   }
@@ -171,12 +171,66 @@ function render(r) {
   renderPressure(r);
   renderTraceTable(r);
   drawPerformance(r);
+  renderStorageIO(r);
   drawMemory(r);
 }
 
 function renderTraceTable(r) {
   const rows = r.tokens.map((token, index) => `<tr><th scope="row">Token ${index + 1}</th><td>${fmt(token.tpot, 3)} ms</td><td>${fmt(token.ssdGB || 0, 6)} GB</td><td>${fmt(token.memory.physicalUsedGB, 3)} GB</td><td>${fmt(token.memory.swapGB, 3)} GB</td><td>${token.memory.pressureState}</td></tr>`).join('');
   $('traceSummary').innerHTML = `<caption>Token performance and memory trace</caption><thead><tr><th scope="col">Token</th><th scope="col">TPOT</th><th scope="col">SSD</th><th scope="col">Physical memory</th><th scope="col">Swap allocated / in-flight</th><th scope="col">Pressure</th></tr></thead><tbody>${rows}</tbody>`;
+}
+
+function storageIOUnit(yMode) {
+  return ({ gb: 'GB', gbps: 'GB/s', 'service-ms': 'ms service', 'queue-ms': 'ms queue' })[yMode] || 'GB';
+}
+
+function renderStorageIO(r) {
+  const xMode = $('storageXAxis')?.value || 'token-index';
+  const yMode = $('storageYAxis')?.value || 'gb';
+  const buckets = buildStorageIOBuckets(r, { xMode, yMode });
+  const table = $('storageTraceSummary');
+  if (table) {
+    const body = buckets.map(bucket => `<tr><th scope="row">${advisorEscape(bucket.label)}</th><td>${fmt(bucket.x, 4)}</td><td>${fmt(bucket.series.expertRead, 6)}</td><td>${fmt(bucket.series.prefetchRead, 6)}</td><td>${fmt(bucket.series.swapInRead, 6)}</td><td>${fmt(bucket.series.swapOutWrite, 6)}</td></tr>`).join('');
+    table.innerHTML = `<caption>Storage I/O by execution bucket · ${advisorEscape(storageIOUnit(yMode))}</caption><thead><tr><th scope="col">Bucket</th><th scope="col">X</th><th scope="col">Expert / window read</th><th scope="col">Prefetch read</th><th scope="col">Swap-in read</th><th scope="col">Swap-out write</th></tr></thead><tbody>${body}</tbody>`;
+  }
+  const canvas = $('storageChart');
+  if (!canvas || typeof canvas.getContext !== 'function') return;
+  const context = canvas.getContext('2d'), width = canvas.width, height = canvas.height;
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = '#071525'; context.fillRect(0, 0, width, height);
+  const maxValue = Math.max(EPS, ...buckets.map(bucket => Object.values(bucket.series).reduce((sum, value) => sum + value, 0)));
+  const colors = { expertRead: '#67d9ff', prefetchRead: '#72e3a6', swapInRead: '#a78bfa', swapOutWrite: '#ff8696' };
+  const plotLeft = 48, plotTop = 24, plotWidth = width - 68, plotHeight = height - 54;
+  context.strokeStyle = '#29445f';
+  for (let index = 0; index < 5; index++) { const y = plotTop + plotHeight * index / 4; context.beginPath(); context.moveTo(plotLeft, y); context.lineTo(plotLeft + plotWidth, y); context.stroke(); }
+  const barWidth = Math.max(2, plotWidth / Math.max(1, buckets.length) * 0.65);
+  const xPositions = storageIOXPositions(buckets, plotLeft + barWidth / 2, Math.max(0, plotWidth - barWidth));
+  buckets.forEach((bucket, index) => {
+    const x = xPositions[index];
+    let bottom = plotTop + plotHeight;
+    for (const [series] of STORAGE_IO_SERIES) {
+      const barHeight = plotHeight * bucket.series[series] / maxValue;
+      context.fillStyle = colors[series];
+      context.fillRect(x - barWidth / 2, bottom - barHeight, barWidth, barHeight);
+      bottom -= barHeight;
+    }
+  });
+  context.fillStyle = '#9db0c8'; context.font = '11px sans-serif';
+  context.fillText(`Read stacks + Write · ${storageIOUnit(yMode)} · X ${xMode}`, 8, 14);
+}
+
+function syncGraphView() {
+  const panels = $('graphPanels');
+  if (!panels || typeof document.querySelectorAll !== 'function') return;
+  const mode = $('graphViewMode')?.value || 'tabs';
+  const active = $('graphTab')?.value || 'performance';
+  panels.className = `graphPanels ${mode}`;
+  document.querySelectorAll('.graphPanel').forEach(panel => { panel.hidden = mode === 'tabs' && panel.dataset.graph !== active; });
+  const tab = $('graphTab');
+  if (tab) tab.disabled = mode !== 'tabs';
+  const disclosure = $('overlayDisclosure');
+  if (disclosure) disclosure.hidden = mode !== 'overlay';
+  if (lastResult && !lastResult.error) { drawPerformance(lastResult); renderStorageIO(lastResult); drawMemory(lastResult); }
 }
 
 function drawPerformance(r) {

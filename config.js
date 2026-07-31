@@ -41,7 +41,7 @@ function readCommon() {
     pcieBW: val('pcieBW', 24),
     ssdBW: val('ssdBW', 9.2),
     lat: val('lat', 120),
-    seed: 260730,
+    seed: intVal('seed', 260730),
     mem: readMemoryPolicy()
   };
 }
@@ -213,6 +213,31 @@ function afmDerived(c) {
   return { expertParams, rawExpertGB, expertGB, sharedGB, routedGB, activeGB: sharedGB + routedGB, activeFFNParams, totalNandGB };
 }
 
+function colibriSimulationWork(c) {
+  if (!c || c.mode !== 'colibri') return { routeWork: 0, cacheWork: 0, routeLimit: 100_000_000, cacheLimit: 20_000_000, replayWork: 0, fraction: 0 };
+  const repeatedTraceCount = c.conc > 1 ? c.conc + 1 : 1;
+  const routeCount = c.layers * c.output * repeatedTraceCount;
+  const routeSearchCost = Math.max(1, Math.ceil(Math.log2(c.experts + 1)));
+  const sparseDrawLimit = Math.max(32, c.active * 8);
+  const routeCost = c.active > c.experts / 4
+    ? c.experts + c.active * routeSearchCost
+    : c.active === 1
+      ? routeSearchCost
+      : sparseDrawLimit * routeSearchCost + c.experts + c.active * routeSearchCost;
+  const routeWork = routeCount * routeCost;
+  const expectedRouteCost = c.active > c.experts / 4
+    ? (c.experts + c.active * routeSearchCost) / 4
+    : c.active * routeSearchCost;
+  const expectedRouteWork = routeCount * expectedRouteCost;
+  const expertUnitGB = c.esize * 1.03 / 1024;
+  const cacheEntriesPerLayer = c.cold || !(expertUnitGB > 0) || !(c.layers > 0) ? 0
+    : Math.min(c.experts, Math.floor(c.vcache / expertUnitGB / c.layers)) + Math.min(c.experts, Math.floor(c.dcache / expertUnitGB / c.layers));
+  const cacheWork = c.layers * cacheEntriesPerLayer * repeatedTraceCount;
+  const routeLimit = 100_000_000;
+  const cacheLimit = 20_000_000;
+  return { routeWork, cacheWork, routeLimit, cacheLimit, replayWork: expectedRouteWork + cacheWork, fraction: Math.max(routeWork / routeLimit, cacheWork / cacheLimit) };
+}
+
 function validateSimulationConfig(c) {
   const errors = [];
   const add = (path, code, message) => errors.push({ path, code, message });
@@ -298,9 +323,8 @@ function validateSimulationConfig(c) {
     if (c.arch === 'discrete' && c.placement === 'manual' && Number.isFinite(c.vcache) && Number.isFinite(c.vram) && c.vcache + 0.8 > c.vram + EPS) {
       add('vcache', 'CAPACITY_EXCEEDED', 'Manual VRAM Expert cache plus the 0.8GB device reserve cannot exceed physical VRAM.');
     }
-    const routeWork = c.layers * c.active * c.output * c.conc;
-    const cacheWork = c.layers * c.experts;
-    if (Number.isFinite(routeWork) && (routeWork > 20_000_000 || cacheWork > 1_000_000)) {
+    const work = colibriSimulationWork(c);
+    if (!Number.isFinite(work.routeWork) || !Number.isFinite(work.cacheWork) || work.routeWork > work.routeLimit || work.cacheWork > work.cacheLimit) {
       add('complexity', 'COMPLEXITY_LIMIT', 'Scenario exceeds the interactive browser work budget.');
     }
   } else if (c.mode === 'afm3') {

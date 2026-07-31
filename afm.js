@@ -22,10 +22,13 @@ function simulateAFM(c = readAFM()) {
   const initialPressure = applyPressureAFM(c, d, state, 0);
   const initialSwap = scheduleSwapOut(c, state, initialPressure, storage, now, () => afmDynamic(c, d, state));
   now = Math.max(now, initialSwap.blockedUntil);
+  const prefillStorageEvents = summarizeStorageEvents(storage.events);
+  storage.events.length = 0;
   if (initialPressure.oom) return { error: `Unified memory OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, d, mode: 'afm3' };
 
   for (let i = 0; i < c.output; i++) {
     const ts = now;
+    const storageEventStart = storage.events.length;
     let boundary = false, changed = 0, readGB = 0, selectMs = 0, readMs = 0, patchMs = 0, exposed = 0;
     let storageServiceMs = 0, storageQueueMs = 0, swapServiceMs = 0, swapQueueMs = 0;
     const window = Math.floor(i / c.freq);
@@ -109,6 +112,7 @@ function simulateAFM(c = readAFM()) {
       swapInGB: touch.swapInGB,
       swapOutGB: pressure.swapOutGB,
       storageRequests: changed ? c.chunks : 0,
+      storageEvents: summarizeStorageEvents(storage.events.slice(storageEventStart)),
       hit: c.overlap,
       boundary,
       changed,
@@ -121,6 +125,7 @@ function simulateAFM(c = readAFM()) {
       exposed: selectMs + exposed,
       memory: snap
     });
+    storage.events.length = storageEventStart;
     if (pressure.oom) break;
   }
 
@@ -146,7 +151,7 @@ function simulateAFM(c = readAFM()) {
   const p95 = sorted[Math.min(tokens.length - 1, Math.floor(tokens.length * 0.95))].tpot;
   const ttft = now > 0 ? c.initSel + initialReadJob.service + initialReadJob.wait + initialPatch + prefill + tokens[0].tpot : 0;
   return {
-    mode: 'afm3', c, d, tokens, switches, state,
+    mode: 'afm3', c, d, tokens, switches, state, prefillStorageEvents,
     tot: { periodicGB, initialReadGB, changedTotal, boundaryTotal },
     avg, tps, steady, steadyTPS, boundaryTPOT, p95, ssdPt, hit, prefill, ttft, agg,
     ssdBound, pcieBound: Infinity, dramBound, observed, ssdBusy: storage.busy,

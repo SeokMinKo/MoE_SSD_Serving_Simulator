@@ -79,13 +79,15 @@ A recommendation with a score below 35 is labeled `Monitor`; otherwise it is lab
 - OOM before any token completes: show an OOM recovery card from the structured error/config context; unavailable timing phases must not fabricate scores.
 - OOM recommendations must not imply that the run completed or that TTFT/TPS is valid after the last completed token.
 
-## Scenario artifact V2
+## Scenario artifact V3
 
-- Schema: `moe-ssd-sim/v2`.
+- Schema: `moe-ssd-sim/v3`.
 - Export includes a deterministic derived `insight` snapshot.
+- Export may include the current `parameter-sweep/v1` baseline, definition, retained raw result summaries, and status.
 - Import validates the insight structure and score bounds.
 - Replay recomputes the insight from canonical config/result and rejects any stored insight mismatch.
-- V1 artifacts are rejected as unsupported; this is an explicit schema break approved for this feature.
+- Replay also recomputes every retained sweep point (maximum 50) and rejects config, metric, status, or run-ID mismatch.
+- V1 and V2 artifacts are rejected as unsupported; this is an explicit schema break approved for this feature.
 
 ## Trust boundary
 
@@ -106,6 +108,6 @@ Real traces, device service curves, calibration, and hold-out validation remain 
 - Every score shows formula/evidence and a bounded recommendation with a trade-off.
 - Colibri and AFM produce deterministic insight snapshots.
 - Invalid input clears stale insight; partial OOM emits recovery guidance.
-- `moe-ssd-sim/v2` export/import replay verifies insight integrity.
+- `moe-ssd-sim/v3` export/import replay verifies insight and optional sweep integrity.
 - Keyboard/screen-reader semantics and 375px layout remain usable without horizontal overflow.
 - Existing simulator, scenario, preset, accessibility, and security gates remain green.

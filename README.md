@@ -60,7 +60,7 @@ node tools/hardware-sweep.cjs
 - Stable min-heap event queue, 공유 SSD/DRAM/PCIe/compute timeline, request arrival과 admission-window batching
 - 단일 요청에서는 analytic token timeline을 보존하고, 다중 요청에서는 그 baseline에 공유 자원의 queue contention을 추가
 - Swap read/write를 shared SSD contention에 포함하고 AFM selector/initial patch/prefill을 TTFT event chain에 포함
-- `moe-ssd-sim/v2` JSON export/import, deterministic Run ID, baseline diff, result와 derived Advisor insight replay 검증
+- `moe-ssd-sim/v3` JSON export/import, deterministic Run ID, baseline diff, result·Advisor insight·completed parameter sweep replay 검증. V2 artifact import는 의도적으로 호환하지 않으며 V3로 다시 export해야 합니다.
 - Prefill/first-token/decode/memory-pressure별 0–100 상대 병목 압력, 근거, 조건부 설정 방향 및 부작용
 - 공개 구조가 완전한 29개 MoE 모델의 topology-only 프리셋과 원본 config provenance
 - Node 22 syntax/test CI, mobile 44px touch targets, reduced-motion, canvas와 동등한 token trace 표
@@ -79,6 +79,19 @@ node tools/hardware-sweep.cjs
 - Swap traffic을 포함한 DRAM bandwidth roofline
 - Swap onset token, Swap allocated/in-flight, Thrash ratio
 - Memory/Swap trace 그래프
+- 실제 synthetic storage job에서 파생한 Expert/window·prefetch·swap-in read 및 swap-out write 분리 그래프
+
+## Parameter Sweep Lab
+
+상단 `Open sweep lab`은 현재 엔진에 적용되는 simulator 입력을 One-at-a-time 또는 Grid 방식으로 명시적으로 재실행합니다. Numeric 입력은 Auto, linear min/max/step, logarithmic min/max/points, custom list를 지원하고 categorical 입력은 유효한 값을 직접 선택합니다.
+
+- Grid의 조합이 50개를 넘으면 row-major deterministic ordering의 앞 50개만 실행하고 제외 수를 표시합니다.
+- 각 scenario 사이에서 pause/resume/cancel할 수 있으며 이미 완료된 결과는 보존합니다.
+- 결과는 baseline과 함께 TTFT mean/p50/p95, single-sequence TPS, aggregate TPS를 별도 그래프와 raw table로 표시합니다.
+- invalid/OOM point는 raw status와 reason을 보존하고 그래프에서 정상점으로 연결하지 않습니다.
+- CSV export와 scenario V3 JSON export를 지원합니다. JSON import는 저장된 sweep 결과를 신뢰하지 않고 최대 50개 scenario를 deterministic replay합니다.
+
+이 기능은 사용자 실행형 synthetic counterfactual 분석이며 Advisor가 자동으로 개선율을 예측하는 기능이 아닙니다.
 
 ## Memory policy 설정
 
@@ -101,7 +114,7 @@ node tools/hardware-sweep.cjs
 
 ## 검증
 
-UI의 `Self-test`는 **22개** 브라우저 회귀 시나리오를 실행합니다. Node 검증은 다음과 같습니다.
+UI의 `App integrity test`는 **22개** 고정 canonical 브라우저 회귀 시나리오를 실행합니다. 현재 입력이나 실제 하드웨어를 평가하지 않습니다. Node 검증은 다음과 같습니다.
 
 ```bash
 npm ci --ignore-scripts
@@ -125,7 +138,7 @@ npm test
 - Discrete GPU의 고정 runtime/device weight 사용량은 0.8GB workspace calibration으로 단순화합니다.
 - V1.5 scheduler는 analytic trace를 no-contention baseline으로 사용하는 resource-level approximation입니다. Aggregate roofline work는 streaming overlap으로 취급하고 공유 자원의 queue delay를 추가합니다. GPU kernel-level batching, scheduler fairness, request 간 Expert-cache 공유, in-flight read coalescing은 모델링하지 않습니다.
 - SSD QD는 command-latency wave와 aggregate bandwidth cap으로 근사하며 실제 outstanding-slot service curve가 아닙니다.
-- Scenario import의 동일 결과/Run ID/Advisor insight 검증은 같은 V1.5 JavaScript 모델의 deterministic replay이며 외부 독립 oracle이 아닙니다.
+- Scenario import의 동일 결과/Run ID/Advisor insight/sweep 검증은 같은 V1.5 JavaScript 모델의 deterministic replay이며 외부 독립 oracle이 아닙니다.
 - CPU/GPU 제품명이나 FLOPS에서 kernel 시간을 자동 산출하지 않습니다.
 - 모델/런타임 trace와 SSD service curve로 calibration하기 전에는 절대 TPS/TTFT 오차 범위를 보장할 수 없습니다.
 - 절대 TPS보다 동일 설정에서 변수 하나를 변경한 상대 비교에 사용하십시오.

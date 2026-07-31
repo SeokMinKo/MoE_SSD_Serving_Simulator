@@ -1,6 +1,9 @@
+const APP_INTEGRITY_COLIBRI_FIXTURE = Object.freeze(sweepClone(readColibri()));
+const APP_INTEGRITY_AFM_FIXTURE = Object.freeze(sweepClone(readAFM()));
+
 function tests() {
   const log = [], t = (n, f) => { try { log.push((f() ? 'PASS ' : 'FAIL ') + n); } catch (e) { log.push(`ERROR ${n} ${e.message}`); } };
-  const c = { ...readColibri(), placement: 'manual', layers: 75, experts: 256, active: 8 };
+  const c = { ...sweepClone(APP_INTEGRITY_COLIBRI_FIXTURE), placement: 'manual', layers: 75, experts: 256, active: 8 };
   t('Deterministic Colibri result', () => simulateColibri(c).avg === simulateColibri(c).avg);
   t('SSD BW increase does not reduce TPS', () => simulateColibri({ ...c, ssdBW: c.ssdBW * 2 }).tps >= simulateColibri(c).tps);
   t('DRAM BW decrease does not increase TPS', () => simulateColibri({ ...c, dramBW: c.dramBW / 2 }).tps <= simulateColibri(c).tps + EPS);
@@ -63,7 +66,7 @@ function tests() {
     const r = simulateColibri({ ...c, placement: 'manual', dcache: 12.5, vcache: 3.25 });
     return r.c.dcache === 12.5 && r.c.vcache === 3.25;
   });
-  const a = readAFM(), d = afmDerived(a);
+  const a = sweepClone(APP_INTEGRITY_AFM_FIXTURE), d = afmDerived(a);
   t('AFM 2-bit expert raw size ≈12.976MB', () => Math.abs(d.rawExpertGB * 1000 - 12.976128) < 0.001);
   t('AFM 33rd token is first boundary', () => { const r = simulateAFM({ ...a, output: 33 }); return r.switches.length === 1 && r.tokens[32].boundary; });
   t('AFM active Expert weights remain pinned', () => { const r = simulateAFM({ ...a, host: 32, mem: { ...a.mem, backgroundGB: 0 } }); return !r.error && r.tokens.every(tk => tk.memory.expertCacheGB === d.activeGB); });
@@ -77,16 +80,16 @@ function tests() {
     const insight = createBottleneckInsight(simulateColibri({ ...c, prompt: 8, output: 4 }));
     return insight.phases.length === 4 && insight.phases.every(phase => phase.resources.length === 4 && phase.resources.every(resource => Number.isInteger(resource.score) && resource.score >= 0 && resource.score <= 100));
   });
-  t('Scenario V2 persists reproducible Advisor insight', () => {
+  t('Scenario V3 persists reproducible Advisor insight', () => {
     const result = simulateColibri({ ...c, prompt: 8, output: 2 });
     const artifact = createScenarioArtifact(result.c, result);
-    return artifact.schemaVersion === 'moe-ssd-sim/v2' && bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(result));
+    return artifact.schemaVersion === 'moe-ssd-sim/v3' && artifact.sweep === null && bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(result));
   });
   t('1.5 TPS at 1× = 666.7ms', () => Math.abs(delay(1000 / 1.5, 1) - 666.6667) < 0.01);
   $('tests').textContent = log.join(String.fromCharCode(10)) + String.fromCharCode(10, 10) + `${log.filter(x => x.startsWith('PASS')).length}/${log.length} passed`;
 }
 
-function syncMode(applyPreset = false) {
+function syncModeControls(applyPreset = false) {
   const afm = $('mode').value === 'afm3';
   document.querySelectorAll('.afmOnly').forEach(e => e.classList.toggle('hidden', !afm));
   document.querySelectorAll('.colibriOnly').forEach(e => e.classList.toggle('hidden', afm));
@@ -95,6 +98,10 @@ function syncMode(applyPreset = false) {
     $('arch').value = 'unified'; $('host').value = '128'; $('dramBW').value = '273'; $('ssdBW').value = '9.2';
   }
   syncPlacement();
+}
+
+function syncMode(applyPreset = false) {
+  syncModeControls(applyPreset);
   const r = simulate(); render(r);
 }
 
@@ -131,7 +138,13 @@ $('run').onclick = () => { const r = simulate(); render(r); if (!r.error) startA
 $('pause').onclick = pause;
 $('test').onclick = tests;
 $('speed').onchange = () => { if (anim.timer && !anim.paused) { const sim = Math.max(0, anim.due - performance.now()) * anim.oldSpeed; schedule(anim.action, sim); } };
+$('graphViewMode').onchange = syncGraphView;
+$('graphTab').onchange = syncGraphView;
+$('storageXAxis').onchange = () => { if (lastResult && !lastResult.error) renderStorageIO(lastResult); };
+$('storageYAxis').onchange = () => { if (lastResult && !lastResult.error) renderStorageIO(lastResult); };
 initializeModelPresets();
 syncMode(false);
 initializeReproControls();
 initializeAccessibility();
+initializeParameterHelp();
+initializeSweepLab();

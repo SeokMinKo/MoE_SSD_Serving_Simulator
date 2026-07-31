@@ -112,6 +112,32 @@ function servingRunId(config, requests) {
   return `sim-${hash.toString(16).padStart(8, '0')}`;
 }
 
+function runSimulationConfig(config) {
+  const engine = config.mode === 'afm3' ? simulateAFM : simulateColibri;
+  if (config.conc <= 1) {
+    const result = engine(config);
+    result.runId = servingRunId(result.c || config, [{ id: 'single', arrivalMs: 0, output: config.output }]);
+    return result;
+  }
+  const placedConfig = config.mode === 'colibri' ? applyColibriPlacement(config) : config;
+  const singleRequestConfig = {
+    ...placedConfig,
+    conc: 1,
+    ...(placedConfig.mode === 'colibri' && placedConfig.placement === 'auto' ? { placement: 'manual' } : {})
+  };
+  const result = engine(singleRequestConfig);
+  if (result.error) return result;
+  const requests = Array.from({ length: config.conc }, (_, index) => ({ id: `request-${index + 1}`, arrivalMs: 0, output: config.output }));
+  const serving = simulateServing(placedConfig, requests);
+  if (serving.error) return { ...result, error: serving.error };
+  result.serving = serving;
+  result.agg = serving.throughputTPS;
+  result.c = placedConfig;
+  result.runId = servingRunId(placedConfig, requests);
+  serving.runId = result.runId;
+  return result;
+}
+
 function percentile(values, ratio) {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);

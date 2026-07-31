@@ -72,6 +72,7 @@ class StorageResource {
     this.busy = 0;
     this.queue = 0;
     this.byKind = Object.create(null);
+    this.events = [];
   }
   reserveGB(gb, now, kind, requests = 1, bwRatio = 1) {
     if (!(gb > 0)) return { start: now, end: now, service: 0, gb: 0, wait: 0, kind };
@@ -86,8 +87,25 @@ class StorageResource {
     this.busy += service;
     this.queue += start - now;
     this.byKind[kind] = (this.byKind[kind] || 0) + gb;
-    return { start, end, service, gb, wait: start - now, kind };
+    const event = { start, end, service, gb, wait: start - now, kind };
+    this.events.push(event);
+    return event;
   }
+}
+
+function summarizeStorageEvents(events) {
+  const byKind = new Map();
+  for (const event of events || []) {
+    const summary = byKind.get(event.kind) || { kind: event.kind, start: event.start, end: event.end, service: 0, gb: 0, wait: 0, jobs: 0 };
+    summary.start = Math.min(summary.start, event.start);
+    summary.end = Math.max(summary.end, event.end);
+    summary.service += event.service;
+    summary.gb += event.gb;
+    summary.wait += event.wait;
+    summary.jobs += Number.isInteger(event.jobs) ? event.jobs : 1;
+    byKind.set(event.kind, summary);
+  }
+  return [...byKind.values()];
 }
 
 class LinkResource {

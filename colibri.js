@@ -1,13 +1,87 @@
 function cpl(gb, c) { return Math.max(0, Math.floor(gb * 1024 / (c.esize * 1.03) / c.layers)); }
-function zipfPick(r, n, a = 1.05) {
-  const u = r();
-  let sum = 0, total = 0;
+function buildZipfCDF(n, a = 1.05) {
+  const cdf = new Float64Array(n);
+  let total = 0;
   for (let i = 1; i <= n; i++) total += 1 / Math.pow(i, a);
+  let cumulative = 0;
   for (let i = 1; i <= n; i++) {
-    sum += 1 / Math.pow(i, a) / total;
-    if (u <= sum) return i - 1;
+    cumulative += 1 / Math.pow(i, a) / total;
+    cdf[i - 1] = cumulative;
   }
-  return n - 1;
+  return cdf;
+}
+
+function buildZipfWeights(n, a = 1.05) {
+  const weights = new Float64Array(n);
+  for (let i = 0; i < n; i++) weights[i] = 1 / Math.pow(i + 1, a);
+  return weights;
+}
+
+function fillZipfWithoutReplacement(route, selected, random, weights, target) {
+  const n = weights.length;
+  const tree = new Float64Array(n + 1);
+  const remainingWeights = new Float64Array(n);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    if (selected.has(i)) continue;
+    const weight = weights[i];
+    remainingWeights[i] = weight;
+    tree[i + 1] = weight;
+    total += weight;
+  }
+  for (let i = 1; i <= n; i++) {
+    const parent = i + (i & -i);
+    if (parent <= n) tree[parent] += tree[i];
+  }
+  const linearEdgePick = fraction => {
+    let exactTotal = 0;
+    for (const weight of remainingWeights) exactTotal += weight;
+    let targetWeight = Math.max(0, Math.min(1 - Number.EPSILON, fraction)) * exactTotal;
+    let fallback = -1;
+    for (let i = 0; i < n; i++) {
+      const weight = remainingWeights[i];
+      if (!(weight > 0)) continue;
+      fallback = i;
+      if (targetWeight < weight) return i;
+      targetWeight -= weight;
+    }
+    return fallback;
+  };
+  while (route.length < target && total > 0) {
+    const fraction = random();
+    let needle = fraction * total;
+    let index = 0;
+    let bit = 1;
+    while ((bit << 1) <= n) bit <<= 1;
+    for (; bit; bit >>= 1) {
+      const next = index + bit;
+      if (next <= n && tree[next] <= needle) {
+        index = next;
+        needle -= tree[next];
+      }
+    }
+    let expert = Math.min(index, n - 1);
+    if (!(remainingWeights[expert] > 0) || selected.has(expert)) expert = linearEdgePick(fraction);
+    if (expert < 0 || !(remainingWeights[expert] > 0) || selected.has(expert)) throw new Error('Zipf route sampler failed to select a unique expert.');
+    const weight = remainingWeights[expert];
+    remainingWeights[expert] = 0;
+    selected.add(expert);
+    route.push(expert);
+    total -= weight;
+    for (let cursor = expert + 1; cursor <= n; cursor += cursor & -cursor) tree[cursor] -= weight;
+  }
+  if (route.length !== target) throw new Error('Zipf route sampler could not fill the configured active expert count.');
+}
+
+function zipfPick(r, cdf) {
+  const u = r();
+  let low = 0, high = cdf.length - 1;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (u <= cdf[mid]) high = mid;
+    else low = mid + 1;
+  }
+  return low;
 }
 
 function zipfTopMass(n, top, a = 1.05) {
@@ -58,6 +132,7 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
     uniquePerLayer: 0,
     activatedEntries: 0,
     storageRequests: 0,
+    storageEvents: [],
     transferEntries: 0,
     warmedDramEntries: 0,
     warmedVramEntries: 0
@@ -148,6 +223,7 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
     uniquePerLayer,
     activatedEntries: uniquePerLayer * c.layers,
     storageRequests,
+    storageEvents: summarizeStorageEvents(prefillStorage.events),
     transferEntries,
     warmedDramEntries,
     warmedVramEntries
@@ -175,6 +251,8 @@ function simulateColibri(c = readColibri()) {
   const P = Array.from({ length: c.layers }, () => new LRU(c.odirect ? 0 : cpl(c.page, c)));
   const pin = Math.min(c.experts, cpl(c.pinned, c));
   const last = Array.from({ length: c.layers }, () => []);
+  const routeZipfCDF = buildZipfCDF(c.experts);
+  const routeZipfWeights = buildZipfWeights(c.experts);
   const pending = new Map();
   const ready = new Set();
   const tokens = [];
@@ -196,6 +274,8 @@ function simulateColibri(c = readColibri()) {
   const initialPressure = applyPressureColibri(c, state, V, D, P, unitGB, 0);
   const initialSwap = scheduleSwapOut(c, state, initialPressure, storage, now, () => colibriDynamic(c, state, V, D, P, unitGB));
   now = Math.max(now, initialSwap.blockedUntil);
+  const prefillStorageEvents = summarizeStorageEvents([...prefillBreakdown.storageEvents, ...storage.events]);
+  storage.events.length = 0;
   if (initialPressure.oom) return { error: `Memory pressure OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, mode: 'colibri' };
   if (c.arch === 'discrete' && initialPressure.dyn.deviceGB > c.vram + EPS) {
     return { error: `Device memory OOM before decode: ${fmt(initialPressure.dyn.deviceGB, 1)} / ${fmt(c.vram, 1)} GB`, c, mode: 'colibri' };
@@ -225,6 +305,7 @@ function simulateColibri(c = readColibri()) {
 
   for (let ti = 0; ti < c.output; ti++) {
     const ts = now;
+    const storageEventStart = storage.events.length;
     let tokenSSDGB = 0, tokenDemandGB = 0, tokenPrefetchGB = 0, tokenPcieGB = 0, tokenComputeMs = 0, tokenStorageRequests = 0, hits = 0, tokenSwapInGB = 0;
     let tokenCompressionTrafficGB = 0, tokenCompressionCpuMs = 0;
     let tokenStorageServiceMs = 0, tokenStorageQueueMs = 0, tokenSwapServiceMs = 0, tokenSwapQueueMs = 0;
@@ -245,11 +326,18 @@ function simulateColibri(c = readColibri()) {
     for (let l = 0; l < c.layers; l++) {
       const a = [], prev = last[l];
       for (const e of prev) if (a.length < c.active && R() < c.corr) a.push(e);
+      const selected = new Set(a);
+      const denseRoute = c.active - a.length > c.experts / 4;
       let guard = 0;
-      while (a.length < c.active && guard++ < c.experts * 20) {
-        const e = zipfPick(R, c.experts);
-        if (!a.includes(e)) a.push(e);
+      const sparseDrawLimit = Math.max(32, c.active * 8);
+      while (!denseRoute && a.length < c.active && guard++ < sparseDrawLimit) {
+        const e = zipfPick(R, routeZipfCDF);
+        if (!selected.has(e)) {
+          selected.add(e);
+          a.push(e);
+        }
       }
+      if (a.length < c.active) fillZipfWithoutReplacement(a, selected, R, routeZipfWeights, c.active);
       routes.push(a);
       last[l] = a.slice();
     }
@@ -430,10 +518,12 @@ function simulateColibri(c = readColibri()) {
       swapInGB: tokenSwapInGB,
       swapOutGB: pressure.swapOutGB,
       storageRequests: tokenStorageRequests,
+      storageEvents: summarizeStorageEvents(storage.events.slice(storageEventStart)),
       hit: hits / (c.layers * c.active),
       boundary: false,
       memory: snap
     });
+    storage.events.length = storageEventStart;
 
     if (pressure.oom) break;
   }
@@ -458,7 +548,7 @@ function simulateColibri(c = readColibri()) {
   const observed = storage.gb / Math.max(EPS, elapsed / 1000);
   const ev = V.reduce((a, x) => a + x.ev, 0) + D.reduce((a, x) => a + x.ev, 0) + P.reduce((a, x) => a + x.ev, 0);
   return {
-    mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, hit, prefill, prefillBreakdown, ttft, agg,
+    mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, hit, prefill, prefillBreakdown, prefillStorageEvents, ttft, agg,
     ssdBound, pcieBound, dramBound, observed, ssdBusy: storage.busy, ssdQueue: storage.queue,
     storageByKind: storage.byKind,
     initialSwapServiceMs: initialSwap.job?.service || 0,

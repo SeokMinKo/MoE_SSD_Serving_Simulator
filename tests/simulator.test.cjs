@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const source = ['core.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js']
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
-  .join('\n') + ['serving.js', 'advisor.js', 'repro.js']
+  .join('\n') + ['serving.js', 'advisor.js', 'storage-io.js', 'sweep.js', 'repro.js']
     .filter(file => fs.existsSync(path.join(root, file)))
     .map(file => `\n${fs.readFileSync(path.join(root, file), 'utf8')}`)
     .join('') + `
@@ -17,18 +17,41 @@ globalThis.__simulator = {
   StorageResource,
   SharedServingResource,
   simulateColibri,
+  buildZipfCDF: typeof buildZipfCDF === 'function' ? buildZipfCDF : null,
+  buildZipfWeights: typeof buildZipfWeights === 'function' ? buildZipfWeights : null,
+  fillZipfWithoutReplacement: typeof fillZipfWithoutReplacement === 'function' ? fillZipfWithoutReplacement : null,
+  colibriSimulationWork: typeof colibriSimulationWork === 'function' ? colibriSimulationWork : null,
+  zipfPick: typeof zipfPick === 'function' ? zipfPick : null,
   simulateAFM,
   afmDerived,
   validateSimulationConfig: typeof validateSimulationConfig === 'function' ? validateSimulationConfig : null,
   EventQueue: typeof EventQueue === 'function' ? EventQueue : null,
   simulateServing: typeof simulateServing === 'function' ? simulateServing : null,
   createScenarioArtifact: typeof createScenarioArtifact === 'function' ? createScenarioArtifact : null,
+  assertScenarioReplayBudget: typeof assertScenarioReplayBudget === 'function' ? assertScenarioReplayBudget : null,
   parseScenarioArtifact: typeof parseScenarioArtifact === 'function' ? parseScenarioArtifact : null,
   compareResultSummaries: typeof compareResultSummaries === 'function' ? compareResultSummaries : null,
   resultSummariesMatch: typeof resultSummariesMatch === 'function' ? resultSummariesMatch : null,
   createBottleneckInsight: typeof createBottleneckInsight === 'function' ? createBottleneckInsight : null,
   validateBottleneckInsight: typeof validateBottleneckInsight === 'function' ? validateBottleneckInsight : null,
-  bottleneckInsightsMatch: typeof bottleneckInsightsMatch === 'function' ? bottleneckInsightsMatch : null
+  bottleneckInsightsMatch: typeof bottleneckInsightsMatch === 'function' ? bottleneckInsightsMatch : null,
+  buildStorageIOBuckets: typeof buildStorageIOBuckets === 'function' ? buildStorageIOBuckets : null,
+  storageIOXPositions: typeof storageIOXPositions === 'function' ? storageIOXPositions : null,
+  buildSweepScenarios: typeof buildSweepScenarios === 'function' ? buildSweepScenarios : null,
+  simulateSweepConfig: typeof simulateSweepConfig === 'function' ? simulateSweepConfig : null,
+  summarizeSweepResult: typeof summarizeSweepResult === 'function' ? summarizeSweepResult : null,
+  sweepCatalogForConfig: typeof sweepCatalogForConfig === 'function' ? sweepCatalogForConfig : null,
+  autoSweepValues: typeof autoSweepValues === 'function' ? autoSweepValues : null,
+  createSweepExecution: typeof createSweepExecution === 'function' ? createSweepExecution : null,
+  advanceSweepExecution: typeof advanceSweepExecution === 'function' ? advanceSweepExecution : null,
+  pauseSweepExecution: typeof pauseSweepExecution === 'function' ? pauseSweepExecution : null,
+  resumeSweepExecution: typeof resumeSweepExecution === 'function' ? resumeSweepExecution : null,
+  cancelSweepExecution: typeof cancelSweepExecution === 'function' ? cancelSweepExecution : null,
+  runSimulationConfig: typeof runSimulationConfig === 'function' ? runSimulationConfig : null,
+  servingRunId: typeof servingRunId === 'function' ? servingRunId : null,
+  sweepCsvCell: typeof sweepCsvCell === 'function' ? sweepCsvCell : null,
+  parseCustomSweepValues: typeof parseCustomSweepValues === 'function' ? parseCustomSweepValues : null,
+  linearSweepValues: typeof linearSweepValues === 'function' ? linearSweepValues : null
 };`;
 
 const sandbox = {
@@ -246,6 +269,200 @@ test('P1: previous-token prefetch is causal and issues nothing before route hist
   assert.equal(result.tot.pfIssued, 0);
 });
 
+test('P1: StorageResource preserves exact per-kind job events for chart attribution', () => {
+  const resource = new simulator.StorageResource({ qd: 2, ssdBW: 10, lat: 100 });
+  const read = resource.reserveGB(1, 0, 'expert-demand-read', 3, 1);
+  const write = resource.reserveGB(0.5, 0, 'swap-out-write', 1, 0.5);
+  assert.equal(resource.events.length, 2);
+  assert.equal(resource.events[0], read);
+  assert.equal(resource.events[1], write);
+  assert.equal(resource.events[0].kind, 'expert-demand-read');
+  assert.equal(resource.events[1].kind, 'swap-out-write');
+  assert.ok(resource.events.every(event => Number.isFinite(event.start) && Number.isFinite(event.end) && Number.isFinite(event.service) && Number.isFinite(event.wait)));
+});
+
+test('P1: simulator traces preserve exact Storage I/O events by prefill and token bucket', () => {
+  const colibri = simulator.simulateColibri(colibriConfig({ prompt: 4, output: 3, layers: 2, experts: 8, active: 2, pinned: 0, dcache: 0, minDCache: 0, vcache: 0, page: 0, pf: true }));
+  const afm = simulator.simulateAFM(afmConfig({ prompt: 4, output: 3, freq: 1, overlap: 0 }));
+  for (const result of [colibri, afm]) {
+    assert.equal(result.error, undefined, result.error);
+    assert.ok(Array.isArray(result.prefillStorageEvents) && result.prefillStorageEvents.length > 0);
+    assert.ok(result.tokens.every(token => Array.isArray(token.storageEvents)));
+    for (const token of result.tokens) {
+      const service = token.storageEvents.reduce((sum, event) => sum + event.service, 0);
+      const queue = token.storageEvents.reduce((sum, event) => sum + event.wait, 0);
+      assert.ok(Math.abs(service - token.storageServiceMs) < 1e-9);
+      assert.ok(Math.abs(queue - token.storageQueueMs) < 1e-9);
+    }
+  }
+});
+
+test('P1: Storage I/O trace compacts exact jobs into bounded per-kind token buckets', () => {
+  const result = simulator.simulateColibri(colibriConfig({ prompt: 0, output: 2, layers: 75, experts: 256, active: 8, dcache: 0, vcache: 0, minDCache: 0, pinned: 0, page: 0, pf: false }));
+  assert.equal(result.error, undefined);
+  for (const token of result.tokens) {
+    assert.ok(token.storageEvents.length <= 4, `unbounded per-token events: ${token.storageEvents.length}`);
+    assert.ok(token.storageEvents.every(event => Number.isInteger(event.jobs) && event.jobs >= 1));
+  }
+});
+
+test('P1: Storage I/O buckets separate read stacks and writes with selectable axes', () => {
+  assert.equal(typeof simulator.buildStorageIOBuckets, 'function');
+  const result = simulator.simulateColibri(colibriConfig({ prompt: 4, output: 3, layers: 2, experts: 8, active: 2, pinned: 0, dcache: 0, minDCache: 0, vcache: 0, page: 0, pf: true }));
+  const buckets = simulator.buildStorageIOBuckets(result, { xMode: 'completion-time', yMode: 'service-ms' });
+  assert.equal(buckets.length, result.tokens.length + 1);
+  assert.equal(buckets[0].label, 'Prefill');
+  assert.ok(buckets.every((bucket, index) => Number.isFinite(bucket.x) && (index === 0 || bucket.x >= buckets[index - 1].x)));
+  assert.ok(buckets.every(bucket => ['expertRead', 'prefetchRead', 'swapInRead', 'swapOutWrite'].every(key => Number.isFinite(bucket.series[key]) && bucket.series[key] >= 0)));
+  const expectedService = [...result.prefillStorageEvents, ...result.tokens.flatMap(token => token.storageEvents)].reduce((sum, event) => sum + event.service, 0);
+  const actualService = buckets.reduce((sum, bucket) => sum + Object.values(bucket.series).reduce((total, value) => total + value, 0), 0);
+  assert.ok(Math.abs(actualService - expectedService) < 1e-9);
+  const cumulative = simulator.buildStorageIOBuckets(result, { xMode: 'cumulative-io', yMode: 'gb' });
+  assert.ok(cumulative.every((bucket, index) => index === 0 || bucket.x >= cumulative[index - 1].x));
+  assert.deepEqual(JSON.parse(JSON.stringify(simulator.storageIOXPositions([{ x: 10 }, { x: 20 }, { x: 40 }], 0, 100))), [0, 100 / 3, 100]);
+});
+
+test('P1: sweep builder supports deterministic OAT and capped Grid scenarios', () => {
+  assert.equal(typeof simulator.buildSweepScenarios, 'function');
+  const baseline = colibriConfig({ ssdBW: 10, host: 100 });
+  const grid = simulator.buildSweepScenarios(baseline, 'grid', [
+    { path: 'ssdBW', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+    { path: 'host', values: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] }
+  ], 50);
+  assert.equal(grid.total, 100);
+  assert.equal(grid.scenarios.length, 50);
+  assert.equal(grid.omitted, 50);
+  assert.deepEqual(JSON.parse(JSON.stringify(grid.scenarios[0].changes)), { ssdBW: 1, host: 10 });
+  assert.deepEqual(JSON.parse(JSON.stringify(grid.scenarios[49].changes)), { ssdBW: 5, host: 100 });
+  const oat = simulator.buildSweepScenarios(baseline, 'oat', [
+    { path: 'ssdBW', values: [5, 10, 20] },
+    { path: 'host', values: [50, 100, 200] }
+  ], 50);
+  assert.equal(oat.total, 4);
+  assert.equal(oat.scenarios[0].config.host, baseline.host);
+  assert.equal(oat.scenarios[2].config.ssdBW, baseline.ssdBW);
+});
+
+test('P1: capped Grid planning does not enumerate omitted combinations', () => {
+  const baseline = colibriConfig();
+  const selections = Array.from({ length: 8 }, (_, index) => ({ path: `mem.synthetic${index}`, values: [1, 2, 3, 4, 5, 6] }));
+  const started = performance.now();
+  const plan = simulator.buildSweepScenarios(baseline, 'grid', selections, 50);
+  const elapsed = performance.now() - started;
+  assert.equal(plan.total, 1_679_616);
+  assert.equal(plan.scenarios.length, 50);
+  assert.equal(plan.omitted, 1_679_566);
+  assert.ok(elapsed < 100, `planning enumerated omitted combinations: ${elapsed}ms`);
+});
+
+test('P1: AFM sweeps keep dependent routed and active dimensions consistent', () => {
+  const baseline = afmConfig({ active: 4, shared: 2, routed: 2, expertWidth: 4, activeDim: 16 });
+  const plan = simulator.buildSweepScenarios(baseline, 'oat', [
+    { path: 'active', values: [baseline.active + 1] },
+    { path: 'expertWidth', values: [baseline.expertWidth + 1] }
+  ]);
+  assert.equal(plan.scenarios[0].config.routed, plan.scenarios[0].config.active - plan.scenarios[0].config.shared);
+  assert.equal(plan.scenarios[0].config.activeDim, plan.scenarios[0].config.active * plan.scenarios[0].config.expertWidth);
+  assert.equal(plan.scenarios[1].config.activeDim, plan.scenarios[1].config.active * plan.scenarios[1].config.expertWidth);
+  assert.equal(simulator.simulateSweepConfig(plan.scenarios[0].config).error, undefined);
+  assert.equal(simulator.simulateSweepConfig(plan.scenarios[1].config).error, undefined);
+  const lowerActive = simulator.buildSweepScenarios(baseline, 'oat', [{ path: 'active', values: [baseline.shared - 1] }]);
+  assert.equal(lowerActive.scenarios[0].config.shared, baseline.shared - 1);
+  assert.equal(lowerActive.scenarios[0].config.routed, 0);
+  assert.equal(simulator.simulateSweepConfig(lowerActive.scenarios[0].config).error, undefined);
+  const higherShared = simulator.buildSweepScenarios(baseline, 'oat', [{ path: 'shared', values: [baseline.active + 1] }]);
+  assert.equal(higherShared.scenarios[0].config.active, baseline.active + 1);
+  assert.equal(higherShared.scenarios[0].config.activeDim, higherShared.scenarios[0].config.active * higherShared.scenarios[0].config.expertWidth);
+  assert.equal(simulator.simulateSweepConfig(higherShared.scenarios[0].config).error, undefined);
+});
+
+test('P1: sweep metrics expose TTFT distribution plus single and aggregate TPS', () => {
+  assert.equal(typeof simulator.simulateSweepConfig, 'function');
+  assert.equal(typeof simulator.summarizeSweepResult, 'function');
+  const config = colibriConfig({ prompt: 1, output: 3, conc: 2, layers: 2, experts: 8, active: 2 });
+  const result = simulator.simulateSweepConfig(config);
+  const summary = simulator.summarizeSweepResult(result);
+  assert.equal(summary.status, 'completed');
+  for (const key of ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms', 'singleTPS', 'aggregateTPS']) assert.ok(Number.isFinite(summary[key]) && summary[key] >= 0, key);
+  assert.ok(summary.ttftP95Ms >= summary.ttftP50Ms);
+  assert.ok(summary.aggregateTPS > 0);
+});
+
+test('P0: shared config runner preserves placement, concurrency, and run ID semantics', () => {
+  assert.equal(typeof simulator.runSimulationConfig, 'function');
+  const config = colibriConfig({ arch: 'discrete', placement: 'auto', host: 512, vram: 80, conc: 4, output: 3 });
+  const result = simulator.runSimulationConfig(config);
+  assert.equal(result.error, undefined);
+  assert.equal(result.serving.requests.length, 4);
+  assert.equal(result.agg, result.serving.throughputTPS);
+  assert.equal(result.runId, result.serving.runId);
+  assert.match(result.runId, /^sim-[0-9a-f]{8}$/);
+  assert.equal(result.c.placement, 'auto');
+
+});
+
+test('P0: pre-decode OOM sweep rows remain OOM with null metrics instead of invalid or zero', () => {
+  const metrics = simulator.summarizeSweepResult({ error: 'Unified memory OOM before decode', mode: 'afm3' });
+  assert.equal(metrics.status, 'oom');
+  for (const key of ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms', 'singleTPS', 'aggregateTPS']) assert.equal(metrics[key], null);
+});
+
+test('P1: sweep catalog covers both engines and auto values remain valid and deterministic', () => {
+  assert.equal(typeof simulator.sweepCatalogForConfig, 'function');
+  assert.equal(typeof simulator.autoSweepValues, 'function');
+  const colibri = simulator.sweepCatalogForConfig(colibriConfig({ arch: 'discrete', placement: 'auto' }));
+  const afm = simulator.sweepCatalogForConfig(afmConfig());
+  for (const path of ['seed', 'ssdBW', 'lat', 'qd', 'mem.swap', 'prefetchPolicy', 'layers', 'minDCache']) assert.ok(colibri.some(item => item.path === path), path);
+  assert.ok(!colibri.some(item => item.path === 'dcache' || item.path === 'vcache'));
+  const unifiedAuto = simulator.sweepCatalogForConfig(colibriConfig({ arch: 'unified', placement: 'auto' }));
+  assert.ok(!unifiedAuto.some(item => item.path === 'vram' || item.path === 'pcieBW'));
+  const manual = simulator.sweepCatalogForConfig(colibriConfig({ placement: 'manual' }));
+  assert.ok(manual.some(item => item.path === 'dcache' || item.path === 'vcache'));
+  assert.ok(!manual.some(item => item.path === 'minDCache'));
+  for (const path of ['seed', 'ssdBW', 'lat', 'mem.swap', 'patchBW', 'freq', 'layers']) assert.ok(afm.some(item => item.path === path), path);
+  assert.ok(!afm.some(item => ['arch', 'vram', 'pcieBW', 'qd', 'kvKB'].includes(item.path)));
+  const descriptor = colibri.find(item => item.path === 'ssdBW');
+  const first = simulator.autoSweepValues(descriptor, 10);
+  const second = simulator.autoSweepValues(descriptor, 10);
+  assert.deepEqual(JSON.parse(JSON.stringify(first)), JSON.parse(JSON.stringify(second)));
+  assert.ok(first.every(value => Number.isFinite(value) && value >= descriptor.min && value <= descriptor.max));
+});
+
+test('P1: sweep execution pauses between scenarios, resumes, and preserves cancelled results', () => {
+  assert.equal(typeof simulator.createSweepExecution, 'function');
+  const baseline = colibriConfig({ prompt: 1, output: 2, layers: 1, experts: 4, active: 1 });
+  const plan = simulator.buildSweepScenarios(baseline, 'oat', [{ path: 'ssdBW', values: [5, 10, 20] }], 50);
+  const execution = simulator.createSweepExecution(baseline, plan);
+  simulator.pauseSweepExecution(execution);
+  simulator.advanceSweepExecution(execution);
+  assert.equal(execution.results.length, 0);
+  assert.equal(execution.status, 'paused');
+  simulator.resumeSweepExecution(execution);
+  simulator.advanceSweepExecution(execution);
+  assert.equal(execution.results.length, 1);
+  simulator.cancelSweepExecution(execution);
+  simulator.advanceSweepExecution(execution);
+  assert.equal(execution.status, 'cancelled');
+  assert.equal(execution.results.length, 1);
+});
+
+test('P1: custom sweep values reject malformed, blank, fractional-integer, and out-of-range input', () => {
+  const integer = { path: 'output', type: 'number', min: 1, max: 10, integer: true };
+  assert.deepEqual([...simulator.parseCustomSweepValues(integer, '1, 3, 3')], [1, 3]);
+  assert.throws(() => simulator.parseCustomSweepValues(integer, '1, nope, 3'), /output.*valid numbers/i);
+  assert.throws(() => simulator.parseCustomSweepValues(integer, '1,,3'), /output.*valid numbers/i);
+  assert.throws(() => simulator.parseCustomSweepValues(integer, '1.5, 3'), /output.*integer/i);
+  assert.throws(() => simulator.parseCustomSweepValues(integer, '11'), /output.*range/i);
+  assert.throws(() => simulator.linearSweepValues(integer, 0, 10, 3), /range/i);
+  assert.throws(() => simulator.linearSweepValues(integer, 1.5, 10, 3), /integer/i);
+});
+
+test('P1: sweep CSV cells quote RFC 4180 content and neutralize spreadsheet formulas', () => {
+  assert.equal(simulator.sweepCsvCell('a,"b"\n'), '"a,""b""\n"');
+  assert.equal(simulator.sweepCsvCell('=SUM(1,2)'), '"\'=SUM(1,2)"');
+  assert.equal(simulator.sweepCsvCell(-1), '"-1"');
+});
+
 test('P1: event queue is stable and ordered by simulation time', () => {
   assert.equal(typeof simulator.EventQueue, 'function');
   const queue = new simulator.EventQueue();
@@ -426,12 +643,157 @@ test('P1: scenario artifacts round-trip validated config, result summary, and ru
   const result = simulator.simulateColibri(config);
   const artifact = simulator.createScenarioArtifact(config, result);
   const parsed = simulator.parseScenarioArtifact(JSON.stringify(artifact));
-  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v2');
-  assert.equal(JSON.stringify(parsed.config), JSON.stringify(config));
+  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v3');
+  assert.equal(JSON.stringify(parsed.config), JSON.stringify(result.c));
   assert.match(parsed.runId, /^sim-[0-9a-f]{8}$/);
   assert.equal(parsed.result.completedTokens, 2);
   assert.equal(parsed.insight.version, 'bottleneck-advisor/v1');
   assert.equal(parsed.insight.phases.length, 4);
+  const resultTamper = JSON.parse(JSON.stringify(artifact));
+  resultTamper.result.ttftMs += 1;
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(resultTamper)), /scenario replay.*result/i);
+  const insightTamper = JSON.parse(JSON.stringify(artifact));
+  insightTamper.insight.phases[0].resources[0].score = Math.min(100, insightTamper.insight.phases[0].resources[0].score + 1);
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(insightTamper)), /scenario replay.*insight/i);
+  const unknownConfig = JSON.parse(JSON.stringify(artifact));
+  unknownConfig.config.extension = 'x'.repeat(100);
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(unknownConfig)), /unsupported config field/i);
+  const crossEngineConfig = JSON.parse(JSON.stringify(artifact));
+  crossEngineConfig.config.totalB = { ignoredPayload: ['not', 'colibri'] };
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(crossEngineConfig)), /unsupported config field/i);
+});
+
+test('P1: scenario artifacts reject noncanonical placement and fractional counts', () => {
+  const config = colibriConfig({ prompt: 1, output: 2, layers: 1, experts: 4, active: 1, placement: 'auto' });
+  const result = simulator.runSimulationConfig(config);
+  const artifact = simulator.createScenarioArtifact(result.c, result, null);
+  const placementTamper = JSON.parse(JSON.stringify(artifact));
+  placementTamper.config.placementInfo.pinnedExpertsPerLayer += 0.5;
+  placementTamper.runId = simulator.servingRunId(placementTamper.config, placementTamper.requests);
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(placementTamper)), /canonical|run id|placementInfo/i);
+  const countTamper = JSON.parse(JSON.stringify(artifact));
+  countTamper.result.completedTokens += 0.0000000001;
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(countTamper)), /completedTokens.*integer/i);
+});
+
+test('P1: Colibri Zipf routing precomputes a deterministic CDF', () => {
+  assert.equal(typeof simulator.buildZipfCDF, 'function');
+  const cdf = simulator.buildZipfCDF(4096);
+  assert.equal(cdf.length, 4096);
+  const reference = u => {
+    let total = 0, sum = 0;
+    for (let i = 1; i <= 4096; i++) total += 1 / Math.pow(i, 1.05);
+    for (let i = 1; i <= 4096; i++) {
+      sum += 1 / Math.pow(i, 1.05) / total;
+      if (u <= sum) return i - 1;
+    }
+    return 4095;
+  };
+  for (const u of [0, 0.0001, 0.01, 0.1, 0.5, 0.9, 0.999999]) {
+    assert.equal(simulator.zipfPick(() => u, cdf), reference(u));
+  }
+});
+
+test('P1: Colibri routing always fills the configured active expert count', () => {
+  const config = colibriConfig({
+    output: 1, layers: 1, experts: 4096, active: 4096, corr: 0,
+    pinned: 0, resident: 0, dcache: 0, vcache: 0, page: 0,
+    pf: false, budget: 0
+  });
+  const result = simulator.simulateColibri(config);
+  assert.equal(result.error, undefined);
+  assert.equal(result.tot.act, 4096);
+  assert.equal(result.tokens[0].hit >= 0 && result.tokens[0].hit <= 1, true);
+});
+
+test('P1: Fenwick Zipf fill handles legal RNG boundary values', () => {
+  for (const n of [3, 7, 64, 4096]) {
+    for (const fraction of [0, Number.MIN_VALUE, 1 - Number.EPSILON]) {
+      const route = [];
+      simulator.fillZipfWithoutReplacement(route, new Set(), () => fraction, simulator.buildZipfWeights(n), n);
+      assert.equal(route.length, n);
+      assert.equal(new Set(route).size, n);
+      assert.equal(route.every(expert => expert >= 0 && expert < n), true);
+    }
+  }
+});
+
+test('P1: Colibri complexity includes repeated concurrent cache traces and dense routing work', () => {
+  const repeatedWarmCache = colibriConfig({ output: 1, conc: 64, layers: 500, experts: 2000, active: 1, cold: false, dcache: 40 });
+  assert.equal(simulator.validateSimulationConfig(repeatedWarmCache).valid, true);
+  const expensiveSparseRoute = colibriConfig({ output: 1024, conc: 6, layers: 1, experts: 4096, active: 512, cold: true });
+  assert.equal(simulator.validateSimulationConfig(expensiveSparseRoute).errors.some(error => error.code === 'COMPLEXITY_LIMIT'), true);
+  const denseRoute = colibriConfig({ output: 1024, conc: 1, layers: 1, experts: 4096, active: 4095, cold: true });
+  assert.equal(simulator.validateSimulationConfig(denseRoute).valid, true);
+  const cheapColdCache = colibriConfig({ output: 1, conc: 9, layers: 500, experts: 4096, active: 1, cold: true });
+  assert.equal(simulator.validateSimulationConfig(cheapColdCache).valid, true);
+});
+
+test('P1: scenario artifact replay budget includes baseline, rows, and top-level replay', () => {
+  const dense = colibriConfig({ output: 1024, conc: 1, layers: 1, experts: 4096, active: 4095, cold: true });
+  const oversizedSweep = { baselineConfig: dense, results: Array.from({ length: 8 }, () => ({ config: dense })) };
+  assert.throws(() => simulator.assertScenarioReplayBudget(dense, oversizedSweep), /30-second replay work budget/i);
+  const ordinary = colibriConfig({ output: 64, conc: 1, layers: 75, experts: 256, active: 8, cold: true });
+  const ordinarySweep = { baselineConfig: ordinary, results: Array.from({ length: 50 }, () => ({ config: ordinary })) };
+  assert.doesNotThrow(() => simulator.assertScenarioReplayBudget(ordinary, ordinarySweep));
+});
+
+test('P1: scenario V3 persists and replay-verifies completed sweep results', () => {
+  const config = colibriConfig({ prompt: 1, output: 2, layers: 1, experts: 4, active: 1 });
+  const result = simulator.simulateColibri(config);
+  const plan = simulator.buildSweepScenarios(result.c, 'oat', [{ path: 'ssdBW', values: [5, 10] }], 50);
+  const execution = simulator.createSweepExecution(result.c, plan);
+  execution.selections = [{ path: 'ssdBW', values: [5, 10] }];
+  execution.baselineMetrics = simulator.summarizeSweepResult(simulator.simulateSweepConfig(result.c));
+  assert.equal(simulator.createScenarioArtifact(config, result, execution).sweep, null);
+  while (execution.status !== 'completed') simulator.advanceSweepExecution(execution);
+  const artifact = simulator.createScenarioArtifact(config, result, execution);
+  const parsed = simulator.parseScenarioArtifact(JSON.stringify(artifact));
+  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v3');
+  assert.equal(parsed.sweep.schema, 'parameter-sweep/v1');
+  assert.equal(parsed.sweep.results.length, 2);
+  assert.equal(parsed.sweep.baselineMetrics.status, 'completed');
+  const tamperedMetric = JSON.parse(JSON.stringify(artifact));
+  tamperedMetric.sweep.results[0].metrics.ttftMeanMs += 1;
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(tamperedMetric)), /sweep.*replay|sweep.*metric/i);
+  const tamperedConfig = JSON.parse(JSON.stringify(artifact));
+  tamperedConfig.sweep.results[0].config.ssdBW = 20;
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(tamperedConfig)), /sweep.*replay|sweep.*metric|sweep scenario integrity/i);
+  const tamperedDefinition = JSON.parse(JSON.stringify(artifact));
+  tamperedDefinition.sweep.definition.total += 1;
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(tamperedDefinition)), /sweep definition integrity/i);
+  const tamperedSelection = JSON.parse(JSON.stringify(artifact));
+  tamperedSelection.sweep.selections[0].values[0] = -1;
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(tamperedSelection)), /sweep selection/i);
+  const tamperedOrder = JSON.parse(JSON.stringify(artifact));
+  tamperedOrder.sweep.results.reverse();
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(tamperedOrder)), /sweep scenario integrity/i);
+});
+
+test('P1: scenario artifacts reject completed sweeps detached from the top-level config', () => {
+  const topConfig = colibriConfig({ seed: 1, output: 1 });
+  const topResult = simulator.simulateColibri(topConfig);
+  const sweepConfig = colibriConfig({ seed: 2, output: 1 });
+  const plan = simulator.buildSweepScenarios(sweepConfig, 'oat', [{ path: 'ssdBW', values: [5] }], 50);
+  const execution = simulator.createSweepExecution(sweepConfig, plan);
+  execution.selections = [{ path: 'ssdBW', values: [5] }];
+  execution.baselineMetrics = simulator.summarizeSweepResult(simulator.simulateSweepConfig(sweepConfig));
+  while (execution.status !== 'completed') simulator.advanceSweepExecution(execution);
+  assert.throws(() => simulator.createScenarioArtifact(topConfig, topResult, execution), /sweep baseline.*top-level/i);
+});
+
+test('P1: scenario V3 replay accepts deterministic pre-decode OOM rows with null metrics', () => {
+  const config = colibriConfig({ prompt: 1, output: 1 });
+  const result = simulator.simulateColibri(config);
+  const plan = simulator.buildSweepScenarios(result.c, 'oat', [{ path: 'host', values: [1] }], 50);
+  const execution = simulator.createSweepExecution(result.c, plan);
+  execution.selections = [{ path: 'host', values: [1] }];
+  execution.baselineMetrics = simulator.summarizeSweepResult(simulator.simulateSweepConfig(result.c));
+  while (execution.status !== 'completed') simulator.advanceSweepExecution(execution);
+  assert.equal(execution.results[0].metrics.status, 'oom');
+  assert.equal(execution.results[0].metrics.ttftMeanMs, null);
+  const parsed = simulator.parseScenarioArtifact(JSON.stringify(simulator.createScenarioArtifact(config, result, execution)));
+  assert.equal(parsed.sweep.results[0].metrics.status, 'oom');
 });
 
 test('P1: advisor emits deterministic bounded evidence for every resource in every phase', () => {
@@ -593,7 +955,7 @@ test('P1: token swap service is phase-local and pre-decode swap is separately ev
   assert.ok(Math.abs(memoryStorage.evidence.find(item => item.label === 'Token-phase swap service').value - result.tokens.reduce((sum, token) => sum + token.swapServiceMs, 0)) < 1e-6);
 });
 
-test('P1: scenario V2 validates and replay-compares derived insight integrity', () => {
+test('P1: scenario V3 validates and replay-compares derived insight integrity', () => {
   const result = simulator.simulateColibri(colibriConfig({ output: 2 }));
   const artifact = simulator.createScenarioArtifact(result.c, result);
   const tampered = JSON.parse(JSON.stringify(artifact));
@@ -608,7 +970,7 @@ test('P1: scenario V2 validates and replay-compares derived insight integrity', 
 test('P1: scenario parser rejects imported invalid configuration', () => {
   assert.equal(typeof simulator.parseScenarioArtifact, 'function');
   const artifact = {
-    schemaVersion: 'moe-ssd-sim/v2',
+    schemaVersion: 'moe-ssd-sim/v3',
     runId: 'sim-deadbeef',
     config: colibriConfig({ active: 9, experts: 8 }),
     result: {}
