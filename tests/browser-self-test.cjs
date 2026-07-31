@@ -9,6 +9,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const uiSource = fs.readFileSync(path.join(root, 'ui.js'), 'utf8');
 const elements = new Map();
 
 for (const match of html.matchAll(/<input\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
@@ -36,7 +37,7 @@ const document = {
   }
 };
 
-const moduleSource = ['core.js', 'help.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'advisor.js', 'storage-io.js', 'sweep.js', 'repro.js', 'playback.js', 'render.js', 'sweep-ui.js']
+const moduleSource = ['core.js', 'help.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'advisor.js', 'storage-io.js', 'sweep.js', 'repro.js', 'playback.js', 'render.js', 'sweep-ui.js', 'ui.js']
   .filter(file => fs.existsSync(path.join(root, file)))
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
   .join('\n');
@@ -496,6 +497,183 @@ test('P1: mobile controls meet 44px targets, avoid sticky overlap, and respect r
   assert.match(html, /prefers-reduced-motion/);
   assert.match(html, /\.cursor\s*\{[^}]*animation:\s*none/);
   assert.match(html, /\.buttons:has\(#run\)\{position:static/);
+});
+
+test('P1: guided workflow exposes three Korean steps, HW preset, Expert mode, and measured analysis landmarks', () => {
+  for (const id of ['guidedWorkflow', 'expertModeToggle', 'hardwarePreset', 'guidedAnalysis', 'runGuidedSweep']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  for (const step of ['시나리오 설정', '결과와 병목', '개선 검증']) assert.match(html, new RegExp(step));
+  assert.match(html, /aria-current="step"/);
+  assert.match(html, /Synthetic template/);
+  assert.match(html, /Expert mode/);
+});
+
+test('P1: production guided UI contains no console info debug statements', () => {
+  assert.doesNotMatch(uiSource, /console\.info\s*\(/);
+});
+
+test('P1: guided bottleneck analysis deduplicates resources and chooses at most two sweepable parameters', () => {
+  assert.equal(vm.runInContext("typeof guidedRankBottlenecks === 'function' && typeof guidedSweepSelections === 'function'", sandbox), true);
+  const result = vm.runInContext(`(() => {
+    const simulation = simulateColibri(readColibri());
+    const insight = createBottleneckInsight(simulation);
+    const ranked = guidedRankBottlenecks(insight);
+    const selections = guidedSweepSelections(insight, simulation.c);
+    return { ranked, selections, catalog: sweepCatalogForConfig(simulation.c).map(item => item.path) };
+  })()`, sandbox);
+  assert.ok(result.ranked.length <= 2);
+  assert.equal(new Set(result.ranked.map(item => item.resourceId)).size, result.ranked.length);
+  assert.equal(result.selections.length, result.ranked.length);
+  for (const selection of result.selections) {
+    assert.ok(result.catalog.includes(selection.path), selection.path);
+    assert.ok(selection.values.length >= 2 && selection.values.length <= 5, JSON.stringify(selection));
+    assert.equal(new Set(selection.values).size, selection.values.length);
+  }
+});
+
+test('P1: guided throughput summary derives improvement only from completed counterfactual metrics', () => {
+  assert.equal(vm.runInContext("typeof guidedThroughputSummary === 'function'", sandbox), true);
+  const summary = vm.runInContext(`guidedThroughputSummary({
+    status: 'completed',
+    baselineMetrics: { status: 'completed', aggregateTPS: 100 },
+    results: [
+      { changes: { ssdBW: 10 }, metrics: { status: 'completed', aggregateTPS: 120 } },
+      { changes: { ssdBW: 20 }, metrics: { status: 'oom', aggregateTPS: 9999 } },
+      { changes: { ssdBW: 30 }, metrics: { status: 'completed', aggregateTPS: 90 } }
+    ]
+  })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(summary)), {
+    measured: true,
+    baselineAggregateTPS: 100,
+    bestAggregateTPS: 120,
+    worstAggregateTPS: 90,
+    bestImprovementPct: 20,
+    worstImprovementPct: -10,
+    bestChanges: { ssdBW: 10 },
+    completedScenarios: 2
+  });
+  const rejected = vm.runInContext(`({
+    oomBaseline: guidedThroughputSummary({ status: 'completed', baselineMetrics: { status: 'oom', aggregateTPS: 100 }, results: [{ metrics: { status: 'completed', aggregateTPS: 120 } }] }),
+    invalidBaseline: guidedThroughputSummary({ status: 'completed', baselineMetrics: { status: 'invalid', aggregateTPS: 100 }, results: [{ metrics: { status: 'completed', aggregateTPS: 120 } }] }),
+    partialExecution: guidedThroughputSummary({ status: 'running', baselineMetrics: { status: 'completed', aggregateTPS: 100 }, results: [{ metrics: { status: 'completed', aggregateTPS: 120 } }] })
+  })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(rejected)), {
+    oomBaseline: { measured: false }, invalidBaseline: { measured: false }, partialExecution: { measured: false }
+  });
+});
+
+test('P1: guided summary requires explicit OAT provenance matching the current top-two analysis', () => {
+  assert.equal(vm.runInContext("typeof createGuidedSweepContract === 'function' && typeof guidedSweepMatchesAnalysis === 'function'", sandbox), true);
+  const result = vm.runInContext(`(() => {
+    const simulation = simulateColibri(sweepClone(APP_INTEGRITY_COLIBRI_FIXTURE));
+    const insight = createBottleneckInsight(simulation);
+    const selections = guidedSweepSelections(insight, simulation.c);
+    const contract = createGuidedSweepContract(selections);
+    const plan = buildSweepScenarios(simulation.c, 'oat', selections, SWEEP_LIMIT);
+    const base = createSweepExecution(simulation.c, plan);
+    base.status = 'completed';
+    base.baselineMetrics = { status: 'completed', aggregateTPS: 1 };
+    base.selections = sweepClone(selections);
+    base.guidedContract = contract;
+    base.results = base.scenarios.map(scenario => ({ changes: sweepClone(scenario.changes), metrics: { status: 'completed', aggregateTPS: 1 } }));
+    const detached = sweepClone(base);
+    detached.selections = [{ path: 'prompt', values: [64, 96, 128, 192, 256] }];
+    detached.scenarios = buildSweepScenarios(simulation.c, 'oat', detached.selections, SWEEP_LIMIT).scenarios;
+    detached.results = detached.scenarios.map(scenario => ({ changes: sweepClone(scenario.changes), metrics: { status: 'completed', aggregateTPS: 1 } }));
+    return {
+      valid: guidedSweepMatchesAnalysis(base, simulation, insight),
+      manual: guidedSweepMatchesAnalysis({ ...base, guidedContract: null }, simulation, insight),
+      grid: guidedSweepMatchesAnalysis({ ...base, definition: { mode: 'grid' } }, simulation, insight),
+      wrongPath: guidedSweepMatchesAnalysis({ ...base, guidedContract: { ...contract, selections: [{ path: 'prompt', values: [1, 2] }] } }, simulation, insight),
+      detached: guidedSweepMatchesAnalysis(detached, simulation, insight)
+    };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { valid: true, manual: false, grid: false, wrongPath: false, detached: false });
+});
+
+test('P2: sweep worker settles and terminates exactly once on cancel, late message, and postMessage failure', async () => {
+  vm.runInContext(`
+    globalThis.__sweepWorkers = [];
+    globalThis.__throwSweepPost = false;
+    globalThis.Worker = class {
+      constructor() { this.terminations = 0; __sweepWorkers.push(this); }
+      terminate() { this.terminations += 1; }
+      postMessage() { if (__throwSweepPost) throw new Error('post failed'); }
+    };
+  `, sandbox);
+  const cancelled = vm.runInContext('simulateSweepInWorker(sweepClone(APP_INTEGRITY_COLIBRI_FIXTURE))', sandbox);
+  const cancelledAssertion = assert.rejects(cancelled, /cancelled/);
+  vm.runInContext(`const lateSweepMessage = __sweepWorkers[0].onmessage; activeSweepWorker.cancel(); lateSweepMessage({ data: { metrics: { status: 'completed' } } });`, sandbox);
+  await cancelledAssertion;
+  const cancelState = vm.runInContext(`({ terminations: __sweepWorkers[0].terminations, active: activeSweepWorker !== null })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(cancelState)), { terminations: 1, active: false });
+
+  vm.runInContext('__throwSweepPost = true', sandbox);
+  await assert.rejects(vm.runInContext('simulateSweepInWorker(sweepClone(APP_INTEGRITY_COLIBRI_FIXTURE))', sandbox), /post failed/);
+  const throwState = vm.runInContext(`({ terminations: __sweepWorkers[1].terminations, active: activeSweepWorker !== null })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(throwState)), { terminations: 1, active: false });
+  vm.runInContext('globalThis.Worker = undefined; activeSweepWorker = null', sandbox);
+});
+
+test('P2: guided sweep mode remains OAT when the live Sweep Lab mode mutates during baseline preparation', () => {
+  assert.equal(vm.runInContext("typeof sweepModeForExecution === 'function'", sandbox), true);
+  const result = vm.runInContext(`({
+    guidedGrid: sweepModeForExecution({ schema: 'guided-oat/v1' }, 'grid'),
+    guidedOat: sweepModeForExecution({ schema: 'guided-oat/v1' }, 'oat'),
+    manualGrid: sweepModeForExecution(null, 'grid')
+  })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { guidedGrid: 'oat', guidedOat: 'oat', manualGrid: 'grid' });
+});
+
+test('P1: guided sweep summary is invalidated when the active scenario no longer matches its baseline', () => {
+  assert.equal(vm.runInContext("typeof guidedSweepMatchesResult === 'function'", sandbox), true);
+  const matches = vm.runInContext(`(() => {
+    const config = sweepClone(APP_INTEGRITY_COLIBRI_FIXTURE);
+    const execution = { baselineConfig: sweepClone(config) };
+    const changed = sweepClone(config);
+    changed.ssdBW *= 2;
+    return {
+      same: guidedSweepMatchesResult(execution, { c: sweepClone(config) }),
+      changed: guidedSweepMatchesResult(execution, { c: changed }),
+      missing: guidedSweepMatchesResult(null, { c: config })
+    };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(matches)), { same: true, changed: false, missing: false });
+});
+
+test('P1: synthetic HW preset changes only hardware controls and preserves workload and model inputs', () => {
+  assert.equal(vm.runInContext("typeof applyGuidedHardwarePreset === 'function'", sandbox), true);
+  const result = vm.runInContext(`(() => {
+    const protectedIds = ['prompt', 'output', 'context', 'conc', 'layers', 'experts', 'active', 'attn'];
+    const before = Object.fromEntries(protectedIds.map(id => [id, $(id).value]));
+    const applied = applyGuidedHardwarePreset('synthetic-discrete-large');
+    const hardware = Object.fromEntries(['arch', 'host', 'vram', 'dramBW', 'pcieBW', 'ssdBW', 'lat', 'qd'].map(id => [id, $(id).value]));
+    const preserved = protectedIds.every(id => $(id).value === before[id]);
+    return { applied, hardware, preserved };
+  })()`, sandbox);
+  assert.equal(result.applied, true);
+  assert.equal(result.preserved, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.hardware)), { arch: 'discrete', host: '256', vram: '24', dramBW: '350', pcieBW: '32', ssdBW: '14', lat: '90', qd: '16' });
+});
+
+test('P1: unified HW preset preserves dormant discrete controls', () => {
+  const result = vm.runInContext(`(() => {
+    $('vram').value = '24'; $('pcieBW').value = '32'; $('qd').value = '16';
+    const applied = applyGuidedHardwarePreset('synthetic-unified');
+    return { applied, arch: $('arch').value, host: $('host').value, dramBW: $('dramBW').value, ssdBW: $('ssdBW').value, lat: $('lat').value, vram: $('vram').value, pcieBW: $('pcieBW').value, qd: $('qd').value };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { applied: true, arch: 'unified', host: '128', dramBW: '273', ssdBW: '9.2', lat: '120', vram: '24', pcieBW: '32', qd: '16' });
+});
+
+test('P2: guided navigation respects reduced-motion preference', () => {
+  assert.equal(vm.runInContext("typeof guidedScrollBehavior === 'function'", sandbox), true);
+  const result = vm.runInContext(`({
+    reduced: guidedScrollBehavior({ matchMedia: () => ({ matches: true }) }),
+    normal: guidedScrollBehavior({ matchMedia: () => ({ matches: false }) }),
+    unavailable: guidedScrollBehavior(null)
+  })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { reduced: 'auto', normal: 'smooth', unavailable: 'auto' });
 });
 
 test('browser App integrity test reports every scenario passing', () => {

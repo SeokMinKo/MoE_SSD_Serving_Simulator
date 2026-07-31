@@ -102,6 +102,7 @@ function syncModeControls(applyPreset = false) {
 
 function syncMode(applyPreset = false) {
   syncModeControls(applyPreset);
+  if (applyPreset && typeof markGuidedHardwareCustom === 'function') markGuidedHardwareCustom();
   const r = simulate(); render(r);
 }
 
@@ -134,7 +135,7 @@ for (const id of ['layers', 'experts', 'active']) $(id).oninput = markModelPrese
 $('placement').onchange = () => { syncPlacement(); const r = simulate(); render(r); };
 $('afmProfile').onchange = () => { if ($('afmProfile').value !== 'custom') $('afmOverlap').value = $('afmProfile').value; };
 $('afmOverlap').oninput = () => { $('afmProfile').value = 'custom'; };
-$('run').onclick = () => { const r = simulate(); render(r); if (!r.error) startAnim(r); };
+$('run').onclick = () => { const r = simulate(); render(r); if (!r.error) { startAnim(r); if (typeof setGuidedStep === 'function') setGuidedStep(2); } };
 $('pause').onclick = pause;
 $('test').onclick = tests;
 $('speed').onchange = () => { if (anim.timer && !anim.paused) { const sim = Math.max(0, anim.due - performance.now()) * anim.oldSpeed; schedule(anim.action, sim); } };
@@ -148,3 +149,4 @@ initializeReproControls();
 initializeAccessibility();
 initializeParameterHelp();
 initializeSweepLab();
+initializeGuidedUI();

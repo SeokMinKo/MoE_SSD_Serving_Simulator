@@ -316,6 +316,7 @@ function applyScenarioConfig(config) {
   for (const [key, id] of Object.entries(CONFIG_CONTROL_MAP)) setControlValue(id, config[key]);
   for (const [key, id] of Object.entries(MEMORY_CONTROL_MAP)) setControlValue(id, config.mem?.[key]);
   if (typeof markModelPresetCustom === 'function') markModelPresetCustom();
+  if (typeof markGuidedHardwareCustom === 'function') markGuidedHardwareCustom();
   setControlValue('softPct', config.mem?.soft * 100);
   setControlValue('compressPct', config.mem?.compress * 100);
   setControlValue('swapPct', config.mem?.swap * 100);

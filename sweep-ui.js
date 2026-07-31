@@ -14,20 +14,30 @@ function simulateSweepInWorker(config) {
   return new Promise((resolve, reject) => {
     const worker = new Worker('simulation-worker.js');
     const task = { worker, cancel: null };
+    let settled = false;
+    let timeout = null;
     activeSweepWorker = task;
     const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
+      worker.onmessage = null;
+      worker.onerror = null;
       if (activeSweepWorker === task) activeSweepWorker = null;
       worker.terminate();
       callback(value);
     };
     task.cancel = () => finish(reject, new Error('Sweep simulation cancelled.'));
-    const timeout = setTimeout(() => finish(reject, new Error('Sweep scenario exceeded the 30-second work budget.')), 30000);
+    timeout = setTimeout(() => finish(reject, new Error('Sweep scenario exceeded the 30-second work budget.')), 30000);
     worker.onmessage = event => event.data?.error
       ? finish(reject, new Error(event.data.error))
       : finish(resolve, event.data);
     worker.onerror = event => finish(reject, new Error(event.message || 'Sweep simulation worker failed.'));
-    worker.postMessage({ config: sweepClone(config) });
+    try {
+      worker.postMessage({ config: sweepClone(config) });
+    } catch (error) {
+      finish(reject, error);
+    }
   });
 }
 
@@ -181,6 +191,7 @@ function drawSweepMetricChart(canvasId, rows, keys, colors, title) {
 
 function renderSweepResults(execution = activeSweepExecution) {
   renderSweepTable(execution);
+  if (typeof renderGuidedSweepSummary === 'function') renderGuidedSweepSummary(execution);
   const rows = sweepResultRows(execution);
   drawSweepMetricChart('sweepTTFTChart', rows, ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms'], ['#67d9ff', '#72e3a6', '#a78bfa'], 'TTFT mean / p50 / p95 (ms)');
   drawSweepMetricChart('sweepTPSChart', rows, ['singleTPS', 'aggregateTPS'], ['#ffd36b', '#ff8696'], 'Single / aggregate TPS');
@@ -246,7 +257,12 @@ function scheduleSweepTick() {
   }, 0);
 }
 
-async function runSweepFromUI() {
+function sweepModeForExecution(guidedContract, requestedMode) {
+  return guidedContract ? 'oat' : requestedMode;
+}
+
+async function runSweepFromUI(options = {}) {
+  const guidedContract = options?.guidedContract || null;
   if (typeof scenarioImportInProgress !== 'undefined' && scenarioImportInProgress) {
     $('sweepProgressText').textContent = 'Sweep unavailable while a scenario import is being verified.';
     return;
@@ -264,12 +280,16 @@ async function runSweepFromUI() {
     $('sweepProgressText').textContent = 'Preparing canonical baseline in simulation worker…';
     const baselineRun = await simulateSweepInWorker(requestedBaseline);
     if (generation !== sweepGeneration) return;
+    if (guidedContract && baselineRun.metrics?.status !== 'completed') {
+      throw new Error(`Guided baseline must complete before counterfactual analysis (${baselineRun.metrics?.status || 'unknown'}).`);
+    }
     const baselineConfig = baselineRun.config;
-    const selections = collectSweepSelections(baselineConfig);
-    const plan = buildSweepScenarios(baselineConfig, $('sweepMode').value, selections, SWEEP_LIMIT);
+    const selections = guidedContract ? sweepClone(guidedContract.selections) : collectSweepSelections(baselineConfig);
+    const plan = buildSweepScenarios(baselineConfig, sweepModeForExecution(guidedContract, $('sweepMode').value), selections, SWEEP_LIMIT);
     activeSweepExecution = createSweepExecution(baselineConfig, plan);
     activeSweepExecution.selections = sweepClone(selections);
     activeSweepExecution.baselineMetrics = sweepClone(baselineRun.metrics);
+    if (guidedContract) activeSweepExecution.guidedContract = sweepClone(guidedContract);
     $('sweepTruncation').hidden = plan.omitted === 0;
     $('sweepTruncation').textContent = plan.omitted ? `Requested ${plan.total} combinations. Running deterministic row-major prefix of ${plan.scenarios.length}; ${plan.omitted} omitted.` : '';
     renderSweepResults(activeSweepExecution);

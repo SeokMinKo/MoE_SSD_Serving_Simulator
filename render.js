@@ -44,7 +44,7 @@ function renderPressure(r) {
 }
 function renderColibri(r) {
   $('tpotLabel').textContent = 'Average TPOT';
-  $('tpsLabel').textContent = 'Single TPS';
+  $('tpsLabel').textContent = 'Aggregate TPS';
   $('storageLabel').textContent = 'Storage / token';
   $('hitLabel').textContent = 'Cache hit';
   const prefillPaths = {
@@ -91,7 +91,7 @@ function renderColibri(r) {
 }
 function renderAFM(r) {
   $('tpotLabel').textContent = 'Effective TPOT';
-  $('tpsLabel').textContent = 'Effective TPS';
+  $('tpsLabel').textContent = 'Aggregate TPS';
   $('storageLabel').textContent = 'NAND / token';
   $('hitLabel').textContent = 'Set overlap';
   const avgChanged = r.switches.length ? r.tot.changedTotal / r.switches.length : 0;
@@ -153,7 +153,9 @@ function render(r) {
   lastResult = r;
   if (r.error) {
     clearRenderedResult();
-    renderBottleneckAdvisor(createBottleneckInsight(r));
+    const insight = createBottleneckInsight(r);
+    renderBottleneckAdvisor(insight);
+    if (typeof renderGuidedAnalysis === 'function') renderGuidedAnalysis(insight, r);
     $('warn').hidden = false;
     $('warn').textContent = r.error;
     return;
@@ -162,11 +164,14 @@ function render(r) {
   if (r.oom) $('warn').textContent = 'Simulation reached OOM/Hard pressure. Results after the last completed token are not available.';
   $('ttft').textContent = ms(r.ttft);
   $('tpot').textContent = ms(r.avg);
-  $('tps').textContent = fmt(r.tps, 2);
+  $('tpsLabel').textContent = 'Aggregate TPS';
+  $('tps').textContent = fmt(r.serving?.throughputTPS ?? r.agg ?? r.tps, 2);
   $('ssdpt').textContent = r.mode === 'afm3' ? mb(r.ssdPt) : `${fmt(r.ssdPt, 2)} GB`;
   $('hit').textContent = pct(r.hit);
   $('mem').textContent = `${fmt(r.state.peakPhysicalGB, 1)} GB peak`;
-  renderBottleneckAdvisor(createBottleneckInsight(r));
+  const insight = createBottleneckInsight(r);
+  renderBottleneckAdvisor(insight);
+  if (typeof renderGuidedAnalysis === 'function') renderGuidedAnalysis(insight, r);
   r.mode === 'afm3' ? renderAFM(r) : renderColibri(r);
   renderPressure(r);
   renderTraceTable(r);
