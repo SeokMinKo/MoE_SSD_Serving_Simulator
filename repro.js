@@ -1,4 +1,4 @@
-const SCENARIO_SCHEMA_VERSION = 'moe-ssd-sim/v1';
+const SCENARIO_SCHEMA_VERSION = 'moe-ssd-sim/v2';
 
 function summarizeSimulationResult(result) {
   return {
@@ -26,7 +26,8 @@ function createScenarioArtifact(config, result) {
     modelVersion: '1.5.0',
     requests: requestShape,
     config: JSON.parse(JSON.stringify(config)),
-    result: summarizeSimulationResult(result)
+    result: summarizeSimulationResult(result),
+    insight: createBottleneckInsight(result)
   };
 }
 
@@ -60,6 +61,8 @@ function parseScenarioArtifact(text) {
   if (!['Estimated · single-request trend model', 'Estimated · event-driven shared-resource model'].includes(artifact.result.modelStatus)) {
     throw new Error('Invalid imported result status: modelStatus.');
   }
+  const insightError = validateBottleneckInsight(artifact.insight);
+  if (insightError) throw new Error(`Invalid imported insight: ${insightError}`);
   return artifact;
 }
 
@@ -165,6 +168,7 @@ async function importScenarioFile(file) {
     const replay = createScenarioArtifact(result.c, result);
     if (replay.runId !== artifact.runId) throw new Error('Imported scenario replay produced a different run ID.');
     if (!resultSummariesMatch(artifact.result, replay.result)) throw new Error('Imported scenario replay did not reproduce the stored result summary.');
+    if (!bottleneckInsightsMatch(artifact.insight, replay.insight)) throw new Error('Imported scenario replay did not reproduce the stored bottleneck insight.');
     startAnim(result);
     updateComparison(replay);
   }

@@ -127,12 +127,16 @@ function touchMemoryAtTokenStart(c, state, storage, now) {
   let swapInGB = 0;
   let compressionTrafficGB = 0;
   let compressionCpuMs = 0;
+  let storageServiceMs = 0;
+  let storageQueueMs = 0;
   let readyAt = now;
   const f = c.mem.kvTouchFraction;
 
   const rawOriginal = state.kvSwapRawOriginalGB * f;
   if (rawOriginal > EPS) {
     const job = storage.reserveGB(rawOriginal, now, 'swap-in-read', 1, 1);
+    storageServiceMs += job.service;
+    storageQueueMs += job.wait;
     readyAt = Math.max(readyAt, job.end);
     state.kvSwapRawOriginalGB -= rawOriginal;
     state.kvUncompressedGB += rawOriginal;
@@ -144,6 +148,8 @@ function touchMemoryAtTokenStart(c, state, storage, now) {
   if (compressedOriginal > EPS) {
     const storedGB = compressedOriginal / c.mem.compressionRatio;
     const job = storage.reserveGB(storedGB, now, 'swap-in-read', 1, 1);
+    storageServiceMs += job.service;
+    storageQueueMs += job.wait;
     readyAt = Math.max(readyAt, job.end);
     state.kvSwapCompressedOriginalGB -= compressedOriginal;
     state.kvCompressedOriginalGB += compressedOriginal;
@@ -159,7 +165,7 @@ function touchMemoryAtTokenStart(c, state, storage, now) {
 
   state.totalSwapInGB += swapInGB;
   state.totalCompressionTrafficGB += compressionTrafficGB;
-  return { readyAt, swapInGB, compressionTrafficGB, compressionCpuMs };
+  return { readyAt, swapInGB, compressionTrafficGB, compressionCpuMs, storageServiceMs, storageQueueMs };
 }
 
 function applyPressureColibri(c, state, V, D, P, unitGB, token) {

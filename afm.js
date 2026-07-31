@@ -27,10 +27,15 @@ function simulateAFM(c = readAFM()) {
   for (let i = 0; i < c.output; i++) {
     const ts = now;
     let boundary = false, changed = 0, readGB = 0, selectMs = 0, readMs = 0, patchMs = 0, exposed = 0;
+    let storageServiceMs = 0, storageQueueMs = 0, swapServiceMs = 0, swapQueueMs = 0;
     const window = Math.floor(i / c.freq);
 
     completePendingSwapOuts(state, now);
     const touch = touchMemoryAtTokenStart(c, state, storage, now);
+    storageServiceMs += touch.storageServiceMs;
+    storageQueueMs += touch.storageQueueMs;
+    swapServiceMs += touch.storageServiceMs;
+    swapQueueMs += touch.storageQueueMs;
     now = Math.max(now, touch.readyAt) + touch.compressionCpuMs;
     completePendingSwapOuts(state, now);
 
@@ -41,6 +46,8 @@ function simulateAFM(c = readAFM()) {
       selectMs = c.periodicSel;
       now += selectMs;
       const job = storage.reserveGB(readGB, now, 'afm-window-read', c.chunks, 1);
+      storageServiceMs += job.service;
+      storageQueueMs += job.wait;
       readMs = job.service + job.wait;
       patchMs = changed ? c.patchBase + readGB / c.patchBW * 1000 : 0;
       const loadPath = readMs + patchMs;
@@ -58,6 +65,12 @@ function simulateAFM(c = readAFM()) {
     growKV(c, state, kvPerTokenGB);
     const pressure = applyPressureAFM(c, d, state, i + 1);
     const swapSchedule = scheduleSwapOut(c, state, pressure, storage, now, () => afmDynamic(c, d, state));
+    if (swapSchedule.job) {
+      storageServiceMs += swapSchedule.job.service;
+      storageQueueMs += swapSchedule.job.wait;
+      swapServiceMs += swapSchedule.job.service;
+      swapQueueMs += swapSchedule.job.wait;
+    }
     now = Math.max(now, swapSchedule.blockedUntil);
 
     const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
@@ -88,6 +101,13 @@ function simulateAFM(c = readAFM()) {
       ssdGB: readGB,
       pcieGB: 0,
       computeMs: steadyBase + selectMs + patchMs + pressure.compressionCpuMs,
+      computeOnlyMs: steadyBase + selectMs + pressure.compressionCpuMs,
+      storageServiceMs,
+      storageQueueMs,
+      swapServiceMs,
+      swapQueueMs,
+      swapInGB: touch.swapInGB,
+      swapOutGB: pressure.swapOutGB,
       storageRequests: changed ? c.chunks : 0,
       hit: c.overlap,
       boundary,
@@ -130,6 +150,9 @@ function simulateAFM(c = readAFM()) {
     tot: { periodicGB, initialReadGB, changedTotal, boundaryTotal },
     avg, tps, steady, steadyTPS, boundaryTPOT, p95, ssdPt, hit, prefill, ttft, agg,
     ssdBound, pcieBound: Infinity, dramBound, observed, ssdBusy: storage.busy,
-    ssdQueue: storage.queue, storageByKind: storage.byKind, ev: 0, oom: state.oom
+    ssdQueue: storage.queue, storageByKind: storage.byKind,
+    initialSwapServiceMs: initialSwap.job?.service || 0,
+    initialSwapQueueMs: initialSwap.job?.wait || 0,
+    ev: 0, oom: state.oom
   };
 }

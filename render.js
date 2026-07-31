@@ -1,3 +1,31 @@
+function advisorEscape(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+
+function advisorScoreClass(score) {
+  return score >= 70 ? 'score scoreHigh' : score >= 35 ? 'score scoreMedium' : 'score';
+}
+
+function renderBottleneckAdvisor(insight) {
+  const target = $('advisor');
+  if (!target) return;
+  const heading = '<div class="advisorHead"><h2 id="advisorTitle">Bottleneck Advisor</h2><span class="note">Relative pressure · simulator trace only</span></div>';
+  if (!insight || insight.status === 'unavailable') {
+    target.innerHTML = `${heading}<div class="advisorUnavailable"><b>${advisorEscape(insight?.reason || 'Unavailable')}</b><br><span class="note">${advisorEscape(insight?.disclaimer || '')}</span></div>`;
+    return;
+  }
+  const cards = insight.phases.map(phase => {
+    const resources = phase.resources.map(resource => {
+      const evidence = resource.evidence.map(item => `<li><b>${advisorEscape(item.label)}:</b> ${advisorEscape(item.value)} ${advisorEscape(item.unit)}${item.note ? ` · ${advisorEscape(item.note)}` : ''}</li>`).join('');
+      const recommendation = resource.recommendation;
+      return `<details class="resourceInsight"><summary><span>${advisorEscape(resource.label)}</span><span class="${advisorScoreClass(resource.score)}">${resource.score}/100</span></summary><ul class="advisorEvidence"><li><b>Calculation:</b> ${advisorEscape(resource.formula)}</li>${evidence}</ul><div class="advisorRecommendation"><b>${advisorEscape(recommendation.priority)}:</b> ${advisorEscape(recommendation.controls)} · ${advisorEscape(recommendation.direction)}<br><b>When:</b> ${advisorEscape(recommendation.condition)}<br><b>Trade-off:</b> ${advisorEscape(recommendation.tradeoff)}</div></details>`;
+    }).join('');
+    return `<article class="phaseCard"><h3>${advisorEscape(phase.label)}</h3><div class="phaseNote">${advisorEscape(phase.note)}</div>${resources}</article>`;
+  }).join('');
+  const statusNote = insight.reason ? `<div class="advisorUnavailable"><b>${advisorEscape(insight.reason)}</b></div>` : '';
+  target.innerHTML = `${heading}${statusNote}<div class="note">${advisorEscape(insight.disclaimer)}</div><div class="advisorGrid">${cards}</div>`;
+}
+
 function renderPressure(r) {
   const s = r.state;
   const thrash = s.totalSwapOutGB > EPS ? Math.min(1, s.totalSwapInGB / s.totalSwapOutGB) : 0;
@@ -125,6 +153,7 @@ function render(r) {
   lastResult = r;
   if (r.error) {
     clearRenderedResult();
+    renderBottleneckAdvisor(createBottleneckInsight(r));
     $('warn').hidden = false;
     $('warn').textContent = r.error;
     return;
@@ -137,6 +166,7 @@ function render(r) {
   $('ssdpt').textContent = r.mode === 'afm3' ? mb(r.ssdPt) : `${fmt(r.ssdPt, 2)} GB`;
   $('hit').textContent = pct(r.hit);
   $('mem').textContent = `${fmt(r.state.peakPhysicalGB, 1)} GB peak`;
+  renderBottleneckAdvisor(createBottleneckInsight(r));
   r.mode === 'afm3' ? renderAFM(r) : renderColibri(r);
   renderPressure(r);
   renderTraceTable(r);

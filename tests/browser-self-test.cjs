@@ -36,7 +36,7 @@ const document = {
   }
 };
 
-const moduleSource = ['core.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'repro.js', 'playback.js', 'render.js']
+const moduleSource = ['core.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'advisor.js', 'repro.js', 'playback.js', 'render.js']
   .filter(file => fs.existsSync(path.join(root, file)))
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
   .join('\n');
@@ -253,12 +253,13 @@ test('P1: normalized export and replay produce the same deterministic run ID', (
   const snapshot = new Map([...elements].map(([id, element]) => [id, { value: element.value, checked: element.checked }]));
   const placement = elements.get('placement');
   placement.value = 'auto';
+  elements.get('conc').value = '2';
   const ids = vm.runInContext(`(() => {
     const first = simulate();
     const artifact = createScenarioArtifact(first.c, first);
     applyScenarioConfig(artifact.config);
     const second = simulate();
-    return [first.runId, artifact.runId, second.runId];
+    return [first.runId, artifact.runId, second.runId, bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(second))];
   })()`, sandbox);
   for (const [id, state] of snapshot) {
     const element = elements.get(id);
@@ -267,6 +268,7 @@ test('P1: normalized export and replay produce the same deterministic run ID', (
   }
   assert.equal(ids[0], ids[1]);
   assert.equal(ids[1], ids[2]);
+  assert.equal(ids[3], true);
 });
 
 test('P1: successful render exposes an equivalent token trace table for non-canvas access', () => {
@@ -286,6 +288,42 @@ test('P1: model status labels results as uncalibrated sensitivity estimates', ()
   sandbox.__statusResult = result;
   vm.runInContext('renderColibri(__statusResult)', sandbox);
   assert.match(elements.get('modelStatus').innerHTML, /uncalibrated sensitivity estimates/);
+});
+
+test('P1: Bottleneck Advisor is directly below KPIs and exposes phase scorecards', () => {
+  const kpiIndex = html.indexOf('<div class="kpis">');
+  const advisorIndex = html.indexOf('<section id="advisor"');
+  const tokenIndex = html.indexOf('<div id="token"');
+  assert.ok(kpiIndex >= 0 && advisorIndex > kpiIndex && tokenIndex > advisorIndex, `${kpiIndex}/${advisorIndex}/${tokenIndex}`);
+  assert.match(html, /Estimated sensitivity simulator \/ Unvalidated Alpha/);
+  const result = vm.runInContext('simulateColibri(readColibri())', sandbox);
+  sandbox.__advisorResult = result;
+  vm.runInContext('renderBottleneckAdvisor(createBottleneckInsight(__advisorResult))', sandbox);
+  delete sandbox.__advisorResult;
+  const output = elements.get('advisor').innerHTML;
+  for (const label of ['Prefill', 'First token', 'Decode', 'Memory pressure']) assert.match(output, new RegExp(label));
+  for (const label of ['Storage', 'Data movement', 'Compute', 'Capacity / policy']) assert.match(output, new RegExp(label));
+  assert.match(output, /Relative pressure/);
+  assert.match(output, /Trade-off/);
+  assert.match(output, /not measured|not a measured/i);
+});
+
+test('P1: invalid render replaces stale advisor scores with an unavailable reason', () => {
+  elements.get('advisor').innerHTML = '<b>stale score 100</b>';
+  vm.runInContext("render({ error: 'Invalid configuration: prompt is required' })", sandbox);
+  const output = elements.get('advisor').innerHTML;
+  assert.doesNotMatch(output, /stale score/);
+  assert.match(output, /Unavailable/);
+  assert.match(output, /configuration validation failed/i);
+});
+
+test('P1: pre-decode OOM render provides capacity recovery without fabricated timing scores', () => {
+  vm.runInContext("render({ error: 'Unified memory OOM before decode: 140 / 128 GB', mode: 'afm3', c: { host: 128, vram: 0 } })", sandbox);
+  const output = elements.get('advisor').innerHTML;
+  assert.match(output, /OOM before decode/);
+  assert.match(output, /Capacity \/ policy/);
+  assert.match(output, /host|context|concurrency/i);
+  assert.doesNotMatch(output, /Prefill[^<]*100|Decode[^<]*100/);
 });
 
 test('P1: swap UI distinguishes allocated or in-flight bytes from completed residency', () => {
@@ -310,7 +348,7 @@ test('browser Self-test reports every scenario passing', () => {
   const output = elements.get('tests').textContent;
   assert.equal(output.includes('FAIL'), false, output);
   assert.equal(output.includes('ERROR'), false, output);
-  assert.match(output, /20\/20 passed$/);
+  assert.match(output, /22\/22 passed$/);
 });
 
 test('P1: browser Self-test remains independent of the selected Kimi K3 topology', () => {
@@ -328,5 +366,5 @@ test('P1: browser Self-test remains independent of the selected Kimi K3 topology
   }
   assert.equal(output.includes('FAIL'), false, output);
   assert.equal(output.includes('ERROR'), false, output);
-  assert.match(output, /20\/20 passed$/);
+  assert.match(output, /22\/22 passed$/);
 });

@@ -2,7 +2,7 @@
 
 브라우저에서 실행되는 Colibri 및 AFM 3 Core Advanced용 SSD/NAND offloading 시뮬레이터입니다. 절대 성능 예측보다 **Storage·DRAM·Memory Capacity·Swap 정책 변화에 따른 병목과 상대 트렌드 분석**을 목표로 합니다.
 
-> Current version: **V1.5 — Estimated sensitivity + event/resource scheduling (Unvalidated Alpha)**
+> Current version: **V1.5 — Estimated sensitivity simulator / Unvalidated Alpha**
 
 ## 실행
 
@@ -23,13 +23,13 @@ node tools/hardware-sweep.cjs
 - Attention/Expert compute calibration 값을 변경했을 때 compute-bound TPS/TTFT 변화
 - Memory pressure, reclaim, compression, swap이 storage/DRAM 병목으로 전환되는 지점
 
-결과 화면의 `Prefill critical path`를 먼저 확인하십시오. 현재 critical path가 아닌 부품만 증설하면 수치 변화가 작거나 없을 수 있습니다.
+결과 KPI 아래의 `Bottleneck Advisor`는 Prefill, first token, decode, memory-pressure별 Storage·Data movement·Compute·Capacity 상대 압력 점수와 계산 근거를 표시합니다. 이 점수는 simulator 내부 trace 설명이며 실측 진단이나 개선량 예측이 아닙니다.
 
 ## Execution engines
 
 - **Colibri Token-Routed MoE**
   - Token/Layer routing
-  - 28개 공개 모델의 topology-only 프리셋
+  - 29개 공개 모델의 topology-only 프리셋
   - VRAM/DRAM/Page Cache 계층
   - Demand 및 Prefetch 공유 Storage timeline
   - file-backed 또는 anonymous DRAM Expert Cache
@@ -60,7 +60,8 @@ node tools/hardware-sweep.cjs
 - Stable min-heap event queue, 공유 SSD/DRAM/PCIe/compute timeline, request arrival과 admission-window batching
 - 단일 요청에서는 analytic token timeline을 보존하고, 다중 요청에서는 그 baseline에 공유 자원의 queue contention을 추가
 - Swap read/write를 shared SSD contention에 포함하고 AFM selector/initial patch/prefill을 TTFT event chain에 포함
-- `moe-ssd-sim/v1` JSON export/import, deterministic Run ID, baseline diff, replay 결과 검증
+- `moe-ssd-sim/v2` JSON export/import, deterministic Run ID, baseline diff, result와 derived Advisor insight replay 검증
+- Prefill/first-token/decode/memory-pressure별 0–100 상대 병목 압력, 근거, 조건부 설정 방향 및 부작용
 - 공개 구조가 완전한 29개 MoE 모델의 topology-only 프리셋과 원본 config provenance
 - Node 22 syntax/test CI, mobile 44px touch targets, reduced-motion, canvas와 동등한 token trace 표
 
@@ -100,7 +101,7 @@ node tools/hardware-sweep.cjs
 
 ## 검증
 
-UI의 `Self-test`는 **20개** 브라우저 회귀 시나리오를 실행합니다. Node 검증은 다음과 같습니다.
+UI의 `Self-test`는 **22개** 브라우저 회귀 시나리오를 실행합니다. Node 검증은 다음과 같습니다.
 
 ```bash
 npm ci --ignore-scripts
@@ -112,6 +113,7 @@ npm test
 - V1.4 검증 결과: [`docs/v1.4-validation.md`](docs/v1.4-validation.md)
 - V1.5 검증 결과와 신뢰 경계: [`docs/v1.5-validation.md`](docs/v1.5-validation.md)
 - 모델 프리셋 매핑과 제외 범위: [`docs/model-presets.md`](docs/model-presets.md)
+- Bottleneck Advisor 점수와 artifact 계약: [`docs/bottleneck-advisor.md`](docs/bottleneck-advisor.md)
 - 상세 계획 및 검토: [`docs/DRAM_SWAP_IMPLEMENTATION_PLAN.md`](docs/DRAM_SWAP_IMPLEMENTATION_PLAN.md)
 - AFM 3 모델: [`docs/afm3-model.md`](docs/afm3-model.md)
 
@@ -123,7 +125,7 @@ npm test
 - Discrete GPU의 고정 runtime/device weight 사용량은 0.8GB workspace calibration으로 단순화합니다.
 - V1.5 scheduler는 analytic trace를 no-contention baseline으로 사용하는 resource-level approximation입니다. Aggregate roofline work는 streaming overlap으로 취급하고 공유 자원의 queue delay를 추가합니다. GPU kernel-level batching, scheduler fairness, request 간 Expert-cache 공유, in-flight read coalescing은 모델링하지 않습니다.
 - SSD QD는 command-latency wave와 aggregate bandwidth cap으로 근사하며 실제 outstanding-slot service curve가 아닙니다.
-- Scenario import의 동일 결과/Run ID 검증은 같은 V1.5 JavaScript 모델의 deterministic replay이며 외부 독립 oracle이 아닙니다.
+- Scenario import의 동일 결과/Run ID/Advisor insight 검증은 같은 V1.5 JavaScript 모델의 deterministic replay이며 외부 독립 oracle이 아닙니다.
 - CPU/GPU 제품명이나 FLOPS에서 kernel 시간을 자동 산출하지 않습니다.
 - 모델/런타임 trace와 SSD service curve로 calibration하기 전에는 절대 TPS/TTFT 오차 범위를 보장할 수 없습니다.
 - 절대 TPS보다 동일 설정에서 변수 하나를 변경한 상대 비교에 사용하십시오.

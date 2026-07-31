@@ -73,6 +73,15 @@ function tests() {
     if (r.error || !(r.state.totalSwapOutGB > 0 && r.state.totalSwapInGB > 0)) throw new Error(`error=${r.error || 'none'} in=${r.state?.totalSwapInGB} out=${r.state?.totalSwapOutGB} peak=${r.state?.peakPhysicalGB}`);
     return true;
   });
+  t('Advisor exposes four bounded phase scorecards', () => {
+    const insight = createBottleneckInsight(simulateColibri({ ...c, prompt: 8, output: 4 }));
+    return insight.phases.length === 4 && insight.phases.every(phase => phase.resources.length === 4 && phase.resources.every(resource => Number.isInteger(resource.score) && resource.score >= 0 && resource.score <= 100));
+  });
+  t('Scenario V2 persists reproducible Advisor insight', () => {
+    const result = simulateColibri({ ...c, prompt: 8, output: 2 });
+    const artifact = createScenarioArtifact(result.c, result);
+    return artifact.schemaVersion === 'moe-ssd-sim/v2' && bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(result));
+  });
   t('1.5 TPS at 1× = 666.7ms', () => Math.abs(delay(1000 / 1.5, 1) - 666.6667) < 0.01);
   $('tests').textContent = log.join(String.fromCharCode(10)) + String.fromCharCode(10, 10) + `${log.filter(x => x.startsWith('PASS')).length}/${log.length} passed`;
 }

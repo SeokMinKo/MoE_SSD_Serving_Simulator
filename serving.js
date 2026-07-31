@@ -52,8 +52,18 @@ class SharedServingResource {
     this.queueMs = 0;
     this.workGB = 0;
     this.jobs = 0;
+    this.phases = {};
   }
-  reserveGB(gb, arrivalMs, requests = 1) {
+  recordPhase(phase, service, wait, gb = 0) {
+    if (!phase) return;
+    const stats = this.phases[phase] || { jobs: 0, workGB: 0, busyMs: 0, queueMs: 0 };
+    stats.jobs++;
+    stats.workGB += gb;
+    stats.busyMs += service;
+    stats.queueMs += wait;
+    this.phases[phase] = stats;
+  }
+  reserveGB(gb, arrivalMs, requests = 1, phase = null) {
     if (!(gb > EPS)) return { start: arrivalMs, end: arrivalMs, wait: 0, service: 0, gb: 0 };
     const start = Math.max(arrivalMs, this.freeAt);
     const wait = start - arrivalMs;
@@ -66,9 +76,10 @@ class SharedServingResource {
     this.queueMs += wait;
     this.workGB += gb;
     this.jobs++;
+    this.recordPhase(phase, service, wait, gb);
     return { start, end, wait, service, gb };
   }
-  reserveMs(durationMs, arrivalMs) {
+  reserveMs(durationMs, arrivalMs, phase = null) {
     if (!(durationMs > EPS)) return { start: arrivalMs, end: arrivalMs, wait: 0, service: 0 };
     const start = Math.max(arrivalMs, this.freeAt);
     const wait = start - arrivalMs;
@@ -77,10 +88,11 @@ class SharedServingResource {
     this.busyMs += durationMs;
     this.queueMs += wait;
     this.jobs++;
+    this.recordPhase(phase, durationMs, wait);
     return { start, end, wait, service: durationMs };
   }
   snapshot() {
-    return { jobs: this.jobs, workGB: this.workGB, busyMs: this.busyMs, queueMs: this.queueMs, freeAt: this.freeAt };
+    return { jobs: this.jobs, workGB: this.workGB, busyMs: this.busyMs, queueMs: this.queueMs, freeAt: this.freeAt, phases: this.phases };
   }
 }
 
@@ -208,31 +220,32 @@ function simulateServing(config, requestSpecs, options = {}) {
     if (event.type === 'arrival') {
       let readyAt;
       if (config.mode === 'afm3') {
-        const selector = resources.compute.reserveMs(config.initSel, event.time);
-        const storage = resources.ssd.reserveGB(request.trace.tot.initialReadGB, selector.end, config.chunks);
+        const selector = resources.compute.reserveMs(config.initSel, event.time, 'prefill');
+        const storage = resources.ssd.reserveGB(request.trace.tot.initialReadGB, selector.end, config.chunks, 'prefill');
         const initialPatchMs = config.patchBase + request.trace.tot.initialReadGB / config.patchBW * 1000;
-        const patch = resources.compute.reserveMs(initialPatchMs, storage.end);
-        const prefill = resources.compute.reserveMs(config.prompt / config.prefillTPS * 1000, patch.end);
+        const patch = resources.compute.reserveMs(initialPatchMs, storage.end, 'prefill');
+        const prefill = resources.compute.reserveMs(config.prompt / config.prefillTPS * 1000, patch.end, 'prefill');
         readyAt = prefill.end;
       } else {
         const breakdown = request.trace.prefillBreakdown || {};
-        const storage = resources.ssd.reserveGB(breakdown.storageGB || 0, event.time, breakdown.storageRequests || 1);
-        const dram = resources.dram.reserveGB(breakdown.dramTrafficGB || 0, event.time);
-        const pcie = resources.pcie.reserveGB(breakdown.transferGB || 0, event.time);
-        const compute = resources.compute.reserveMs(breakdown.computeMs || 0, event.time);
+        const storage = resources.ssd.reserveGB(breakdown.storageGB || 0, event.time, breakdown.storageRequests || 1, 'prefill');
+        const dram = resources.dram.reserveGB(breakdown.dramTrafficGB || 0, event.time, 1, 'prefill');
+        const pcie = resources.pcie.reserveGB(breakdown.transferGB || 0, event.time, 1, 'prefill');
+        const compute = resources.compute.reserveMs(breakdown.computeMs || 0, event.time, 'prefill');
         const prefillMs = Math.max(0, request.trace.ttft - (request.trace.tokens[0]?.tpot || 0));
         const contentionWait = isSingleRequest ? 0 : Math.max(storage.wait, dram.wait, pcie.wait, compute.wait);
         readyAt = Math.max(event.time + prefillMs + contentionWait, storage.end, dram.end, pcie.end, compute.end);
       }
-      resources.ssd.reserveGB(initialSwapOutGB(request.trace), readyAt, 1);
+      resources.ssd.reserveGB(initialSwapOutGB(request.trace), readyAt, 1, 'prefill');
       queue.push({ time: readyAt, type: 'token-ready', request });
     } else if (event.type === 'token-ready') {
       const token = request.trace.tokens[request.nextToken];
       if (!token) continue;
+      const phase = request.nextToken === 0 ? 'first-token' : 'decode';
       const work = tokenWork(token);
-      const storage = resources.ssd.reserveGB(work.demandGB + work.swapInGB, event.time, work.ssdRequests);
-      const dram = resources.dram.reserveGB(work.criticalDramGB, event.time);
-      const pcie = resources.pcie.reserveGB(work.pcieGB, event.time);
+      const storage = resources.ssd.reserveGB(work.demandGB + work.swapInGB, event.time, work.ssdRequests, phase);
+      const dram = resources.dram.reserveGB(work.criticalDramGB, event.time, 1, phase);
+      const pcie = resources.pcie.reserveGB(work.pcieGB, event.time, 1, phase);
       const contentionWait = isSingleRequest ? 0 : Math.max(storage.wait, dram.wait, pcie.wait);
       queue.push({
         time: event.time + contentionWait,
@@ -240,6 +253,7 @@ function simulateServing(config, requestSpecs, options = {}) {
         request,
         token,
         work,
+        phase,
         baselineCompleteAt: event.time + token.tpot + contentionWait
       });
     } else if (event.type === 'data-ready') {
@@ -254,14 +268,16 @@ function simulateServing(config, requestSpecs, options = {}) {
       if (!batch.length) continue;
       const batchReady = Math.max(...batch.map(item => item.time));
       for (const item of batch) {
-        const prefetch = resources.ssd.reserveGB(item.work.prefetchGB, item.time, item.work.ssdRequests);
-        resources.dram.reserveGB(item.work.prefetchGB, prefetch.end);
-        const swapSource = resources.dram.reserveGB(item.work.swapOutGB, item.time);
-        resources.ssd.reserveGB(item.work.swapOutGB, swapSource.end, 1);
+        const prefetch = resources.ssd.reserveGB(item.work.prefetchGB, item.time, item.work.ssdRequests, item.phase);
+        resources.dram.reserveGB(item.work.prefetchGB, prefetch.end, 1, item.phase);
+        const swapSource = resources.dram.reserveGB(item.work.swapOutGB, item.time, 1, item.phase);
+        resources.ssd.reserveGB(item.work.swapOutGB, swapSource.end, 1, item.phase);
       }
       const maxCompute = Math.max(...batch.map(item => item.work.computeMs));
       const batchService = maxCompute * (1 + 0.08 * Math.max(0, batch.length - 1));
-      const compute = resources.compute.reserveMs(batchService, batchReady);
+      const batchPhases = new Set(batch.map(item => item.phase));
+      const computePhase = batchPhases.size === 1 ? batch[0].phase : 'mixed';
+      const compute = resources.compute.reserveMs(batchService, batchReady, computePhase);
       const batchOverhead = Math.max(0, batchService - maxCompute);
       for (const item of batch) {
         const admissionDelay = batchReady - item.time;

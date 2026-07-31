@@ -227,12 +227,17 @@ function simulateColibri(c = readColibri()) {
     const ts = now;
     let tokenSSDGB = 0, tokenDemandGB = 0, tokenPrefetchGB = 0, tokenPcieGB = 0, tokenComputeMs = 0, tokenStorageRequests = 0, hits = 0, tokenSwapInGB = 0;
     let tokenCompressionTrafficGB = 0, tokenCompressionCpuMs = 0;
+    let tokenStorageServiceMs = 0, tokenStorageQueueMs = 0, tokenSwapServiceMs = 0, tokenSwapQueueMs = 0;
 
     completePendingSwapOuts(state, now);
     const touch = touchMemoryAtTokenStart(c, state, storage, now);
     now = Math.max(now, touch.readyAt) + touch.compressionCpuMs;
     completePendingSwapOuts(state, now);
     tokenSwapInGB += touch.swapInGB;
+    tokenStorageServiceMs += touch.storageServiceMs;
+    tokenStorageQueueMs += touch.storageQueueMs;
+    tokenSwapServiceMs += touch.storageServiceMs;
+    tokenSwapQueueMs += touch.storageQueueMs;
     tokenCompressionTrafficGB += touch.compressionTrafficGB;
 
     const previousRoutes = last.map(route => route.slice());
@@ -273,6 +278,10 @@ function simulateColibri(c = readColibri()) {
           if (ready.delete(k)) tot.pfUseful++;
         } else if (state.swappedExperts.has(k)) {
           const sj = storage.reserveGB(unitGB, start, 'swap-in-read', 1, 1);
+          tokenStorageServiceMs += sj.service;
+          tokenStorageQueueMs += sj.wait;
+          tokenSwapServiceMs += sj.service;
+          tokenSwapQueueMs += sj.wait;
           readyAt = Math.max(readyAt, sj.end);
           state.swappedExperts.delete(k);
           state.swapExpertGB = Math.max(0, state.swapExpertGB - unitGB);
@@ -300,6 +309,8 @@ function simulateColibri(c = readColibri()) {
 
       const demandGB = misses.length * unitGB;
       const dj = storage.reserveGB(demandGB, start, 'expert-demand-read', Math.max(1, misses.length), 1);
+      tokenStorageServiceMs += dj.service;
+      tokenStorageQueueMs += dj.wait;
       tokenStorageRequests += misses.length;
       readyAt = Math.max(readyAt, dj.end);
       tot.demandGB += dj.gb;
@@ -345,6 +356,8 @@ function simulateColibri(c = readColibri()) {
         );
         const pfGB = filtered.length * unitGB;
         const pj = storage.reserveGB(pfGB, start, 'expert-prefetch-read', Math.max(1, filtered.length), 1);
+        tokenStorageServiceMs += pj.service;
+        tokenStorageQueueMs += pj.wait;
         tokenStorageRequests += filtered.length;
         for (const e of filtered) pending.set(key(l + 1, e), { l: l + 1, e, end: pj.end });
         tot.pfIssued += filtered.length;
@@ -362,6 +375,12 @@ function simulateColibri(c = readColibri()) {
       pruneReady(layer, expert);
     }
     const swapSchedule = scheduleSwapOut(c, state, pressure, storage, now, () => colibriDynamic(c, state, V, D, P, unitGB));
+    if (swapSchedule.job) {
+      tokenStorageServiceMs += swapSchedule.job.service;
+      tokenStorageQueueMs += swapSchedule.job.wait;
+      tokenSwapServiceMs += swapSchedule.job.service;
+      tokenSwapQueueMs += swapSchedule.job.wait;
+    }
     now = Math.max(now, swapSchedule.blockedUntil);
     tokenCompressionTrafficGB += pressure.compressionTrafficGB;
     tokenCompressionCpuMs += pressure.compressionCpuMs;
@@ -404,6 +423,12 @@ function simulateColibri(c = readColibri()) {
       prefetchGB: tokenPrefetchGB,
       pcieGB: tokenPcieGB,
       computeMs: tokenComputeMs + tokenCompressionCpuMs,
+      storageServiceMs: tokenStorageServiceMs,
+      storageQueueMs: tokenStorageQueueMs,
+      swapServiceMs: tokenSwapServiceMs,
+      swapQueueMs: tokenSwapQueueMs,
+      swapInGB: tokenSwapInGB,
+      swapOutGB: pressure.swapOutGB,
       storageRequests: tokenStorageRequests,
       hit: hits / (c.layers * c.active),
       boundary: false,
@@ -435,6 +460,9 @@ function simulateColibri(c = readColibri()) {
   return {
     mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, hit, prefill, prefillBreakdown, ttft, agg,
     ssdBound, pcieBound, dramBound, observed, ssdBusy: storage.busy, ssdQueue: storage.queue,
-    storageByKind: storage.byKind, ev, oom: state.oom
+    storageByKind: storage.byKind,
+    initialSwapServiceMs: initialSwap.job?.service || 0,
+    initialSwapQueueMs: initialSwap.job?.wait || 0,
+    ev, oom: state.oom
   };
 }

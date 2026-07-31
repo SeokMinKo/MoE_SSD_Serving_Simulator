@@ -9,12 +9,13 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const source = ['core.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js']
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
-  .join('\n') + ['serving.js', 'repro.js']
+  .join('\n') + ['serving.js', 'advisor.js', 'repro.js']
     .filter(file => fs.existsSync(path.join(root, file)))
     .map(file => `\n${fs.readFileSync(path.join(root, file), 'utf8')}`)
     .join('') + `
 globalThis.__simulator = {
   StorageResource,
+  SharedServingResource,
   simulateColibri,
   simulateAFM,
   afmDerived,
@@ -24,7 +25,10 @@ globalThis.__simulator = {
   createScenarioArtifact: typeof createScenarioArtifact === 'function' ? createScenarioArtifact : null,
   parseScenarioArtifact: typeof parseScenarioArtifact === 'function' ? parseScenarioArtifact : null,
   compareResultSummaries: typeof compareResultSummaries === 'function' ? compareResultSummaries : null,
-  resultSummariesMatch: typeof resultSummariesMatch === 'function' ? resultSummariesMatch : null
+  resultSummariesMatch: typeof resultSummariesMatch === 'function' ? resultSummariesMatch : null,
+  createBottleneckInsight: typeof createBottleneckInsight === 'function' ? createBottleneckInsight : null,
+  validateBottleneckInsight: typeof validateBottleneckInsight === 'function' ? validateBottleneckInsight : null,
+  bottleneckInsightsMatch: typeof bottleneckInsightsMatch === 'function' ? bottleneckInsightsMatch : null
 };`;
 
 const sandbox = {
@@ -251,6 +255,18 @@ test('P1: event queue is stable and ordered by simulation time', () => {
   assert.deepEqual([queue.pop().id, queue.pop().id, queue.pop().id], ['first', 'second', 'late']);
 });
 
+test('P1: shared serving resources preserve queue accounting by execution phase', () => {
+  const resource = new simulator.SharedServingResource('ssd', 1, 0, 1);
+  resource.reserveGB(1, 0, 1, 'prefill');
+  resource.reserveGB(1, 0, 1, 'first-token');
+  resource.reserveGB(1, 0, 1, 'decode');
+  const snapshot = resource.snapshot();
+  assert.equal(snapshot.phases.prefill.busyMs, 1000);
+  assert.equal(snapshot.phases['first-token'].queueMs, 1000);
+  assert.equal(snapshot.phases.decode.queueMs, 2000);
+  assert.equal(snapshot.queueMs, 3000);
+});
+
 test('P1: multi-request scheduler derives throughput from completed events and shared contention', () => {
   assert.equal(typeof simulator.simulateServing, 'function');
   const config = colibriConfig({
@@ -410,16 +426,159 @@ test('P1: scenario artifacts round-trip validated config, result summary, and ru
   const result = simulator.simulateColibri(config);
   const artifact = simulator.createScenarioArtifact(config, result);
   const parsed = simulator.parseScenarioArtifact(JSON.stringify(artifact));
-  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v1');
+  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v2');
   assert.equal(JSON.stringify(parsed.config), JSON.stringify(config));
   assert.match(parsed.runId, /^sim-[0-9a-f]{8}$/);
   assert.equal(parsed.result.completedTokens, 2);
+  assert.equal(parsed.insight.version, 'bottleneck-advisor/v1');
+  assert.equal(parsed.insight.phases.length, 4);
+});
+
+test('P1: advisor emits deterministic bounded evidence for every resource in every phase', () => {
+  assert.equal(typeof simulator.createBottleneckInsight, 'function');
+  const result = simulator.simulateColibri(colibriConfig({ output: 4, prompt: 8 }));
+  const first = simulator.createBottleneckInsight(result);
+  const second = simulator.createBottleneckInsight(result);
+  assert.equal(JSON.stringify(first), JSON.stringify(second));
+  assert.equal(first.status, 'complete');
+  assert.deepEqual(JSON.parse(JSON.stringify(first.phases.map(phase => phase.id))), ['prefill', 'first-token', 'decode', 'memory-pressure']);
+  for (const phase of first.phases) {
+    assert.deepEqual(JSON.parse(JSON.stringify(phase.resources.map(resource => resource.id))), ['storage', 'data-movement', 'compute', 'capacity-policy']);
+    for (const resource of phase.resources) {
+      assert.ok(Number.isInteger(resource.score) && resource.score >= 0 && resource.score <= 100, `${phase.id}/${resource.id}=${resource.score}`);
+      assert.equal(typeof resource.formula, 'string');
+      assert.ok(resource.formula.length > 10);
+      assert.ok(Array.isArray(resource.evidence) && resource.evidence.length > 0);
+      assert.ok(['Monitor', 'Consider', 'Urgent'].includes(resource.recommendation.priority));
+      for (const key of ['controls', 'direction', 'condition', 'tradeoff']) assert.equal(typeof resource.recommendation[key], 'string');
+    }
+  }
+});
+
+test('P1: advisor separates storage and compute pressure from the simulated trace', () => {
+  const storageBound = simulator.createBottleneckInsight(simulator.simulateColibri(colibriConfig({
+    prompt: 8, output: 3, layers: 1, experts: 16, active: 8, pinned: 0, dcache: 0, page: 0,
+    pf: false, ssdBW: 0.1, lat: 0, attn: 0, ems: 0, dramBW: 1_000_000
+  })));
+  const computeBound = simulator.createBottleneckInsight(simulator.simulateColibri(colibriConfig({
+    prompt: 8, output: 3, layers: 1, experts: 1, active: 1, pinned: 1, pf: false,
+    ssdBW: 1_000_000, lat: 0, attn: 100, ems: 100, par: 1, dramBW: 1_000_000
+  })));
+  const score = (insight, phase, resource) => insight.phases.find(item => item.id === phase).resources.find(item => item.id === resource).score;
+  assert.ok(score(storageBound, 'decode', 'storage') > score(storageBound, 'decode', 'compute'));
+  assert.ok(score(computeBound, 'decode', 'compute') > score(computeBound, 'decode', 'storage'));
+});
+
+test('P1: advisor attributes shared-resource queue contention to its actual phase', () => {
+  const servingConfig = colibriConfig({
+    prompt: 8, output: 3, conc: 2, layers: 1, experts: 1, active: 1, pinned: 0,
+    dcache: 1, page: 0, pf: false, cold: true, ssdBW: 0.1, lat: 10_000, attn: 0, ems: 0
+  });
+  const result = simulator.simulateColibri({ ...servingConfig, conc: 1 });
+  result.c = servingConfig;
+  result.serving = simulator.simulateServing(servingConfig, [
+    { id: 'a', arrivalMs: 0, output: 3 },
+    { id: 'b', arrivalMs: 0, output: 3 }
+  ]);
+  const insight = simulator.createBottleneckInsight(result);
+  const storage = phase => insight.phases.find(item => item.id === phase).resources.find(resource => resource.id === 'storage');
+  assert.ok(result.serving.resources.ssd.phases.prefill.queueMs > 0);
+  assert.equal(result.serving.resources.ssd.phases.decode?.queueMs || 0, 0);
+  assert.ok(storage('prefill').score > 0);
+  assert.equal(storage('decode').evidence.find(item => item.label === 'Shared SSD queue').value, 0);
+  assert.match(storage('decode').formula, /phase queue/i);
+});
+
+test('P1: a one-token trace marks decode unavailable instead of duplicating first-token evidence', () => {
+  const insight = simulator.createBottleneckInsight(simulator.simulateColibri(colibriConfig({ output: 1 })));
+  const first = insight.phases.find(phase => phase.id === 'first-token');
+  const decode = insight.phases.find(phase => phase.id === 'decode');
+  assert.match(decode.note, /unavailable|no tokens/i);
+  assert.ok(decode.resources.every(resource => resource.score === 0));
+  assert.notDeepEqual(decode.resources, first.resources);
+});
+
+test('P1: advisor treats partial OOM as urgent capacity pressure without claiming completion', () => {
+  const result = simulator.simulateColibri(colibriConfig({
+    prompt: 0, output: 512, context: 5000, host: 16, layers: 1, experts: 1, active: 1,
+    pinned: 1, dcache: 0, vcache: 0, resident: 0, kvKB: 1_000, pf: false,
+    attn: 0, ems: 0, dramBW: 1_000_000,
+    mem: memoryPolicy({ hard: 0.97, osReservedGB: 4, minHeadroomGB: 2 })
+  }));
+  assert.equal(result.error, undefined);
+  assert.equal(result.oom, true);
+  assert.ok(result.tokens.length > 0 && result.tokens.length < 512, result.tokens.length);
+  const insight = simulator.createBottleneckInsight(result);
+  const memory = insight.phases.find(phase => phase.id === 'memory-pressure');
+  const capacity = memory.resources.find(resource => resource.id === 'capacity-policy');
+  assert.equal(insight.status, 'oom');
+  assert.equal(capacity.score, 100);
+  assert.equal(capacity.recommendation.priority, 'Urgent');
+  assert.match(insight.disclaimer, /completed token|완료된 token/i);
+});
+
+test('P1: AFM advisor emits the same four phase contracts', () => {
+  const result = simulator.simulateAFM(afmConfig({ output: 4, prompt: 8 }));
+  const insight = simulator.createBottleneckInsight(result);
+  assert.equal(insight.phases.length, 4);
+  assert.equal(simulator.validateBottleneckInsight(insight), null);
+});
+
+test('P1: AFM periodic patch materialization is data movement rather than compute', () => {
+  const result = simulator.simulateAFM(afmConfig({
+    host: 512, context: 1, output: 3, routed: 1, shared: 0,
+    freq: 1, overlap: 0, patchBase: 100, patchBW: 0.01,
+    ssdBW: 1_000_000, attn: 0, ffn: 0, runtime: 0
+  }));
+  assert.equal(result.error, undefined, result.error);
+  const decode = simulator.createBottleneckInsight(result).phases.find(phase => phase.id === 'decode');
+  const scores = Object.fromEntries(decode.resources.map(resource => [resource.id, resource.score]));
+  assert.ok(scores['data-movement'] > scores.compute, JSON.stringify(scores));
+  assert.ok(result.tokens.slice(1).every(token => token.patchMs > 0 && token.computeOnlyMs === 0));
+});
+
+test('P1: Colibri Advisor uses exact per-job StorageResource service accounting', () => {
+  const result = simulator.simulateColibri(colibriConfig({
+    prompt: 0, output: 1, context: 1, layers: 2, experts: 1, active: 1,
+    pinned: 0, dcache: 0, vcache: 0, pf: false, ssdBW: 1_000_000,
+    lat: 10_000, qd: 8, esize: 0.019, attn: 0, ems: 0
+  }));
+  assert.equal(result.error, undefined, result.error);
+  assert.ok(Math.abs(result.tokens[0].storageServiceMs - 20) < 0.001, result.tokens[0].storageServiceMs);
+  const storage = simulator.createBottleneckInsight(result).phases.find(phase => phase.id === 'first-token').resources.find(resource => resource.id === 'storage');
+  const service = storage.evidence.find(item => item.label === 'Average exact storage service');
+  assert.ok(Math.abs(service.value - result.tokens[0].storageServiceMs) < 0.001, JSON.stringify(storage.evidence));
+});
+
+test('P1: token swap service is phase-local and pre-decode swap is separately evidenced', () => {
+  const result = simulator.simulateAFM(afmConfig());
+  assert.equal(result.error, undefined, result.error);
+  assert.ok(result.initialSwapServiceMs > 0, result.initialSwapServiceMs);
+  assert.ok(result.tokens.some(token => token.swapServiceMs > 0), JSON.stringify(result.tokens));
+  const insight = simulator.createBottleneckInsight(result);
+  const firstStorage = insight.phases.find(phase => phase.id === 'first-token').resources.find(resource => resource.id === 'storage');
+  assert.ok(firstStorage.evidence.find(item => item.label === 'Average swap read/write service').value > 0);
+  const memoryStorage = insight.phases.find(phase => phase.id === 'memory-pressure').resources.find(resource => resource.id === 'storage');
+  assert.ok(Math.abs(memoryStorage.evidence.find(item => item.label === 'Initial pre-decode swap service').value - result.initialSwapServiceMs) < 1e-6);
+  assert.ok(Math.abs(memoryStorage.evidence.find(item => item.label === 'Token-phase swap service').value - result.tokens.reduce((sum, token) => sum + token.swapServiceMs, 0)) < 1e-6);
+});
+
+test('P1: scenario V2 validates and replay-compares derived insight integrity', () => {
+  const result = simulator.simulateColibri(colibriConfig({ output: 2 }));
+  const artifact = simulator.createScenarioArtifact(result.c, result);
+  const tampered = JSON.parse(JSON.stringify(artifact));
+  tampered.insight.phases[0].resources[0].score = 101;
+  assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(tampered)), /insight/i);
+  const plausibleTamper = JSON.parse(JSON.stringify(artifact.insight));
+  plausibleTamper.phases[0].resources[0].score = plausibleTamper.phases[0].resources[0].score === 99 ? 98 : 99;
+  assert.equal(simulator.bottleneckInsightsMatch(artifact.insight, plausibleTamper), false);
+  assert.equal(simulator.bottleneckInsightsMatch(artifact.insight, simulator.createBottleneckInsight(result)), true);
 });
 
 test('P1: scenario parser rejects imported invalid configuration', () => {
   assert.equal(typeof simulator.parseScenarioArtifact, 'function');
   const artifact = {
-    schemaVersion: 'moe-ssd-sim/v1',
+    schemaVersion: 'moe-ssd-sim/v2',
     runId: 'sim-deadbeef',
     config: colibriConfig({ active: 9, experts: 8 }),
     result: {}
