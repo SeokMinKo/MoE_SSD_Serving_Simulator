@@ -80,10 +80,10 @@ function tests() {
     const insight = createBottleneckInsight(simulateColibri({ ...c, prompt: 8, output: 4 }));
     return insight.phases.length === 4 && insight.phases.every(phase => phase.resources.length === 4 && phase.resources.every(resource => Number.isInteger(resource.score) && resource.score >= 0 && resource.score <= 100));
   });
-  t('Scenario V3 persists reproducible Advisor insight', () => {
-    const result = simulateColibri({ ...c, prompt: 8, output: 2 });
+  t('Scenario V4 persists reproducible Advisor insight', () => {
+    const result = runSimulationConfig({ ...c, prompt: 8, output: 2 });
     const artifact = createScenarioArtifact(result.c, result);
-    return artifact.schemaVersion === 'moe-ssd-sim/v3' && artifact.sweep === null && bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(result));
+    return artifact.schemaVersion === 'moe-ssd-sim/v4' && artifact.sweep === null && bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(result));
   });
   t('1.5 TPS at 1× = 666.7ms', () => Math.abs(delay(1000 / 1.5, 1) - 666.6667) < 0.01);
   $('tests').textContent = log.join(String.fromCharCode(10)) + String.fromCharCode(10, 10) + `${log.filter(x => x.startsWith('PASS')).length}/${log.length} passed`;

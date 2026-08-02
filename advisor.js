@@ -147,9 +147,9 @@ function advisorPrefillResources(r) {
   const storagePhase = advisorPhaseResource(r.serving, 'ssd', 'prefill');
   if (r.mode === 'afm3') {
     const initialReadGB = advisorFinite(r.d?.routedGB);
-    const storageMs = initialReadGB / Math.max(0.01, advisorFinite(c.ssdBW, 0.01)) * 1000 + Math.ceil(Math.max(1, advisorFinite(c.chunks, 1)) / Math.max(1, advisorFinite(c.qd, 1))) * advisorFinite(c.lat) / 1000;
-    const patchMs = advisorFinite(c.patchBase) + initialReadGB / Math.max(0.01, advisorFinite(c.patchBW, 0.01)) * 1000;
-    const computeMs = advisorFinite(r.prefill) + advisorFinite(c.initSel);
+    const storageMs = initialReadGB > 0 ? initialReadGB / Math.max(0.01, advisorFinite(c.ssdBW, 0.01)) * 1000 + Math.ceil(Math.max(1, advisorFinite(c.chunks, 1)) / Math.max(1, advisorFinite(c.qd, 1))) * advisorFinite(c.lat) / 1000 : 0;
+    const patchMs = initialReadGB > 0 ? advisorFinite(c.patchBase) + initialReadGB / Math.max(0.01, advisorFinite(c.patchBW, 0.01)) * 1000 : 0;
+    const computeMs = advisorFinite(r.prefill) + advisorFinite(c.initSel) + advisorFinite(r.initialCompressionCpuMs);
     const elapsed = Math.max(1e-9, storageMs + patchMs + computeMs);
     const capacity = advisorCapacityScore(firstMemory, c);
     return [
@@ -179,6 +179,7 @@ function advisorMemoryResources(r) {
   const initialSwapServiceMs = advisorFinite(r.initialSwapServiceMs);
   const tokenSwapServiceMs = tokens.reduce((sum, token) => sum + advisorFinite(token.swapServiceMs), 0);
   const storageMs = initialSwapServiceMs + tokenSwapServiceMs;
+  const compressionCpuMs = advisorFinite(r.initialCompressionCpuMs) + tokens.reduce((sum, token) => sum + advisorFinite(token.memoryCpuMs), 0);
   const dramUtilization = advisorFinite(state.peakDramGBs) / Math.max(0.01, advisorFinite(c.dramBW, 0.01));
   const thrashRatio = advisorFinite(state.totalSwapOutGB) > 0 ? Math.min(1, advisorFinite(state.totalSwapInGB) / state.totalSwapOutGB) : 0;
   const forcedOom = Boolean(r.oom || state.oom);
@@ -187,7 +188,7 @@ function advisorMemoryResources(r) {
   return [
     advisorResource('storage', advisorScore(storageMs, runElapsed), 'round(clamp((exact initial pre-decode + token-phase swap service) ÷ total completed run elapsed × 100))', [advisorEvidence('Initial pre-decode swap service', initialSwapServiceMs, 'ms'), advisorEvidence('Token-phase swap service', tokenSwapServiceMs, 'ms'), advisorEvidence('Total completed run elapsed', runElapsed, 'ms')], r.mode),
     advisorResource('data-movement', Math.round(Math.min(1, dramUtilization) * 100), 'round(clamp(peak modeled DRAM GB/s ÷ configured DRAM GB/s × 100))', [advisorEvidence('Peak modeled DRAM', state.peakDramGBs, 'GB/s'), advisorEvidence('Configured DRAM', c.dramBW, 'GB/s')], r.mode),
-    advisorResource('compute', 0, '0 because isolated compression-policy CPU time is not exposed by this trace', [advisorEvidence('Isolated compression CPU trace available', 0, 'boolean', 'Unavailable; no compute pressure is invented.')], r.mode),
+    advisorResource('compute', advisorScore(compressionCpuMs, runElapsed), 'round(clamp(exposed compression/decompression CPU ÷ completed run elapsed × 100))', [advisorEvidence('Exposed compression/decompression CPU', compressionCpuMs, 'ms')], r.mode),
     advisorResource('capacity-policy', capacityScore, 'round(clamp(max(peak memory utilization, pressure-state severity, swap thrash ratio) × 100))', [advisorEvidence('Peak memory utilization', peakUtilization * 100, '%'), advisorEvidence('Pressure-state severity', advisorPressureSeverity(state.lastState) * 100, '%'), advisorEvidence('Swap thrash ratio', thrashRatio * 100, '%')], r.mode, forcedOom)
   ];
 }

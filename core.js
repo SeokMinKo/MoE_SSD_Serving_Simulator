@@ -15,12 +15,15 @@ const mb = v => `${fmt(v * 1000, 1)} MB`;
 const EPS = 1e-12;
 
 function rng(seed) {
+  const mask64 = (1n << 64n) - 1n;
+  let state = BigInt(seed) & mask64;
   return () => {
-    seed |= 0;
-    seed = seed + 0x6D2B79F5 | 0;
-    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    state = (state + 0x9E3779B97F4A7C15n) & mask64;
+    let value = state;
+    value = ((value ^ (value >> 30n)) * 0xBF58476D1CE4E5B9n) & mask64;
+    value = ((value ^ (value >> 27n)) * 0x94D049BB133111EBn) & mask64;
+    value ^= value >> 31n;
+    return Number(value >> 11n) / 9007199254740992;
   };
 }
 function stochasticRound(x, r) {
@@ -79,7 +82,7 @@ class StorageResource {
     const start = Math.max(now, this.free);
     const qd = Math.max(1, this.c.qd || 1);
     const waves = Math.ceil(Math.max(1, requests) / qd);
-    const bw = Math.max(0.01, this.c.ssdBW * Math.max(0.01, bwRatio));
+    const bw = Math.max(EPS, this.c.ssdBW * Math.max(EPS, bwRatio));
     const service = waves * this.c.lat / 1000 + gb / bw * 1000;
     const end = start + service;
     this.free = end;
@@ -91,6 +94,26 @@ class StorageResource {
     this.events.push(event);
     return event;
   }
+}
+
+function snapshotStorageResource(resource) {
+  return {
+    free: resource.free,
+    gb: resource.gb,
+    busy: resource.busy,
+    queue: resource.queue,
+    byKind: { ...resource.byKind },
+    events: resource.events.map(event => ({ ...event }))
+  };
+}
+
+function restoreStorageResource(resource, snapshot) {
+  resource.free = snapshot.free;
+  resource.gb = snapshot.gb;
+  resource.busy = snapshot.busy;
+  resource.queue = snapshot.queue;
+  resource.byKind = Object.assign(Object.create(null), snapshot.byKind);
+  resource.events = snapshot.events.map(event => ({ ...event }));
 }
 
 function summarizeStorageEvents(events) {
@@ -116,7 +139,7 @@ class LinkResource {
   }
   reserveGB(gb, now) {
     if (!(gb > 0) || this.c.arch === 'unified') return { end: now, service: 0, gb: 0, wait: 0 };
-    const bw = Math.max(0.01, Math.min(this.c.pcieBW, this.c.dramBW));
+    const bw = Math.max(EPS, Math.min(this.c.pcieBW, this.c.dramBW));
     const start = Math.max(now, this.free);
     const service = gb / bw * 1000;
     const end = start + service;

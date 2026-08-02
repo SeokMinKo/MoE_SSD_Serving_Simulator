@@ -1,4 +1,4 @@
-const SCENARIO_SCHEMA_VERSION = 'moe-ssd-sim/v3';
+const SCENARIO_SCHEMA_VERSION = simulatorProvenance().schemaVersion;
 const SCENARIO_REPLAY_WORK_MAX = 100_000_000;
 let scenarioImportGeneration = 0;
 let scenarioImportController = null;
@@ -11,16 +11,20 @@ function scenarioImportAbortError() {
 }
 
 function summarizeSimulationResult(result) {
+  const serving = result.serving;
+  const schedulerStorageGB = serving
+    ? (serving.resources?.ssd?.phases?.['first-token']?.workGB || 0) + (serving.resources?.ssd?.phases?.decode?.workGB || 0)
+    : 0;
   return {
-    completedTokens: result.tokens?.length || result.completedTokens || 0,
-    ttftMs: Number(result.ttft ?? result.requests?.[0]?.ttftMs ?? 0),
-    tpotMs: Number(result.avg ?? result.p50TokenMs ?? 0),
-    throughputTPS: Number(result.serving?.throughputTPS ?? result.throughputTPS ?? result.agg ?? result.tps ?? 0),
+    completedTokens: serving?.completedTokens ?? result.tokens?.length ?? result.completedTokens ?? 0,
+    ttftMs: Number(serving?.p50TtftMs ?? result.ttft ?? result.requests?.[0]?.ttftMs ?? 0),
+    tpotMs: serving ? serving.p50TokenMs : Number(result.avg ?? result.p50TokenMs ?? 0),
+    throughputTPS: Number(serving?.throughputTPS ?? result.throughputTPS ?? result.agg ?? result.tps ?? 0),
     peakMemoryGB: Number(result.state?.peakPhysicalGB ?? 0),
     peakSwapGB: Number(result.state?.peakSwapGB ?? 0),
-    storagePerTokenGB: Number(result.ssdPt ?? 0),
+    storagePerTokenGB: Number(serving?.completedTokens ? schedulerStorageGB / serving.completedTokens : result.ssdPt ?? 0),
     oom: Boolean(result.oom || result.state?.oom),
-    modelStatus: result.serving?.modelStatus || 'Estimated · single-request trend model'
+    modelStatus: serving?.modelStatus || 'Estimated · single-request trend model'
   };
 }
 
@@ -73,20 +77,28 @@ function createScenarioArtifact(config, result, sweepExecution = null) {
   const canonicalConfig = sweepClone(result?.c || config);
   const validation = validateSimulationConfig(canonicalConfig);
   if (!validation.valid) throw new Error(`Invalid configuration: ${formatConfigErrors(validation)}`);
-  const requestShape = result.serving
-    ? result.serving.requests.map(request => ({ id: request.id, arrivalMs: request.arrivalMs, output: request.output }))
-    : [{ id: 'single', arrivalMs: 0, output: canonicalConfig.output }];
+  const canonicalResult = result?.serving ? result : runSimulationConfig(sweepClone(canonicalConfig));
+  if (canonicalResult.oom || canonicalResult.state?.oom) throw new Error('OOM scenario results cannot be exported as completed-population artifacts.');
+  if (canonicalResult.error) throw new Error(`Canonical scenario simulation failed: ${canonicalResult.error}`);
+  const requestShape = canonicalResult.serving
+    ? canonicalResult.serving.requests.map(request => ({ id: request.id, arrivalMs: request.arrivalMs, output: request.output }))
+    : defaultServingRequests(canonicalConfig);
   const sweep = serializeSweepExecution(sweepExecution);
+  const provenance = simulatorProvenance();
   if (sweep && stableValue(sweep.baselineConfig) !== stableValue(canonicalConfig)) throw new Error('Completed sweep baseline must match the top-level scenario config.');
   assertScenarioReplayBudget(canonicalConfig, sweep);
   return {
-    schemaVersion: SCENARIO_SCHEMA_VERSION,
-    runId: servingRunId(canonicalConfig, requestShape),
-    modelVersion: '1.5.0',
+    schemaVersion: provenance.schemaVersion,
+    runId: servingRunId(canonicalConfig, requestShape, provenance),
+    provenance,
+    modelVersion: provenance.modelVersion,
+    packageVersion: provenance.packageVersion,
+    commit: provenance.commit,
+    buildVersion: provenance.buildVersion,
     requests: requestShape,
     config: canonicalConfig,
-    result: summarizeSimulationResult(result),
-    insight: createBottleneckInsight(result),
+    result: summarizeSimulationResult(canonicalResult),
+    insight: createBottleneckInsight(canonicalResult),
     sweep
   };
 }
@@ -202,24 +214,30 @@ function parseScenarioArtifactReplay(text) {
   if (!artifact || artifact.schemaVersion !== SCENARIO_SCHEMA_VERSION) {
     throw new Error(`Unsupported scenario schema: ${artifact?.schemaVersion || 'missing'}`);
   }
-  if (!/^sim-[0-9a-f]{8}$/.test(artifact.runId || '')) {
+  if (!/^sim-[0-9A-Za-z.-]+-[0-9a-f]{16}$/.test(artifact.runId || '')) {
     throw new Error('Invalid run ID in imported scenario.');
   }
   validateArtifactConfigShape(artifact.config);
   const validation = validateSimulationConfig(artifact.config);
   if (!validation.valid) throw new Error(`Invalid imported configuration: ${formatConfigErrors(validation)}`);
-  if (artifact.modelVersion !== '1.5.0') throw new Error(`Unsupported model version: ${artifact.modelVersion || 'missing'}`);
+  const expectedProvenance = simulatorProvenance();
+  if (!artifact.provenance || stableValue(artifact.provenance) !== stableValue(expectedProvenance)) throw new Error('Imported scenario provenance does not match this simulator build.');
+  for (const key of ['modelVersion', 'packageVersion', 'commit', 'buildVersion']) {
+    if (artifact[key] !== expectedProvenance[key]) throw new Error(`Unsupported ${key}: ${artifact[key] || 'missing'}`);
+  }
   const requestError = validateServingRequests(artifact.config, artifact.requests, {});
   if (requestError) throw new Error(`Invalid imported requests: ${requestError}`);
   if (artifact.requests.length !== artifact.config.conc) throw new Error('Imported request count must match config.conc.');
-  const expectedRunId = servingRunId(artifact.config, artifact.requests);
+  const expectedRunId = servingRunId(artifact.config, artifact.requests, artifact.provenance);
   if (artifact.runId !== expectedRunId) throw new Error('Imported run ID does not match its config and requests.');
   if (!artifact.result || typeof artifact.result !== 'object') throw new Error('Imported result summary is required.');
-  for (const metric of ['completedTokens', 'ttftMs', 'tpotMs', 'throughputTPS', 'peakMemoryGB', 'peakSwapGB', 'storagePerTokenGB']) {
+  for (const metric of ['completedTokens', 'ttftMs', 'throughputTPS', 'peakMemoryGB', 'peakSwapGB', 'storagePerTokenGB']) {
     if (!Number.isFinite(artifact.result[metric]) || artifact.result[metric] < 0) throw new Error(`Invalid imported result metric: ${metric}.`);
   }
+  if (artifact.result.tpotMs !== null && (!Number.isFinite(artifact.result.tpotMs) || artifact.result.tpotMs < 0)) throw new Error('Invalid imported result metric: tpotMs.');
   if (!Number.isSafeInteger(artifact.result.completedTokens)) throw new Error('Invalid imported result metric: completedTokens must be an integer.');
   if (typeof artifact.result.oom !== 'boolean') throw new Error('Invalid imported result status: oom.');
+  if (artifact.result.oom) throw new Error('OOM scenario results cannot be imported as completed-population artifacts.');
   if (!['Estimated · single-request trend model', 'Estimated · event-driven shared-resource model'].includes(artifact.result.modelStatus)) {
     throw new Error('Invalid imported result status: modelStatus.');
   }
@@ -283,6 +301,7 @@ function resultSummariesMatch(expected, actual) {
   const metrics = ['completedTokens', 'ttftMs', 'tpotMs', 'throughputTPS', 'peakMemoryGB', 'peakSwapGB', 'storagePerTokenGB'];
   const numericMatch = metrics.every(metric => {
     const a = expected?.[metric], b = actual?.[metric];
+    if (metric === 'tpotMs' && a === null && b === null) return true;
     return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
   });
   return numericMatch && expected?.oom === actual?.oom && expected?.modelStatus === actual?.modelStatus;

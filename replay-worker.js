@@ -25,6 +25,7 @@ function boundedJsonBytes(value, limit, seen = new WeakSet()) {
 }
 
 importScripts(
+  'build-info.js',
   'core.js',
   'presets.js',
   'config.js',

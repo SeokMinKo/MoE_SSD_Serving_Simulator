@@ -7,24 +7,33 @@ function simulateAFM(c = readAFM()) {
   const R = rng(c.seed);
   const storage = new StorageResource(c);
   const tokens = [], switches = [];
-  const kvPerTokenGB = c.kvKB * 1024 * c.conc / 1e9;
+  const kvPerTokenGB = c.kvKB * 1000 * c.conc / 1e9;
   const initialKvGB = (c.context + c.prompt) * kvPerTokenGB;
   const state = createMemoryState(c, 'afm3', initialKvGB, 0);
   const steadyBase = c.attn + c.ffn + c.runtime;
   const chunkCompute = c.ffn / c.chunks;
   const initialReadGB = d.routedGB;
   const initialReadJob = storage.reserveGB(initialReadGB, c.initSel, 'afm-window-read', c.chunks, 1);
-  const initialPatch = c.patchBase + initialReadGB / c.patchBW * 1000;
+  const initialPatch = initialReadGB > EPS ? c.patchBase + initialReadGB / c.patchBW * 1000 : 0;
   const prefill = c.prompt / c.prefillTPS * 1000;
   let now = initialReadJob.end + initialPatch + prefill;
   let periodicGB = 0, boundaryTotal = 0, changedTotal = 0;
 
+  const initialDyn = afmDynamic(c, d, state);
+  state.peakAllocationDemandGB = Math.max(state.peakAllocationDemandGB, initialDyn.physicalGB);
   const initialPressure = applyPressureAFM(c, d, state, 0);
+  now += initialPressure.compressionCpuMs;
   const initialSwap = scheduleSwapOut(c, state, initialPressure, storage, now, () => afmDynamic(c, d, state));
   now = Math.max(now, initialSwap.blockedUntil);
+  completePendingSwapOuts(state, now);
+  if (initialPressure.oom) return { error: `Unified memory OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, d, mode: 'afm3', state, oom: true };
+  const admittedInitialDyn = afmDynamic(c, d, state);
+  state.peakPhysicalGB = Math.max(state.peakPhysicalGB, admittedInitialDyn.physicalGB);
+  const predecodeReadyMs = now;
   const prefillStorageEvents = summarizeStorageEvents(storage.events);
+  const startupStorageGB = storage.gb;
   storage.events.length = 0;
-  if (initialPressure.oom) return { error: `Unified memory OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, d, mode: 'afm3' };
+
 
   for (let i = 0; i < c.output; i++) {
     const ts = now;
@@ -34,6 +43,15 @@ function simulateAFM(c = readAFM()) {
     const window = Math.floor(i / c.freq);
 
     completePendingSwapOuts(state, now);
+    const tokenTransaction = {
+      now,
+      memory: snapshotMemoryState(state),
+      storage: snapshotStorageResource(storage),
+      periodicGB,
+      boundaryTotal,
+      changedTotal,
+      switchesLength: switches.length
+    };
     const touch = touchMemoryAtTokenStart(c, state, storage, now);
     storageServiceMs += touch.storageServiceMs;
     storageQueueMs += touch.storageQueueMs;
@@ -66,6 +84,8 @@ function simulateAFM(c = readAFM()) {
     now += steadyBase;
     completePendingSwapOuts(state, now);
     growKV(c, state, kvPerTokenGB);
+    const prePressureDyn = afmDynamic(c, d, state);
+    state.peakAllocationDemandGB = Math.max(state.peakAllocationDemandGB, prePressureDyn.physicalGB);
     const pressure = applyPressureAFM(c, d, state, i + 1);
     const swapSchedule = scheduleSwapOut(c, state, pressure, storage, now, () => afmDynamic(c, d, state));
     if (swapSchedule.job) {
@@ -76,22 +96,39 @@ function simulateAFM(c = readAFM()) {
     }
     now = Math.max(now, swapSchedule.blockedUntil);
 
+    if (pressure.oom) {
+      const allocationDemandGB = state.peakAllocationDemandGB;
+      restoreMemoryState(state, tokenTransaction.memory);
+      state.peakAllocationDemandGB = Math.max(state.peakAllocationDemandGB, allocationDemandGB);
+      state.oom = true;
+      state.lastState = 'OOM';
+      restoreStorageResource(storage, tokenTransaction.storage);
+      periodicGB = tokenTransaction.periodicGB;
+      boundaryTotal = tokenTransaction.boundaryTotal;
+      changedTotal = tokenTransaction.changedTotal;
+      switches.length = tokenTransaction.switchesLength;
+      now = tokenTransaction.now;
+      break;
+    }
+
     const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
-    const windowWriteGB = readGB;
+    const ssdLandingWriteGB = readGB;
     const swapTrafficGB = touch.swapInGB + pressure.swapOutGB;
-    const dramTrafficGB = d.activeGB + c.commonGB + kvTouchGB + windowWriteGB + swapTrafficGB + touch.compressionTrafficGB + pressure.compressionTrafficGB;
+    const dramTrafficGB = d.activeGB + c.commonGB + kvTouchGB + ssdLandingWriteGB + swapTrafficGB + touch.compressionTrafficGB + pressure.compressionTrafficGB;
     const baseElapsed = now - ts + pressure.compressionCpuMs;
     const dramFloorMs = dramTrafficGB / c.dramBW * 1000;
     const finalElapsed = Math.max(baseElapsed, dramFloorMs);
     const dramStallMs = Math.max(0, finalElapsed - baseElapsed);
     now = ts + finalElapsed;
+    completePendingSwapOuts(state, now);
+    const snapshotDyn = afmDynamic(c, d, state);
 
     const dramGBs = dramTrafficGB / Math.max(EPS, finalElapsed / 1000);
     state.peakDramGBs = Math.max(state.peakDramGBs, dramGBs);
     state.totalDramTrafficGB += dramTrafficGB;
     state.totalDramStallMs += dramStallMs;
 
-    const snap = memorySnapshot(c, state, pressure.dyn, pressure, i + 1, {
+    const snap = memorySnapshot(c, state, snapshotDyn, pressure, i + 1, {
       swapInGB: touch.swapInGB,
       compressionTrafficGB: touch.compressionTrafficGB,
       dramTrafficGB,
@@ -103,8 +140,9 @@ function simulateAFM(c = readAFM()) {
       tpot: finalElapsed,
       ssdGB: readGB,
       pcieGB: 0,
-      computeMs: steadyBase + selectMs + patchMs + pressure.compressionCpuMs,
-      computeOnlyMs: steadyBase + selectMs + pressure.compressionCpuMs,
+      computeMs: steadyBase + selectMs + patchMs + touch.compressionCpuMs + pressure.compressionCpuMs,
+      computeOnlyMs: steadyBase + selectMs + touch.compressionCpuMs + pressure.compressionCpuMs,
+      memoryCpuMs: touch.compressionCpuMs + pressure.compressionCpuMs,
       storageServiceMs,
       storageQueueMs,
       swapServiceMs,
@@ -126,17 +164,22 @@ function simulateAFM(c = readAFM()) {
       memory: snap
     });
     storage.events.length = storageEventStart;
-    if (pressure.oom) break;
   }
 
-  if (!tokens.length) return { error: 'No token completed.', c, d, mode: 'afm3' };
+  if (!tokens.length) return {
+    error: state.oom ? 'Memory pressure OOM before any decode token completed.' : 'No token completed.',
+    c, d, mode: 'afm3', state, tokens, oom: state.oom
+  };
   const intervals = tokens.length > 1 ? tokens.slice(1) : tokens;
   const avg = intervals.reduce((a, x) => a + x.tpot, 0) / intervals.length;
   const tps = 1000 / avg;
-  const steadyDramTraffic = d.activeGB + c.commonGB + initialKvGB;
+  const steadyKvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
+  const steadyCompressionTrafficGB = state.kvCompressedOriginalGB * c.mem.kvTouchFraction * (1 + 1 / c.mem.compressionRatio);
+  const steadyDramTraffic = d.activeGB + c.commonGB + steadyKvTouchGB + steadyCompressionTrafficGB;
   const steady = Math.max(steadyBase, steadyDramTraffic / c.dramBW * 1000);
   const steadyTPS = 1000 / steady;
-  const ssdPt = storage.gb / tokens.length;
+  const decodeStorageGB = Math.max(0, storage.gb - startupStorageGB);
+  const ssdPt = decodeStorageGB / tokens.length;
   const actualOverlap = switches.length && c.routed ? 1 - changedTotal / (switches.length * c.routed) : c.overlap;
   const hit = actualOverlap;
   const ssdBound = ssdPt ? c.ssdBW / ssdPt : Infinity;
@@ -144,18 +187,25 @@ function simulateAFM(c = readAFM()) {
   const dramBound = dramPt ? c.dramBW / dramPt : Infinity;
   const agg = Math.min(c.conc * tps, ssdBound, dramBound);
   const decodeMs = tokens.reduce((a, x) => a + x.tpot, 0);
-  const observed = storage.gb / Math.max(EPS, Math.max(decodeMs, storage.free) / 1000);
+  const decodeStorageElapsedMs = Math.max(decodeMs, storage.free - predecodeReadyMs);
+  const observed = decodeStorageGB / Math.max(EPS, decodeStorageElapsedMs / 1000);
   const boundaryTokens = tokens.filter(x => x.boundary);
   const boundaryTPOT = boundaryTokens.length ? boundaryTokens.reduce((a, x) => a + x.tpot, 0) / boundaryTokens.length : steady;
   const sorted = [...tokens].sort((a, b) => a.tpot - b.tpot);
-  const p95 = sorted[Math.min(tokens.length - 1, Math.floor(tokens.length * 0.95))].tpot;
-  const ttft = now > 0 ? c.initSel + initialReadJob.service + initialReadJob.wait + initialPatch + prefill + tokens[0].tpot : 0;
+  const p95 = sorted[Math.min(tokens.length - 1, Math.ceil(tokens.length * 0.95) - 1)].tpot;
+  const ttft = predecodeReadyMs + tokens[0].tpot;
   return {
     mode: 'afm3', c, d, tokens, switches, state, prefillStorageEvents,
     tot: { periodicGB, initialReadGB, changedTotal, boundaryTotal },
-    avg, tps, steady, steadyTPS, boundaryTPOT, p95, ssdPt, hit, prefill, ttft, agg,
+    avg, tps, steady, steadyTPS, boundaryTPOT, p95, ssdPt, startupStorageGB, decodeStorageGB, hit, prefill, ttft, agg,
     ssdBound, pcieBound: Infinity, dramBound, observed, ssdBusy: storage.busy,
     ssdQueue: storage.queue, storageByKind: storage.byKind,
+    dramAccounting: {
+      scope: 'active-weights+KV-touch+SSD-landing+swap+compression',
+      excluded: ['patch-materialization-read-write'],
+      patchMaterializationTrafficGB: null
+    },
+    initialCompressionCpuMs: initialPressure.compressionCpuMs,
     initialSwapServiceMs: initialSwap.job?.service || 0,
     initialSwapQueueMs: initialSwap.job?.wait || 0,
     ev: 0, oom: state.oom

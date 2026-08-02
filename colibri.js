@@ -1,4 +1,4 @@
-function cpl(gb, c) { return Math.max(0, Math.floor(gb * 1024 / (c.esize * 1.03) / c.layers)); }
+function cpl(gb, c) { return Math.max(0, Math.floor(gb * 1000 / (c.esize * 1.03) / c.layers)); }
 function buildZipfCDF(n, a = 1.05) {
   const cdf = new Float64Array(n);
   let total = 0;
@@ -98,7 +98,7 @@ function zipfTopMass(n, top, a = 1.05) {
 }
 
 function causalPrefetchCandidates(c, previousRoute, R) {
-  const max = Math.min(c.experts, Math.floor(c.budget / c.esize));
+  const max = Math.min(c.experts, Math.floor(c.budget / (c.esize * 1.03)));
   if (!c.pf || max <= 0 || c.prefetchPolicy === 'none') return [];
   const policy = c.prefetchPolicy || 'previous-token';
   const source = policy === 'popularity'
@@ -178,12 +178,12 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
   const storageJob = prefillStorage.reserveGB(storageGB, 0, 'prefill-expert-read', Math.max(1, storageRequests), 1);
   const transferGB = transferEntries * unitGB;
   const transferMs = c.arch === 'discrete'
-    ? transferGB / Math.max(0.01, Math.min(c.pcieBW, c.dramBW)) * 1000
+    ? transferGB / Math.max(EPS, Math.min(c.pcieBW, c.dramBW)) * 1000
     : 0;
   const perTokenComputeMs = c.attn + c.layers * (0.39 + Math.ceil(c.active / c.par) * c.ems);
-  const computeMs = prompt * perTokenComputeMs / Math.max(0.1, c.prefillSpeedup || 4.5);
+  const computeMs = prompt * perTokenComputeMs / Math.max(EPS, c.prefillSpeedup || 4.5);
 
-  const kvPerTokenGB = c.kvKB * 1024 * c.conc / 1e9;
+  const kvPerTokenGB = c.kvKB * 1000 * c.conc / 1e9;
   const initialKvGB = (c.context + prompt) * kvPerTokenGB;
   const deviceKvCap = c.arch === 'discrete' ? Math.max(0, c.vram - c.vcache - 0.8) : 0;
   const hostKvFraction = initialKvGB > EPS ? Math.max(0, initialKvGB - deviceKvCap) / initialKvGB : 0;
@@ -191,7 +191,7 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
   const activeWeightGB = prompt * (c.resident + c.layers * c.active * rawUnitGB);
   const dramTrafficGB = storageGB +
     (c.arch === 'unified' ? activeWeightGB + kvAttentionGB : transferGB + kvAttentionGB * hostKvFraction);
-  const dramMs = dramTrafficGB / Math.max(0.1, c.dramBW) * 1000;
+  const dramMs = dramTrafficGB / Math.max(EPS, c.dramBW) * 1000;
 
   let warmedDramEntries = 0;
   let warmedVramEntries = 0;
@@ -230,7 +230,21 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
   };
 }
 
-function simulateColibri(c = readColibri()) {
+function snapshotColibriCaches(groups) {
+  return groups.map(group => group.map(cache => ({
+    entries: [...cache.m.entries()],
+    ev: cache.ev
+  })));
+}
+
+function restoreColibriCaches(groups, snapshot) {
+  groups.forEach((group, groupIndex) => group.forEach((cache, layerIndex) => {
+    cache.m = new Map(snapshot[groupIndex][layerIndex].entries);
+    cache.ev = snapshot[groupIndex][layerIndex].ev;
+  }));
+}
+
+function simulateColibri(c = readColibri(), options = {}) {
   const validation = validateSimulationConfig(c);
   if (!validation.valid) {
     return {
@@ -242,13 +256,20 @@ function simulateColibri(c = readColibri()) {
   }
   c = applyColibriPlacement(c);
   const R = rng(c.seed);
-  const unitGB = c.esize * 1.03 / 1024;
-  const rawUnitGB = c.esize / 1024;
+  const unitGB = c.esize * 1.03 / 1000;
+  const rawUnitGB = c.esize / 1000;
   const storage = new StorageResource(c);
   const link = new LinkResource(c);
   const V = Array.from({ length: c.layers }, () => new LRU(cpl(c.vcache, c)));
   const D = Array.from({ length: c.layers }, () => new LRU(cpl(c.dcache, c)));
   const P = Array.from({ length: c.layers }, () => new LRU(c.odirect ? 0 : cpl(c.page, c)));
+  for (const [caches, snapshots] of [[V, options.cacheState?.v], [D, options.cacheState?.d], [P, options.cacheState?.p]]) {
+    if (!Array.isArray(snapshots)) continue;
+    for (let layer = 0; layer < Math.min(caches.length, snapshots.length); layer++) {
+      if (!Array.isArray(snapshots[layer])) continue;
+      for (const expert of snapshots[layer]) if (Number.isSafeInteger(expert) && expert >= 0 && expert < c.experts) caches[layer].put(expert);
+    }
+  }
   const pin = Math.min(c.experts, cpl(c.pinned, c));
   const last = Array.from({ length: c.layers }, () => []);
   const routeZipfCDF = buildZipfCDF(c.experts);
@@ -256,7 +277,7 @@ function simulateColibri(c = readColibri()) {
   const pending = new Map();
   const ready = new Set();
   const tokens = [];
-  const kvPerTokenGB = c.kvKB * 1024 * c.conc / 1e9;
+  const kvPerTokenGB = c.kvKB * 1000 * c.conc / 1e9;
   const initialKvGB = (c.context + c.prompt) * kvPerTokenGB;
   const deviceKvCap = c.arch === 'discrete' ? Math.max(0, c.vram - c.vcache - 0.8) : 0;
   const state = createMemoryState(c, 'colibri', initialKvGB, deviceKvCap);
@@ -271,12 +292,22 @@ function simulateColibri(c = readColibri()) {
 
   const prefillBreakdown = simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB);
   let now = prefillBreakdown.ms;
+  const initialDyn = colibriDynamic(c, state, V, D, P, unitGB);
+  state.peakAllocationDemandGB = Math.max(state.peakAllocationDemandGB, initialDyn.physicalGB);
   const initialPressure = applyPressureColibri(c, state, V, D, P, unitGB, 0);
+  now += initialPressure.compressionCpuMs;
   const initialSwap = scheduleSwapOut(c, state, initialPressure, storage, now, () => colibriDynamic(c, state, V, D, P, unitGB));
   now = Math.max(now, initialSwap.blockedUntil);
+  completePendingSwapOuts(state, now);
+  if (initialPressure.oom) return { error: `Memory pressure OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, mode: 'colibri', state, oom: true };
+  const admittedInitialDyn = colibriDynamic(c, state, V, D, P, unitGB);
+  state.peakPhysicalGB = Math.max(state.peakPhysicalGB, admittedInitialDyn.physicalGB);
+  const predecodeReadyMs = now;
   const prefillStorageEvents = summarizeStorageEvents([...prefillBreakdown.storageEvents, ...storage.events]);
+  const startupStorageGB = prefillStorageEvents.reduce((sum, event) => sum + event.gb, 0);
+  const predecodeStorageGB = storage.gb;
   storage.events.length = 0;
-  if (initialPressure.oom) return { error: `Memory pressure OOM before decode: ${fmt(initialPressure.dyn.physicalGB, 1)} / ${fmt(c.host, 1)} GB`, c, mode: 'colibri' };
+
   if (c.arch === 'discrete' && initialPressure.dyn.deviceGB > c.vram + EPS) {
     return { error: `Device memory OOM before decode: ${fmt(initialPressure.dyn.deviceGB, 1)} / ${fmt(c.vram, 1)} GB`, c, mode: 'colibri' };
   }
@@ -306,11 +337,22 @@ function simulateColibri(c = readColibri()) {
   for (let ti = 0; ti < c.output; ti++) {
     const ts = now;
     const storageEventStart = storage.events.length;
-    let tokenSSDGB = 0, tokenDemandGB = 0, tokenPrefetchGB = 0, tokenPcieGB = 0, tokenComputeMs = 0, tokenStorageRequests = 0, hits = 0, tokenSwapInGB = 0;
+    let tokenSSDGB = 0, tokenDemandGB = 0, tokenPrefetchGB = 0, tokenPcieGB = 0, tokenComputeMs = 0, tokenStorageRequests = 0, tokenDemandRequests = 0, tokenPrefetchRequests = 0, hits = 0, tokenSwapInGB = 0;
     let tokenCompressionTrafficGB = 0, tokenCompressionCpuMs = 0;
     let tokenStorageServiceMs = 0, tokenStorageQueueMs = 0, tokenSwapServiceMs = 0, tokenSwapQueueMs = 0;
 
     completePendingSwapOuts(state, now);
+    const tokenTransaction = {
+      now,
+      memory: snapshotMemoryState(state),
+      caches: snapshotColibriCaches([V, D, P]),
+      storage: snapshotStorageResource(storage),
+      link: { free: link.free, gb: link.gb },
+      pending: [...pending.entries()].map(([entryKey, value]) => [entryKey, { ...value }]),
+      ready: [...ready],
+      last: last.map(route => route.slice()),
+      totals: { ...tot }
+    };
     const touch = touchMemoryAtTokenStart(c, state, storage, now);
     now = Math.max(now, touch.readyAt) + touch.compressionCpuMs;
     completePendingSwapOuts(state, now);
@@ -382,13 +424,12 @@ function simulateColibri(c = readColibri()) {
           pruneReady(l, evicted);
         } else if (pending.has(k)) {
           const x = pending.get(k);
-          pending.delete(k);
           tot.pfUseful++;
           if (x.end > start) tot.pfLate++;
           readyAt = Math.max(readyAt, x.end);
+          flush(readyAt);
+          ready.delete(k);
           hostN++; hostSources.push(e);
-          const evicted = D[l].put(e);
-          pruneReady(l, evicted);
         } else {
           misses.push(e);
           hostN++; hostSources.push(e);
@@ -400,6 +441,7 @@ function simulateColibri(c = readColibri()) {
       tokenStorageServiceMs += dj.service;
       tokenStorageQueueMs += dj.wait;
       tokenStorageRequests += misses.length;
+      tokenDemandRequests += misses.length;
       readyAt = Math.max(readyAt, dj.end);
       tot.demandGB += dj.gb;
       tokenSSDGB += dj.gb;
@@ -439,6 +481,7 @@ function simulateColibri(c = readColibri()) {
           e >= pin &&
           !V[l + 1].has(e) &&
           !D[l + 1].has(e) &&
+          (c.odirect || !P[l + 1].has(e)) &&
           !pending.has(key(l + 1, e)) &&
           !state.swappedExperts.has(key(l + 1, e))
         );
@@ -447,6 +490,7 @@ function simulateColibri(c = readColibri()) {
         tokenStorageServiceMs += pj.service;
         tokenStorageQueueMs += pj.wait;
         tokenStorageRequests += filtered.length;
+        tokenPrefetchRequests += filtered.length;
         for (const e of filtered) pending.set(key(l + 1, e), { l: l + 1, e, end: pj.end });
         tot.pfIssued += filtered.length;
         tot.pfGB += pj.gb;
@@ -457,6 +501,8 @@ function simulateColibri(c = readColibri()) {
 
     completePendingSwapOuts(state, now);
     growKV(c, state, kvPerTokenGB);
+    const prePressureDyn = colibriDynamic(c, state, V, D, P, unitGB);
+    state.peakAllocationDemandGB = Math.max(state.peakAllocationDemandGB, prePressureDyn.physicalGB);
     const pressure = applyPressureColibri(c, state, V, D, P, unitGB, ti + 1);
     for (const readyKey of [...ready]) {
       const [layer, expert] = readyKey.split(':').map(Number);
@@ -479,6 +525,25 @@ function simulateColibri(c = readColibri()) {
       pressure.oom = true;
       state.oom = true;
     }
+    if (pressure.oom) {
+      const allocationDemandGB = state.peakAllocationDemandGB;
+      restoreMemoryState(state, tokenTransaction.memory);
+      state.peakAllocationDemandGB = Math.max(state.peakAllocationDemandGB, allocationDemandGB);
+      state.oom = true;
+      state.lastState = 'OOM';
+      restoreColibriCaches([V, D, P], tokenTransaction.caches);
+      restoreStorageResource(storage, tokenTransaction.storage);
+      link.free = tokenTransaction.link.free;
+      link.gb = tokenTransaction.link.gb;
+      pending.clear();
+      for (const [entryKey, value] of tokenTransaction.pending) pending.set(entryKey, value);
+      ready.clear();
+      for (const entryKey of tokenTransaction.ready) ready.add(entryKey);
+      for (let layer = 0; layer < last.length; layer++) last[layer] = tokenTransaction.last[layer].slice();
+      Object.assign(tot, tokenTransaction.totals);
+      now = tokenTransaction.now;
+      break;
+    }
     const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
     const loadWriteGB = tokenSSDGB;
     const swapTrafficGB = tokenSwapInGB + pressure.swapOutGB;
@@ -489,13 +554,15 @@ function simulateColibri(c = readColibri()) {
     const finalElapsed = Math.max(baseElapsed, dramFloorMs);
     const dramStallMs = Math.max(0, finalElapsed - baseElapsed);
     now = ts + finalElapsed;
+    completePendingSwapOuts(state, now);
+    const snapshotDyn = colibriDynamic(c, state, V, D, P, unitGB);
 
     const dramGBs = dramTrafficGB / Math.max(EPS, finalElapsed / 1000);
     state.peakDramGBs = Math.max(state.peakDramGBs, dramGBs);
     state.totalDramTrafficGB += dramTrafficGB;
     state.totalDramStallMs += dramStallMs;
 
-    const snap = memorySnapshot(c, state, dyn, pressure, ti + 1, {
+    const snap = memorySnapshot(c, state, snapshotDyn, pressure, ti + 1, {
       swapInGB: tokenSwapInGB,
       compressionTrafficGB: tokenCompressionTrafficGB,
       dramTrafficGB,
@@ -511,6 +578,7 @@ function simulateColibri(c = readColibri()) {
       prefetchGB: tokenPrefetchGB,
       pcieGB: tokenPcieGB,
       computeMs: tokenComputeMs + tokenCompressionCpuMs,
+      memoryCpuMs: tokenCompressionCpuMs,
       storageServiceMs: tokenStorageServiceMs,
       storageQueueMs: tokenStorageQueueMs,
       swapServiceMs: tokenSwapServiceMs,
@@ -518,6 +586,8 @@ function simulateColibri(c = readColibri()) {
       swapInGB: tokenSwapInGB,
       swapOutGB: pressure.swapOutGB,
       storageRequests: tokenStorageRequests,
+      demandRequests: tokenDemandRequests,
+      prefetchRequests: tokenPrefetchRequests,
       storageEvents: summarizeStorageEvents(storage.events.slice(storageEventStart)),
       hit: hits / (c.layers * c.active),
       boundary: false,
@@ -525,34 +595,40 @@ function simulateColibri(c = readColibri()) {
     });
     storage.events.length = storageEventStart;
 
-    if (pressure.oom) break;
   }
 
-  if (!tokens.length) return { error: 'No token completed.', c, mode: 'colibri' };
+  if (!tokens.length) return { error: state.oom ? 'Memory pressure OOM before any decode token completed.' : 'No token completed.', c, mode: 'colibri', state, tokens, oom: state.oom };
   tot.pfWasted = Math.max(0, tot.pfIssued - tot.pfUseful);
   const intervals = tokens.length > 1 ? tokens.slice(1) : tokens;
   const avg = intervals.reduce((a, x) => a + x.tpot, 0) / intervals.length;
   const tps = 1000 / avg;
-  const totalStorageGB = storage.gb;
-  const ssdPt = totalStorageGB / tokens.length;
+  const decodeStorageGB = Math.max(0, storage.gb - predecodeStorageGB);
+  const ssdPt = decodeStorageGB / tokens.length;
   const hit = (tot.v + tot.d + tot.p + tot.pin) / Math.max(1, tot.act);
   const prefill = prefillBreakdown.ms;
-  const ttft = prefill + tokens[0].tpot;
+  const ttft = predecodeReadyMs + tokens[0].tpot;
   const pciePt = tot.pcieGB / tokens.length;
   const ssdBound = ssdPt ? c.ssdBW / ssdPt : Infinity;
   const pcieBound = c.arch === 'discrete' && pciePt ? Math.min(c.pcieBW, c.dramBW) / pciePt : Infinity;
   const dramPt = state.totalDramTrafficGB / tokens.length;
   const dramBound = dramPt ? c.dramBW / dramPt : Infinity;
   const agg = Math.min(c.conc * tps, ssdBound, pcieBound, dramBound);
-  const elapsed = Math.max(tokens.reduce((a, x) => a + x.tpot, 0), storage.free - prefill);
-  const observed = storage.gb / Math.max(EPS, elapsed / 1000);
+  const decodeMs = tokens.reduce((sum, token) => sum + token.tpot, 0);
+  const decodeStorageElapsedMs = Math.max(decodeMs, storage.free - predecodeReadyMs);
+  const observed = decodeStorageGB / Math.max(EPS, decodeStorageElapsedMs / 1000);
   const ev = V.reduce((a, x) => a + x.ev, 0) + D.reduce((a, x) => a + x.ev, 0) + P.reduce((a, x) => a + x.ev, 0);
   return {
-    mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, hit, prefill, prefillBreakdown, prefillStorageEvents, ttft, agg,
+    mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, startupStorageGB, decodeStorageGB, hit, prefill, prefillBreakdown, prefillStorageEvents, ttft, agg,
     ssdBound, pcieBound, dramBound, observed, ssdBusy: storage.busy, ssdQueue: storage.queue,
     storageByKind: storage.byKind,
+    initialCompressionCpuMs: initialPressure.compressionCpuMs,
     initialSwapServiceMs: initialSwap.job?.service || 0,
     initialSwapQueueMs: initialSwap.job?.wait || 0,
+    cacheState: {
+      v: V.map(cache => [...cache.m.keys()]),
+      d: D.map(cache => [...cache.m.keys()]),
+      p: P.map(cache => [...cache.m.keys()])
+    },
     ev, oom: state.oom
   };
 }

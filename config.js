@@ -47,16 +47,16 @@ function readCommon() {
 }
 
 function colibriCapacity(c) {
-  const expertPoolGB = Math.max(0, c.layers * c.experts * c.esize * 1.03 / 1024);
+  const expertPoolGB = Math.max(0, c.layers * c.experts * c.esize * 1.03 / 1000);
   const pinnedExpertsPerLayer = Math.min(
     c.experts,
-    Math.max(0, Math.floor(c.pinned * 1024 / c.esize / c.layers))
+    Math.max(0, Math.floor(c.pinned * 1000 / (c.esize * 1.03) / c.layers))
   );
   const hostExpertPoolGB = Math.max(
     0,
-    c.layers * (c.experts - pinnedExpertsPerLayer) * c.esize * 1.03 / 1024
+    c.layers * (c.experts - pinnedExpertsPerLayer) * c.esize * 1.03 / 1000
   );
-  const anticipatedKvGB = Math.max(0, (c.context + c.prompt + c.output) * c.kvKB * 1024 * c.conc / 1e9);
+  const anticipatedKvGB = Math.max(0, (c.context + c.prompt + c.output) * c.kvKB * 1000 * c.conc / 1e9);
   return { expertPoolGB, hostExpertPoolGB, pinnedExpertsPerLayer, anticipatedKvGB };
 }
 
@@ -229,7 +229,7 @@ function colibriSimulationWork(c) {
     ? (c.experts + c.active * routeSearchCost) / 4
     : c.active * routeSearchCost;
   const expectedRouteWork = routeCount * expectedRouteCost;
-  const expertUnitGB = c.esize * 1.03 / 1024;
+  const expertUnitGB = c.esize * 1.03 / 1000;
   const cacheEntriesPerLayer = c.cold || !(expertUnitGB > 0) || !(c.layers > 0) ? 0
     : Math.min(c.experts, Math.floor(c.vcache / expertUnitGB / c.layers)) + Math.min(c.experts, Math.floor(c.dcache / expertUnitGB / c.layers));
   const cacheWork = c.layers * cacheEntriesPerLayer * repeatedTraceCount;

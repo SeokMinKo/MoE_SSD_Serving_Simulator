@@ -102,24 +102,48 @@ function stableValue(value) {
   return JSON.stringify(value);
 }
 
-function servingRunId(config, requests) {
-  const text = stableValue({ config, requests });
-  let hash = 0x811c9dc5;
+function simulatorProvenance() {
+  const injected = globalThis.__MOE_SSD_BUILD__ && typeof globalThis.__MOE_SSD_BUILD__ === 'object'
+    ? globalThis.__MOE_SSD_BUILD__
+    : {};
+  const readIdentity = (key, fallback) => typeof injected[key] === 'string' && injected[key] ? injected[key] : fallback;
+  return Object.freeze({
+    schemaVersion: readIdentity('schemaVersion', 'moe-ssd-sim/v4'),
+    modelVersion: readIdentity('modelVersion', '1.6.1-candidate'),
+    packageVersion: readIdentity('packageVersion', '1.6.1'),
+    commit: readIdentity('commit', 'development'),
+    buildVersion: readIdentity('buildVersion', 'source-tree')
+  });
+}
+
+function servingRunId(config, requests, provenance = simulatorProvenance()) {
+  const text = stableValue({ provenance, config, requests });
+  const mask64 = (1n << 64n) - 1n;
+  let hash = 0xcbf29ce484222325n;
   for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+    hash ^= BigInt(text.charCodeAt(i));
+    hash = (hash * 0x100000001b3n) & mask64;
   }
-  return `sim-${hash.toString(16).padStart(8, '0')}`;
+  const packageVersion = String(provenance.packageVersion || 'unknown').replace(/[^0-9A-Za-z.-]/g, '-');
+  return `sim-${packageVersion}-${hash.toString(16).padStart(16, '0')}`;
+}
+
+function defaultServingRequests(config) {
+  return Array.from({ length: config.conc }, (_, index) => ({ id: `request-${index + 1}`, arrivalMs: 0, output: config.output }));
 }
 
 function runSimulationConfig(config) {
   const engine = config.mode === 'afm3' ? simulateAFM : simulateColibri;
-  if (config.conc <= 1) {
-    const result = engine(config);
-    result.runId = servingRunId(result.c || config, [{ id: 'single', arrivalMs: 0, output: config.output }]);
-    return result;
-  }
   const placedConfig = config.mode === 'colibri' ? applyColibriPlacement(config) : config;
+  const aggregateMemoryResult = engine(placedConfig);
+  if (aggregateMemoryResult.error) {
+    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, defaultServingRequests(config));
+    return aggregateMemoryResult;
+  }
+  if (aggregateMemoryResult.oom) {
+    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, defaultServingRequests(config));
+    return aggregateMemoryResult;
+  }
   const singleRequestConfig = {
     ...placedConfig,
     conc: 1,
@@ -127,11 +151,13 @@ function runSimulationConfig(config) {
   };
   const result = engine(singleRequestConfig);
   if (result.error) return result;
-  const requests = Array.from({ length: config.conc }, (_, index) => ({ id: `request-${index + 1}`, arrivalMs: 0, output: config.output }));
+  const requests = defaultServingRequests(config);
   const serving = simulateServing(placedConfig, requests);
   if (serving.error) return { ...result, error: serving.error };
   result.serving = serving;
   result.agg = serving.throughputTPS;
+  result.state = aggregateMemoryResult.state;
+  result.oom = aggregateMemoryResult.oom;
   result.c = placedConfig;
   result.runId = servingRunId(placedConfig, requests);
   serving.runId = result.runId;
@@ -139,20 +165,38 @@ function runSimulationConfig(config) {
 }
 
 function percentile(values, ratio) {
-  if (!values.length) return 0;
+  if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1)];
 }
 
-function traceForRequest(config, request, index) {
+function traceForRequest(config, request, index, cacheState = null) {
   const requestConfig = {
     ...config,
     conc: 1,
     output: request.output ?? config.output,
-    seed: (config.seed || 0) + index * 104729,
+    seed: Number((BigInt(config.seed || 0) + BigInt(index) * 104729n) % 9007199254740992n),
     ...(config.mode === 'colibri' && config.placement === 'auto' ? { placement: 'manual' } : {})
   };
-  return config.mode === 'afm3' ? simulateAFM(requestConfig) : simulateColibri(requestConfig);
+  return config.mode === 'afm3' ? simulateAFM(requestConfig) : simulateColibri(requestConfig, { cacheState });
+}
+
+function mergeColibriCacheState(current, incoming, config) {
+  if (!incoming) return current;
+  const unitGB = config.esize * 1.03 / 1000;
+  const capacities = {
+    v: Math.floor(config.vcache / unitGB),
+    d: Math.floor(config.dcache / unitGB),
+    p: config.odirect ? 0 : Math.floor(config.page / unitGB)
+  };
+  return Object.fromEntries(['v', 'd', 'p'].map(tier => {
+    const layers = Array.from({ length: config.layers }, (_, layer) => {
+      const ordered = [...(current?.[tier]?.[layer] || []), ...(incoming[tier]?.[layer] || [])];
+      const unique = [...new Set(ordered.reverse())].reverse();
+      return capacities[tier] > 0 ? unique.slice(-capacities[tier]) : [];
+    });
+    return [tier, layers];
+  }));
 }
 
 function tokenWork(token) {
@@ -160,16 +204,20 @@ function tokenWork(token) {
   const swapOutGB = Math.max(0, token.memory?.swapOutGB || 0);
   const prefetchGB = Math.max(0, token.prefetchGB || 0);
   const demandGB = Math.max(0, token.demandGB ?? token.ssdGB ?? 0);
+  const memoryCpuMs = Math.max(0, token.memoryCpuMs || 0);
   return {
     demandGB,
     prefetchGB,
     swapInGB,
     swapOutGB,
     ssdRequests: Math.max(1, token.storageRequests || 1),
+    demandRequests: Math.max(0, token.demandRequests ?? (demandGB > EPS ? token.storageRequests || 1 : 0)),
+    prefetchRequests: Math.max(0, token.prefetchRequests ?? (prefetchGB > EPS ? token.storageRequests || 1 : 0)),
     pcieGB: Math.max(0, token.pcieGB || 0),
     criticalDramGB: Math.max(0, (token.memory?.dramTrafficGB || 0) - prefetchGB - swapOutGB),
-    computeMs: Math.max(0, token.computeMs ?? token.tpot ?? 0),
-    computeOnlyMs: Math.max(0, token.computeOnlyMs ?? token.computeMs ?? token.tpot ?? 0),
+    memoryCpuMs,
+    computeMs: Math.max(0, (token.computeOnlyMs ?? token.computeMs ?? token.tpot ?? 0) - memoryCpuMs),
+    computeOnlyMs: Math.max(0, (token.computeOnlyMs ?? token.computeMs ?? token.tpot ?? 0) - memoryCpuMs),
     patchMs: Math.max(0, token.patchMs || 0)
   };
 }
@@ -182,6 +230,7 @@ function initialSwapOutGB(trace) {
 function validateServingRequests(config, requestSpecs, options) {
   if (!Array.isArray(requestSpecs) || requestSpecs.length === 0) return 'At least one request is required.';
   if (requestSpecs.length > 64) return 'At most 64 requests are allowed.';
+  if (requestSpecs.length !== config.conc) return 'Serving request count must equal config.conc.';
   if (!options || typeof options !== 'object') return 'Scheduler options must be an object.';
   const batchWindowMs = options.batchWindowMs ?? 2;
   if (!Number.isFinite(batchWindowMs) || batchWindowMs < 0 || batchWindowMs > 1000) return 'batchWindowMs must be finite and between 0 and 1000.';
@@ -213,21 +262,19 @@ function simulateServing(config, requestSpecs, options = {}) {
   if (requestError) return { error: requestError };
 
   const requests = requestSpecs.map((spec, index) => {
-    const trace = traceForRequest(config, spec, index);
     return {
       id: String(spec.id ?? index),
       arrivalMs: spec.arrivalMs ?? 0,
       output: spec.output ?? config.output,
-      trace,
+      trace: null,
+      traceIndex: index,
       nextToken: 0,
       completed: [],
       firstTokenAt: null,
       completionMs: null,
-      error: trace.error || null
+      error: null
     };
   });
-  const traceError = requests.find(request => request.error);
-  if (traceError) return { error: `Request ${traceError.id}: ${traceError.error}` };
   const isSingleRequest = requests.length === 1;
 
   const resources = {
@@ -241,29 +288,38 @@ function simulateServing(config, requestSpecs, options = {}) {
   const batchWindowMs = options.batchWindowMs ?? 2;
   const readyBatch = [];
   let dispatchScheduled = false;
+  let sharedColibriCacheState = null;
   for (const request of requests) queue.push({ time: request.arrivalMs, type: 'arrival', request });
 
   while (queue.size) {
     const event = queue.pop();
     const request = event.request;
     if (event.type === 'arrival') {
+      request.trace = traceForRequest(config, request, request.traceIndex, sharedColibriCacheState);
+      if (request.trace.error) return { error: `Request ${request.id}: ${request.trace.error}` };
       let readyAt;
       if (config.mode === 'afm3') {
         const selector = resources.compute.reserveMs(config.initSel, event.time, 'prefill');
         const storage = resources.ssd.reserveGB(request.trace.tot.initialReadGB, selector.end, config.chunks, 'prefill');
-        const initialPatchMs = config.patchBase + request.trace.tot.initialReadGB / config.patchBW * 1000;
+        const initialPatchMs = request.trace.tot.initialReadGB > EPS
+          ? config.patchBase + request.trace.tot.initialReadGB / config.patchBW * 1000
+          : 0;
         const patch = resources.patch.reserveMs(initialPatchMs, storage.end, 'prefill');
         const prefill = resources.compute.reserveMs(config.prompt / config.prefillTPS * 1000, patch.end, 'prefill');
-        readyAt = prefill.end;
+        const compression = resources.compute.reserveMs(request.trace.initialCompressionCpuMs || 0, prefill.end, 'prefill');
+        const analyticReadyAt = event.time + Math.max(0, request.trace.ttft - (request.trace.tokens[0]?.tpot || 0));
+        readyAt = Math.max(compression.end, analyticReadyAt);
       } else {
         const breakdown = request.trace.prefillBreakdown || {};
         const storage = resources.ssd.reserveGB(breakdown.storageGB || 0, event.time, breakdown.storageRequests || 1, 'prefill');
         const dram = resources.dram.reserveGB(breakdown.dramTrafficGB || 0, event.time, 1, 'prefill');
         const pcie = resources.pcie.reserveGB(breakdown.transferGB || 0, event.time, 1, 'prefill');
         const compute = resources.compute.reserveMs(breakdown.computeMs || 0, event.time, 'prefill');
+        const prefillReady = Math.max(storage.end, dram.end, pcie.end, compute.end);
+        const compression = resources.compute.reserveMs(request.trace.initialCompressionCpuMs || 0, prefillReady, 'prefill');
         const prefillMs = Math.max(0, request.trace.ttft - (request.trace.tokens[0]?.tpot || 0));
         const contentionWait = isSingleRequest ? 0 : Math.max(storage.wait, dram.wait, pcie.wait, compute.wait);
-        readyAt = Math.max(event.time + prefillMs + contentionWait, storage.end, dram.end, pcie.end, compute.end);
+        readyAt = Math.max(event.time + prefillMs + contentionWait, compression.end);
       }
       resources.ssd.reserveGB(initialSwapOutGB(request.trace), readyAt, 1, 'prefill');
       queue.push({ time: readyAt, type: 'token-ready', request });
@@ -272,10 +328,12 @@ function simulateServing(config, requestSpecs, options = {}) {
       if (!token) continue;
       const phase = request.nextToken === 0 ? 'first-token' : 'decode';
       const work = tokenWork(token);
-      const storage = resources.ssd.reserveGB(work.demandGB + work.swapInGB, event.time, work.ssdRequests, phase);
+      const swapIn = resources.ssd.reserveGB(work.swapInGB, event.time, work.swapInGB > EPS ? 1 : 0, phase);
+      const storage = resources.ssd.reserveGB(work.demandGB, swapIn.end, Math.max(1, work.demandRequests), phase);
       const dram = resources.dram.reserveGB(work.criticalDramGB, event.time, 1, phase);
       const pcie = resources.pcie.reserveGB(work.pcieGB, event.time, 1, phase);
-      const contentionWait = isSingleRequest ? 0 : Math.max(storage.wait, dram.wait, pcie.wait);
+      const storageWait = swapIn.wait + storage.wait;
+      const contentionWait = isSingleRequest ? 0 : Math.max(storageWait, dram.wait, pcie.wait);
       queue.push({
         time: event.time + contentionWait,
         type: 'data-ready',
@@ -295,28 +353,34 @@ function simulateServing(config, requestSpecs, options = {}) {
       dispatchScheduled = false;
       const batch = readyBatch.splice(0, readyBatch.length);
       if (!batch.length) continue;
-      const batchReady = Math.max(...batch.map(item => item.time));
+      const batchReady = Math.max(event.time, ...batch.map(item => item.time));
+      let memoryCpuReady = batchReady;
       for (const item of batch) {
-        const prefetch = resources.ssd.reserveGB(item.work.prefetchGB, item.time, item.work.ssdRequests, item.phase);
+        const memoryCpu = resources.compute.reserveMs(item.work.memoryCpuMs, item.time, item.phase);
+        memoryCpuReady = Math.max(memoryCpuReady, memoryCpu.end);
+      }
+      for (const item of batch) {
+        const prefetch = resources.ssd.reserveGB(item.work.prefetchGB, item.time, Math.max(1, item.work.prefetchRequests), item.phase);
         resources.dram.reserveGB(item.work.prefetchGB, prefetch.end, 1, item.phase);
         const swapSource = resources.dram.reserveGB(item.work.swapOutGB, item.time, 1, item.phase);
         resources.ssd.reserveGB(item.work.swapOutGB, swapSource.end, 1, item.phase);
       }
-      const maxItem = batch.reduce((current, item) => item.work.computeMs > current.work.computeMs ? item : current, batch[0]);
-      const maxCompute = maxItem.work.computeMs;
-      const batchService = maxCompute * (1 + 0.08 * Math.max(0, batch.length - 1));
+      const batchFactor = 1 + 0.08 * Math.max(0, batch.length - 1);
+      const maxCompute = Math.max(...batch.map(item => item.work.computeMs));
+      const maxPatch = Math.max(...batch.map(item => item.work.patchMs));
       const batchPhases = new Set(batch.map(item => item.phase));
       const computePhase = batchPhases.size === 1 ? batch[0].phase : 'mixed';
-      const patchRatio = maxCompute > EPS ? Math.min(1, maxItem.work.patchMs / maxCompute) : 0;
-      const patchService = batchService * patchRatio;
-      const computeService = batchService - patchService;
-      const patch = resources.patch.reserveMs(patchService, batchReady, computePhase);
+      const patchService = maxPatch * batchFactor;
+      const computeService = maxCompute * batchFactor;
+      const batchService = patchService + computeService;
+      const patch = resources.patch.reserveMs(patchService, memoryCpuReady, computePhase);
       const compute = resources.compute.reserveMs(computeService, patch.end, computePhase);
-      const batchOverhead = Math.max(0, batchService - maxCompute);
+      const batchOverhead = Math.max(0, batchService - maxCompute - maxPatch);
       for (const item of batch) {
         const admissionDelay = batchReady - item.time;
-        const resourceWait = isSingleRequest ? 0 : patch.wait + compute.wait;
-        const completeAt = item.baselineCompleteAt + admissionDelay + resourceWait + batchOverhead;
+        const memoryCpuContention = Math.max(0, memoryCpuReady - item.time - item.work.memoryCpuMs);
+        const resourceWait = isSingleRequest ? 0 : memoryCpuContention + patch.wait + compute.wait;
+        const completeAt = Math.max(item.baselineCompleteAt + admissionDelay + resourceWait + batchOverhead, memoryCpuReady, patch.end, compute.end);
         queue.push({ time: completeAt, type: 'complete', request: item.request, token: item.token, batchSize: batch.length });
       }
     } else if (event.type === 'complete') {
@@ -325,6 +389,7 @@ function simulateServing(config, requestSpecs, options = {}) {
       if (request.firstTokenAt === null) request.firstTokenAt = event.time;
       request.completionMs = event.time;
       if (request.nextToken < request.trace.tokens.length) queue.push({ time: event.time, type: 'token-ready', request });
+      else if (config.mode === 'colibri') sharedColibriCacheState = mergeColibriCacheState(sharedColibriCacheState, request.trace.cacheState, config);
     }
   }
 
@@ -332,7 +397,7 @@ function simulateServing(config, requestSpecs, options = {}) {
   const firstArrival = Math.min(...requests.map(request => request.arrivalMs));
   const finalCompletion = Math.max(...requests.map(request => request.completionMs ?? request.arrivalMs));
   const makespanMs = Math.max(0, finalCompletion - firstArrival);
-  const tokenLatencies = requests.flatMap(request => request.completed.map(token => token.tpotMs));
+  const decodeTokenLatencies = requests.flatMap(request => request.completed.slice(1).map(token => token.tpotMs));
   const requestResults = requests.map(request => ({
     id: request.id,
     arrivalMs: request.arrivalMs,
@@ -343,6 +408,7 @@ function simulateServing(config, requestSpecs, options = {}) {
     latencyMs: request.completionMs === null ? null : request.completionMs - request.arrivalMs,
     tokens: request.completed
   }));
+  const ttftLatencies = requestResults.map(request => request.ttftMs).filter(Number.isFinite);
   const normalizedSpecs = requests.map(request => ({ id: request.id, arrivalMs: request.arrivalMs, output: request.output }));
   return {
     modelStatus: 'Estimated · event-driven shared-resource model',
@@ -350,8 +416,10 @@ function simulateServing(config, requestSpecs, options = {}) {
     completedTokens,
     makespanMs,
     throughputTPS: makespanMs > EPS ? completedTokens / (makespanMs / 1000) : 0,
-    p50TokenMs: percentile(tokenLatencies, 0.5),
-    p95TokenMs: percentile(tokenLatencies, 0.95),
+    p50TokenMs: percentile(decodeTokenLatencies, 0.5),
+    p95TokenMs: percentile(decodeTokenLatencies, 0.95),
+    p50TtftMs: percentile(ttftLatencies, 0.5),
+    p95TtftMs: percentile(ttftLatencies, 0.95),
     requests: requestResults,
     resources: Object.fromEntries(Object.entries(resources).map(([name, resource]) => [name, resource.snapshot()]))
   };

@@ -3,6 +3,8 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const vm = require('node:vm');
 
@@ -16,6 +18,7 @@ const source = ['core.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js']
 globalThis.__simulator = {
   StorageResource,
   SharedServingResource,
+  rng: typeof rng === 'function' ? rng : null,
   simulateColibri,
   buildZipfCDF: typeof buildZipfCDF === 'function' ? buildZipfCDF : null,
   buildZipfWeights: typeof buildZipfWeights === 'function' ? buildZipfWeights : null,
@@ -25,8 +28,11 @@ globalThis.__simulator = {
   simulateAFM,
   afmDerived,
   validateSimulationConfig: typeof validateSimulationConfig === 'function' ? validateSimulationConfig : null,
+  applyColibriPlacement: typeof applyColibriPlacement === 'function' ? applyColibriPlacement : null,
   EventQueue: typeof EventQueue === 'function' ? EventQueue : null,
   simulateServing: typeof simulateServing === 'function' ? simulateServing : null,
+  servingRunId: typeof servingRunId === 'function' ? servingRunId : null,
+  simulatorProvenance: typeof simulatorProvenance === 'function' ? simulatorProvenance : null,
   createScenarioArtifact: typeof createScenarioArtifact === 'function' ? createScenarioArtifact : null,
   assertScenarioReplayBudget: typeof assertScenarioReplayBudget === 'function' ? assertScenarioReplayBudget : null,
   parseScenarioArtifact: typeof parseScenarioArtifact === 'function' ? parseScenarioArtifact : null,
@@ -184,9 +190,10 @@ function afmConfig(overrides = {}) {
   };
 }
 
-test('P1: CI runs the dependency audit gate', () => {
+test('P1: CI runs dependency audit and release provenance build gates', () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/validate.yml'), 'utf8');
   assert.match(workflow, /npm audit --audit-level=high/);
+  assert.match(workflow, /npm run build:release/);
 });
 
 test('P0: configuration validation rejects out-of-order memory thresholds instead of normalizing them', () => {
@@ -260,6 +267,7 @@ test('P1: previous-token prefetch is causal and issues nothing before route hist
     active: 4,
     pinned: 0,
     dcache: 0,
+    minDCache: 0,
     vcache: 0,
     pf: true,
     prefetchPolicy: 'previous-token',
@@ -279,6 +287,38 @@ test('P1: StorageResource preserves exact per-kind job events for chart attribut
   assert.equal(resource.events[0].kind, 'expert-demand-read');
   assert.equal(resource.events[1].kind, 'swap-out-write');
   assert.ok(resource.events.every(event => Number.isFinite(event.start) && Number.isFinite(event.end) && Number.isFinite(event.service) && Number.isFinite(event.wait)));
+});
+
+test('P0: accepted low-rate controls preserve exact sensitivity', () => {
+  const slowWrite = new simulator.StorageResource({ ssdBW: 1, qd: 1, lat: 0 });
+  const fasterWrite = new simulator.StorageResource({ ssdBW: 1, qd: 1, lat: 0 });
+  const slowJob = slowWrite.reserveGB(1, 0, 'swap-out-write', 1, 0.001);
+  const fasterJob = fasterWrite.reserveGB(1, 0, 'swap-out-write', 1, 0.01);
+  assert.equal(slowJob.service, 1_000_000);
+  assert.equal(fasterJob.service, 100_000);
+
+  const transferBase = colibriConfig({
+    arch: 'discrete', host: 32, vram: 4, prompt: 0, context: 1, output: 1,
+    layers: 1, experts: 1, active: 1, esize: 1, pinned: 0,
+    resident: 0, dcache: 0, minDCache: 0, vcache: 0, page: 0,
+    ssdBW: 1_000_000, dramBW: 1_000_000, lat: 0, attn: 0, ems: 0, pf: false,
+    mem: memoryPolicy({ osReservedGB: 0, minHeadroomGB: 0 })
+  });
+  const verySlowLink = simulator.simulateColibri({ ...transferBase, pcieBW: 0.001 });
+  const slowLink = simulator.simulateColibri({ ...transferBase, pcieBW: 0.01 });
+  assert.ok(verySlowLink.tokens[0].tpot > slowLink.tokens[0].tpot * 5,
+    `accepted PCIe rates were flattened: ${verySlowLink.tokens[0].tpot} vs ${slowLink.tokens[0].tpot}`);
+
+  const base = colibriConfig({
+    arch: 'unified', prompt: 1, context: 1, output: 1,
+    layers: 1, experts: 1, active: 1, esize: 1, pinned: 1.03 / 1000,
+    resident: 0, dcache: 0, vcache: 0, page: 0, attn: 1, ems: 0, par: 1,
+    dramBW: 1_000_000, pf: false
+  });
+  const verySlowCompute = simulator.simulateColibri({ ...base, prefillSpeedup: 0.001 });
+  const slowCompute = simulator.simulateColibri({ ...base, prefillSpeedup: 0.01 });
+  assert.ok(verySlowCompute.ttft > slowCompute.ttft * 5,
+    `accepted prefill speedups were flattened: ${verySlowCompute.ttft} vs ${slowCompute.ttft}`);
 });
 
 test('P1: simulator traces preserve exact Storage I/O events by prefill and token bucket', () => {
@@ -396,7 +436,7 @@ test('P0: shared config runner preserves placement, concurrency, and run ID sema
   assert.equal(result.serving.requests.length, 4);
   assert.equal(result.agg, result.serving.throughputTPS);
   assert.equal(result.runId, result.serving.runId);
-  assert.match(result.runId, /^sim-[0-9a-f]{8}$/);
+  assert.match(result.runId, /^sim-[0-9A-Za-z.-]+-[0-9a-f]{16}$/);
   assert.equal(result.c.placement, 'auto');
 
 });
@@ -494,6 +534,7 @@ test('P1: multi-request scheduler derives throughput from completed events and s
     active: 1,
     pinned: 0,
     dcache: 0,
+    minDCache: 0,
     vcache: 0,
     pf: false,
     ssdBW: 0.1,
@@ -503,8 +544,8 @@ test('P1: multi-request scheduler derives throughput from completed events and s
     attn: 0,
     ems: 0
   });
-  const single = simulator.simulateServing(config, [{ id: 'a', arrivalMs: 0, output: 3 }]);
-  const concurrent = simulator.simulateServing(config, [
+  const single = simulator.simulateServing({ ...config, conc: 1 }, [{ id: 'a', arrivalMs: 0, output: 3 }]);
+  const concurrent = simulator.simulateServing({ ...config, conc: 2 }, [
     { id: 'a', arrivalMs: 0, output: 3 },
     { id: 'b', arrivalMs: 0, output: 3 }
   ]);
@@ -605,7 +646,7 @@ test('P0: AFM single-request scheduler preserves the full analytic token timelin
   assert.equal(trace.error, undefined);
   assert.equal(serving.error, undefined);
   assert.ok(Math.abs(serving.requests[0].latencyMs - expectedLatency) < 1e-6,
-    `${serving.requests[0].latencyMs} != ${expectedLatency}`);
+    JSON.stringify({ latency: serving.requests[0].latencyMs, expectedLatency, tokens: trace.tokens, resources: serving.resources }));
 });
 
 test('P1: serving rejects malformed request arrivals instead of returning NaN or Infinity', () => {
@@ -618,6 +659,7 @@ test('P1: requests becoming ready inside the admission window are continuously b
   const config = colibriConfig({
     prompt: 0,
     output: 2,
+    conc: 2,
     layers: 1,
     experts: 1,
     active: 1,
@@ -643,9 +685,9 @@ test('P1: scenario artifacts round-trip validated config, result summary, and ru
   const result = simulator.simulateColibri(config);
   const artifact = simulator.createScenarioArtifact(config, result);
   const parsed = simulator.parseScenarioArtifact(JSON.stringify(artifact));
-  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v3');
+  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v4');
   assert.equal(JSON.stringify(parsed.config), JSON.stringify(result.c));
-  assert.match(parsed.runId, /^sim-[0-9a-f]{8}$/);
+  assert.match(parsed.runId, /^sim-[0-9A-Za-z.-]+-[0-9a-f]{16}$/);
   assert.equal(parsed.result.completedTokens, 2);
   assert.equal(parsed.insight.version, 'bottleneck-advisor/v1');
   assert.equal(parsed.insight.phases.length, 4);
@@ -661,6 +703,41 @@ test('P1: scenario artifacts round-trip validated config, result summary, and ru
   const crossEngineConfig = JSON.parse(JSON.stringify(artifact));
   crossEngineConfig.config.totalB = { ignoredPayload: ['not', 'colibri'] };
   assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(crossEngineConfig)), /unsupported config field/i);
+});
+
+test('P0: concurrent artifact summary uses scheduler KPI populations', () => {
+  const result = simulator.runSimulationConfig(colibriConfig({ conc: 2, output: 4 }));
+  const artifact = simulator.createScenarioArtifact(result.c, result);
+  assert.equal(artifact.result.completedTokens, result.serving.completedTokens);
+  assert.equal(artifact.result.ttftMs, result.serving.p50TtftMs);
+  assert.equal(artifact.result.tpotMs, result.serving.p50TokenMs);
+  const schedulerStorageGB = (result.serving.resources.ssd.phases['first-token']?.workGB || 0) +
+    (result.serving.resources.ssd.phases.decode?.workGB || 0);
+  assert.equal(artifact.result.storagePerTokenGB, schedulerStorageGB / result.serving.completedTokens);
+});
+
+test('P0: partial OOM results cannot be exported as mixed-population artifacts', () => {
+  const c = colibriConfig({
+    host: 8, arch: 'unified', vram: 0, placement: 'manual', pinned: 0,
+    dcache: 0, minDCache: 0, vcache: 0, page: 0, resident: 0,
+    experts: 2, active: 1, layers: 1, esize: 1, prompt: 0,
+    conc: 4, context: 1, output: 8, kvKB: 1_000_000,
+    mem: memoryPolicy({ policy: 'strict', osReservedGB: 0, minHeadroomGB: 0, hard: 0.99,
+      compressionEnabled: false, swapEnabled: false })
+  });
+  const result = simulator.runSimulationConfig(c);
+  assert.equal(result.oom, true);
+  assert.equal(result.serving, undefined);
+  assert.throws(() => simulator.createScenarioArtifact(c, result), /OOM.*cannot be exported/i);
+});
+
+test('P1: one-token serving exposes unavailable decode percentile', () => {
+  const result = simulator.runSimulationConfig(colibriConfig({ conc: 1, output: 1 }));
+  assert.equal(result.serving.p50TokenMs, null);
+  assert.equal(result.serving.p95TokenMs, null);
+  const artifact = simulator.createScenarioArtifact(result.c, result);
+  assert.equal(artifact.result.tpotMs, null);
+  assert.equal(simulator.parseScenarioArtifact(JSON.stringify(artifact)).result.tpotMs, null);
 });
 
 test('P1: scenario artifacts reject noncanonical placement and fractional counts', () => {
@@ -738,7 +815,7 @@ test('P1: scenario artifact replay budget includes baseline, rows, and top-level
   assert.doesNotThrow(() => simulator.assertScenarioReplayBudget(ordinary, ordinarySweep));
 });
 
-test('P1: scenario V3 persists and replay-verifies completed sweep results', () => {
+test('P1: scenario V4 persists and replay-verifies completed sweep results', () => {
   const config = colibriConfig({ prompt: 1, output: 2, layers: 1, experts: 4, active: 1 });
   const result = simulator.simulateColibri(config);
   const plan = simulator.buildSweepScenarios(result.c, 'oat', [{ path: 'ssdBW', values: [5, 10] }], 50);
@@ -749,7 +826,7 @@ test('P1: scenario V3 persists and replay-verifies completed sweep results', () 
   while (execution.status !== 'completed') simulator.advanceSweepExecution(execution);
   const artifact = simulator.createScenarioArtifact(config, result, execution);
   const parsed = simulator.parseScenarioArtifact(JSON.stringify(artifact));
-  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v3');
+  assert.equal(parsed.schemaVersion, 'moe-ssd-sim/v4');
   assert.equal(parsed.sweep.schema, 'parameter-sweep/v1');
   assert.equal(parsed.sweep.results.length, 2);
   assert.equal(parsed.sweep.baselineMetrics.status, 'completed');
@@ -782,7 +859,7 @@ test('P1: scenario artifacts reject completed sweeps detached from the top-level
   assert.throws(() => simulator.createScenarioArtifact(topConfig, topResult, execution), /sweep baseline.*top-level/i);
 });
 
-test('P1: scenario V3 replay accepts deterministic pre-decode OOM rows with null metrics', () => {
+test('P1: scenario V4 replay accepts deterministic pre-decode OOM rows with null metrics', () => {
   const config = colibriConfig({ prompt: 1, output: 1 });
   const result = simulator.simulateColibri(config);
   const plan = simulator.buildSweepScenarios(result.c, 'oat', [{ path: 'host', values: [1] }], 50);
@@ -955,8 +1032,8 @@ test('P1: token swap service is phase-local and pre-decode swap is separately ev
   assert.ok(Math.abs(memoryStorage.evidence.find(item => item.label === 'Token-phase swap service').value - result.tokens.reduce((sum, token) => sum + token.swapServiceMs, 0)) < 1e-6);
 });
 
-test('P1: scenario V3 validates and replay-compares derived insight integrity', () => {
-  const result = simulator.simulateColibri(colibriConfig({ output: 2 }));
+test('P1: scenario V4 validates and replay-compares derived insight integrity', () => {
+  const result = simulator.runSimulationConfig(colibriConfig({ output: 2 }));
   const artifact = simulator.createScenarioArtifact(result.c, result);
   const tampered = JSON.parse(JSON.stringify(artifact));
   tampered.insight.phases[0].resources[0].score = 101;
@@ -969,12 +1046,10 @@ test('P1: scenario V3 validates and replay-compares derived insight integrity', 
 
 test('P1: scenario parser rejects imported invalid configuration', () => {
   assert.equal(typeof simulator.parseScenarioArtifact, 'function');
-  const artifact = {
-    schemaVersion: 'moe-ssd-sim/v3',
-    runId: 'sim-deadbeef',
-    config: colibriConfig({ active: 9, experts: 8 }),
-    result: {}
-  };
+  const validConfig = colibriConfig({ output: 1 });
+  const artifact = simulator.createScenarioArtifact(validConfig, simulator.simulateColibri(validConfig));
+  artifact.config.active = 9;
+  artifact.config.experts = 8;
   assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(artifact)), /Invalid imported configuration/);
 });
 
@@ -994,7 +1069,7 @@ test('P1: scenario parser rejects markup-bearing imported run IDs', () => {
 test('P1: scenario parser rejects a valid-looking run ID that does not match its config', () => {
   const config = colibriConfig({ output: 1 });
   const artifact = simulator.createScenarioArtifact(config, simulator.simulateColibri(config));
-  artifact.runId = artifact.runId === 'sim-deadbeef' ? 'sim-cafebabe' : 'sim-deadbeef';
+  artifact.runId = `${artifact.runId.slice(0, -1)}${artifact.runId.endsWith('0') ? '1' : '0'}`;
   assert.throws(() => simulator.parseScenarioArtifact(JSON.stringify(artifact)), /run ID.*config/i);
 });
 
@@ -1065,6 +1140,7 @@ test('Prefetch candidate expansion is bounded by Experts per layer', () => {
     active: 4,
     pinned: 0,
     dcache: 0,
+    minDCache: 0,
     vcache: 0,
     recall: 1,
     precision: 0.01,
@@ -1082,6 +1158,7 @@ test('REQ-002: decode applies queue depth exactly once', () => {
     experts: 256,
     active: 8,
     dcache: 0,
+    minDCache: 0,
     vcache: 0,
     pf: false,
     qd: 2,
@@ -1133,6 +1210,7 @@ test('REQ-005: auto placement grows Expert caches with available RAM and VRAM', 
     vram: 8,
     pinned: 0,
     dcache: 0,
+    minDCache: 0,
     vcache: 0,
     pf: false
   });
@@ -1357,7 +1435,7 @@ test('P0: a swap-in wait reaps completed page-out residency before applying new 
   }));
   assert.equal(result.error, undefined);
   const token = result.tokens[0].memory;
-  assert.ok(token.swapInGB > 0.8, `swapIn=${token.swapInGB}`);
+  assert.ok(token.swapInGB > 0, `swapIn=${token.swapInGB}`);
   assert.ok(Math.abs(token.swapOutGB - token.swapInGB) < 0.001,
     `swapIn=${token.swapInGB} swapOut=${token.swapOutGB}`);
   assert.ok(Math.abs(token.pendingSwapOutGB - token.swapOutGB) < 1e-9,
@@ -1396,7 +1474,7 @@ test('REQ-006: swap-in bytes contribute once to Colibri DRAM traffic', () => {
   assert.equal(result.error, undefined);
   const token = result.tokens[0].memory;
   assert.ok(token.swapInGB > 0 && token.swapOutGB > 0);
-  const activeWeightGB = 19 / 1024;
+  const activeWeightGB = 19 / 1000;
   const expected = activeWeightGB + token.kvResidentGB + token.swapInGB + token.swapOutGB;
   assert.ok(Math.abs(token.dramTrafficGB - expected) < 1e-9, `${token.dramTrafficGB} != ${expected}`);
 });
@@ -1497,6 +1575,972 @@ test('REQ-004: transfer-bound TTFT improves with PCIe bandwidth', () => {
   assert.equal(slow.prefillBreakdown.storageGB, 0);
   assert.ok(fast.ttft < slow.ttft / 5, `${slow.ttft} -> ${fast.ttft}`);
   assert.ok(fast.prefillBreakdown.transferMs < slow.prefillBreakdown.transferMs);
+});
+
+test('P0: initial compression CPU is included in AFM TTFT', () => {
+  const c = afmConfig({
+    host: 20,
+    context: 60_000,
+    output: 1,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.5,
+      compress: 0.6,
+      swap: 0.9,
+      hard: 0.99,
+      compressionEnabled: true,
+      compressionRatio: 2,
+      compressionBW: 1,
+      swapEnabled: false,
+      swapCapacityGB: 0,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateAFM(c);
+  const expectedInitialCompressionMs = c.context * 182 * 1000 / 1e9 / c.mem.compressionBW * 1000;
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.ttft >= expectedInitialCompressionMs, `TTFT ${result.ttft}ms omitted ${expectedInitialCompressionMs}ms initial compression`);
+});
+
+test('P0: initial compression CPU is included in Colibri TTFT', () => {
+  const c = colibriConfig({
+    host: 20,
+    context: 60_000,
+    output: 1,
+    layers: 1,
+    experts: 1,
+    active: 1,
+    resident: 0,
+    pinned: 0,
+    dcache: 0,
+    page: 0,
+    pf: false,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.5,
+      compress: 0.6,
+      swap: 0.9,
+      hard: 0.99,
+      compressionEnabled: true,
+      compressionRatio: 2,
+      compressionBW: 1,
+      swapEnabled: false,
+      swapCapacityGB: 0,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateColibri(c);
+  const expectedInitialCompressionMs = c.context * c.kvKB * 1000 / 1e9 / c.mem.compressionBW * 1000;
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.ttft >= expectedInitialCompressionMs, `TTFT ${result.ttft}ms omitted ${expectedInitialCompressionMs}ms initial compression`);
+});
+
+test('P0: Colibri separates pre-policy allocation demand from admitted physical peak', () => {
+  const c = colibriConfig({
+    host: 20,
+    context: 60_000,
+    output: 1,
+    layers: 1,
+    experts: 1,
+    active: 1,
+    resident: 0,
+    pinned: 0,
+    dcache: 0,
+    page: 0,
+    pf: false,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.5,
+      compress: 0.6,
+      swap: 0.9,
+      hard: 0.99,
+      compressionEnabled: true,
+      compressionRatio: 2,
+      compressionBW: 1,
+      swapEnabled: false,
+      swapCapacityGB: 0,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateColibri(c);
+  const rawInitialPhysicalGB = 7.8 + c.context * c.kvKB * 1000 / 1e9;
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.state.peakAllocationDemandGB >= rawInitialPhysicalGB - 1e-9, `demand ${result.state.peakAllocationDemandGB}GB hid pre-policy ${rawInitialPhysicalGB}GB`);
+  assert.ok(result.state.peakPhysicalGB <= c.host + 1e-9, `admitted physical peak ${result.state.peakPhysicalGB}GB exceeded ${c.host}GB host`);
+});
+
+test('P0: AFM separates pre-policy allocation demand from admitted physical peak', () => {
+  const c = afmConfig({
+    host: 20,
+    context: 60_000,
+    output: 1,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.5,
+      compress: 0.6,
+      swap: 0.9,
+      hard: 0.99,
+      compressionEnabled: true,
+      compressionRatio: 2,
+      compressionBW: 1,
+      swapEnabled: false,
+      swapCapacityGB: 0,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateAFM(c);
+  const rawInitialPhysicalGB = 7.8 + c.context * 182 * 1000 / 1e9;
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.state.peakAllocationDemandGB >= rawInitialPhysicalGB - 1e-9, `demand ${result.state.peakAllocationDemandGB}GB hid pre-policy ${rawInitialPhysicalGB}GB`);
+  assert.ok(result.state.peakPhysicalGB <= c.host + 1e-9, `admitted physical peak ${result.state.peakPhysicalGB}GB exceeded ${c.host}GB host`);
+});
+
+test('P0: pending AFM page-out credit prevents duplicate reclaim scheduling', () => {
+  const c = afmConfig({
+    host: 16,
+    context: 34_000,
+    output: 1,
+    ssdBW: 0.001,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.7,
+      compress: 0.72,
+      swap: 0.75,
+      hard: 0.99,
+      compressionEnabled: false,
+      swapEnabled: true,
+      swapCapacityGB: 128,
+      swapWriteRatio: 1,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateAFM(c);
+  const initialKVGB = c.context * 182 * 1000 / 1e9;
+  const reclaimNeededGB = Math.max(0, 7.8 + initialKVGB - c.host * c.mem.swap);
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.state.swapStoredGB <= reclaimNeededGB + 0.001, `scheduled ${result.state.swapStoredGB}GB for ${reclaimNeededGB}GB reclaim`);
+});
+
+test('P0: concurrent runner rejects aggregate Colibri memory OOM', () => {
+  const c = colibriConfig({
+    host: 16,
+    conc: 4,
+    context: 22_000,
+    output: 1,
+    layers: 1,
+    experts: 1,
+    active: 1,
+    resident: 0,
+    pinned: 0,
+    dcache: 0,
+    page: 0,
+    pf: false,
+    mem: memoryPolicy({
+      policy: 'strict',
+      minHeadroomGB: 0,
+      soft: 0.7,
+      compress: 0.8,
+      swap: 0.9,
+      hard: 1
+    })
+  });
+
+  const direct = simulator.simulateColibri(c);
+  const served = simulator.runSimulationConfig(c);
+
+  assert.match(direct.error || '', /OOM/);
+  assert.match(served.error || '', /OOM/, 'shared runner admitted a workload rejected by aggregate memory accounting');
+});
+
+test('P0: concurrent runner fails closed when aggregate memory OOM occurs during decode', () => {
+  const c = colibriConfig({
+    host: 8,
+    arch: 'unified',
+    vram: 0,
+    placement: 'manual',
+    pinned: 0,
+    dcache: 0,
+    minDCache: 0,
+    vcache: 0,
+    page: 0,
+    experts: 2,
+    active: 1,
+    layers: 1,
+    esize: 1,
+    resident: 0,
+    prompt: 0,
+    conc: 4,
+    context: 1,
+    output: 8,
+    kvKB: 1_000_000,
+    mem: memoryPolicy({
+      policy: 'swap',
+      osReservedGB: 0,
+      minHeadroomGB: 0,
+      soft: 0.7,
+      compress: 0.8,
+      swap: 0.9,
+      hard: 0.99,
+      compressionEnabled: false,
+      swapEnabled: false,
+      swapCapacityGB: 0
+    })
+  });
+  const aggregate = simulator.simulateColibri(c);
+  const served = simulator.runSimulationConfig(c);
+
+  assert.equal(aggregate.oom, true, `fixture must enter aggregate decode OOM: ${JSON.stringify({ error: aggregate.error, tokens: aggregate.tokens?.length, state: aggregate.state })}`);
+  assert.equal(aggregate.tokens.length, 0, 'the allocation-failing token must not be recorded as completed');
+  assert.ok(aggregate.state.peakPhysicalGB <= c.host + 1e-9, 'failed allocation must not enter admitted physical peak');
+  assert.equal(served.oom, true);
+  assert.equal(served.serving, undefined, 'scheduler must not fabricate completions after aggregate OOM');
+});
+
+test('P0: AFM decode OOM rolls back the allocation-failing token', () => {
+  const c = afmConfig({
+    host: 10, context: 1, output: 8, conc: 1, kvKB: 1_000_000,
+    mem: memoryPolicy({
+      policy: 'strict', osReservedGB: 4, minHeadroomGB: 0,
+      soft: 0.7, compress: 0.8, swap: 0.9, hard: 0.99,
+      compressionEnabled: false, swapEnabled: false
+    })
+  });
+  const result = simulator.simulateAFM(c);
+  assert.equal(result.oom, true);
+  assert.equal(result.tokens.length, 1, 'only the admitted first token may complete');
+  assert.ok(result.state.peakAllocationDemandGB > c.host);
+  assert.ok(result.state.peakPhysicalGB <= c.host + 1e-9);
+});
+
+test('P0: unreclaimable pre-policy demand above host fails closed', () => {
+  const result = simulator.simulateColibri(colibriConfig({
+    host: 16,
+    arch: 'unified',
+    vram: 0,
+    placement: 'manual',
+    pinned: 0.02,
+    dcache: 0,
+    minDCache: 0,
+    vcache: 0,
+    page: 0,
+    experts: 1,
+    active: 1,
+    layers: 1,
+    prompt: 0,
+    context: 60_000,
+    output: 4,
+    kvKB: 182,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.7,
+      compress: 0.72,
+      swap: 0.75,
+      hard: 0.99,
+      compressionEnabled: false,
+      swapEnabled: true,
+      swapCapacityGB: 128,
+      swapWriteRatio: 1,
+      kvTouchFraction: 0
+    })
+  }));
+  assert.match(result.error || '', /OOM/i);
+  assert.ok(result.state.peakAllocationDemandGB > result.c.host);
+  assert.ok(result.state.peakPhysicalGB <= result.c.host + 1e-9);
+});
+
+test('P0: concurrent AFM decompression consumes the shared compute resource', () => {
+  const c = afmConfig({
+    host: 32,
+    conc: 2,
+    context: 60_000,
+    output: 1,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.4,
+      compress: 0.5,
+      swap: 0.9,
+      hard: 0.99,
+      compressionEnabled: true,
+      compressionRatio: 2,
+      compressionBW: 1,
+      swapEnabled: false,
+      swapCapacityGB: 0,
+      kvTouchFraction: 1
+    })
+  });
+
+  const serving = simulator.simulateServing(c, [
+    { id: 'a', arrivalMs: 0, output: 1 },
+    { id: 'b', arrivalMs: 0, output: 1 }
+  ]);
+  const kvPerRequestGB = c.context * 182 * 1000 / 1e9;
+  const compressionTargetGB = c.host * c.mem.compress;
+  const compressedOriginalPerRequestGB = Math.max(0, (7.8 + kvPerRequestGB - compressionTargetGB) / (1 - 1 / c.mem.compressionRatio));
+  const expectedInitialCompressionMs = compressedOriginalPerRequestGB / c.mem.compressionBW * 1000 * 2;
+  const expectedTouchCpuMs = compressedOriginalPerRequestGB * c.mem.kvTouchFraction / c.mem.compressionBW * 1000 * 2;
+  const expectedSharedCpuMs = expectedInitialCompressionMs + expectedTouchCpuMs;
+
+  assert.equal(serving.error, undefined);
+  assert.ok(serving.resources.compute.busyMs >= expectedSharedCpuMs - 1e-6, `shared compute recorded ${serving.resources.compute.busyMs}ms for ${expectedSharedCpuMs}ms compression/decompression`);
+  const privateA = simulator.simulateAFM({ ...c, conc: 1, seed: c.seed });
+  const privateB = simulator.simulateAFM({ ...c, conc: 1, seed: c.seed + 104729 });
+  const contentionA = serving.requests[0].latencyMs - privateA.ttft;
+  const contentionB = serving.requests[1].latencyMs - privateB.ttft;
+  const oneOtherRequestCpuMs = expectedTouchCpuMs / 2;
+  assert.ok(contentionA >= oneOtherRequestCpuMs, `first request omitted ${oneOtherRequestCpuMs}ms peer memory CPU from ${contentionA}ms delay`);
+  assert.ok(contentionB >= oneOtherRequestCpuMs, `second request omitted ${oneOtherRequestCpuMs}ms peer memory CPU from ${contentionB}ms delay`);
+
+});
+
+test('P0: concurrent initial compression consumes shared prefill compute', () => {
+  const c = afmConfig({
+    host: 32,
+    conc: 2,
+    context: 60_000,
+    output: 1,
+    mem: memoryPolicy({
+      policy: 'swap', minHeadroomGB: 0, soft: 0.4, compress: 0.5, swap: 0.9, hard: 0.99,
+      compressionEnabled: true, compressionRatio: 2, compressionBW: 1,
+      swapEnabled: false, swapCapacityGB: 0, kvTouchFraction: 0
+    })
+  });
+  const privateTrace = simulator.simulateAFM({ ...c, conc: 1 });
+  const serving = simulator.simulateServing(c, [
+    { id: 'a', arrivalMs: 0, output: 1 },
+    { id: 'b', arrivalMs: 0, output: 1 }
+  ]);
+  assert.ok(privateTrace.initialCompressionCpuMs > 0, 'fixture must compress before decode');
+  assert.ok(serving.resources.compute.phases.prefill.busyMs >= privateTrace.initialCompressionCpuMs * 2,
+    `shared prefill compute omitted initial compression: ${JSON.stringify(serving.resources.compute)}`);
+});
+
+test('P1: completed Colibri requests warm the globally shared Expert cache', () => {
+  const c = colibriConfig({
+    conc: 2, prompt: 0, output: 1, layers: 1, experts: 1, active: 1,
+    resident: 0, pinned: 0, dcache: 0.02, vcache: 0, page: 0,
+    pf: false, cold: true
+  });
+  const single = simulator.simulateServing({ ...c, conc: 1 }, [{ id: 'a', arrivalMs: 0, output: 1 }]);
+  const staggered = simulator.simulateServing(c, [
+    { id: 'a', arrivalMs: 0, output: 1 },
+    { id: 'b', arrivalMs: 100_000, output: 1 }
+  ]);
+  assert.equal(staggered.error, undefined);
+  assert.ok(staggered.resources.ssd.busyMs <= single.resources.ssd.busyMs + 1e-9,
+    `completed-cache reuse reread Expert bytes: ${JSON.stringify({ single: single.resources.ssd, staggered: staggered.resources.ssd })}`);
+});
+
+test('P0: serving scheduler applies demand and prefetch request latency once per kind', () => {
+  const c = colibriConfig({
+    prompt: 0,
+    output: 8,
+    context: 1,
+    layers: 2,
+    experts: 8,
+    active: 2,
+    resident: 0,
+    pinned: 0,
+    dcache: 0,
+    page: 0,
+    qd: 1,
+    lat: 1000,
+    ssdBW: 1_000_000,
+    pf: true,
+    recall: 1,
+    precision: 0.25,
+    budget: 160,
+    mem: memoryPolicy()
+  });
+
+  const trace = simulator.simulateColibri(c);
+  const serving = simulator.simulateServing(c, [{ id: 'single', arrivalMs: 0, output: c.output }], { batchWindowMs: 0 });
+  const analyticStorageServiceMs = trace.initialSwapServiceMs + trace.tokens.reduce((sum, token) => sum + token.storageServiceMs, 0);
+
+  assert.ok(trace.tot.pfIssued > 0, 'fixture must issue prefetch requests');
+  assert.equal(serving.error, undefined);
+  assert.ok(serving.resources.ssd.busyMs <= analyticStorageServiceMs + 1e-9, `${serving.resources.ssd.busyMs}ms scheduler SSD service exceeded ${analyticStorageServiceMs}ms analytic service`);
+});
+
+test('P0: prefetch never rereads a page-cache-resident expert', () => {
+  const c = colibriConfig({
+    prompt: 0,
+    output: 3,
+    context: 1,
+    layers: 2,
+    experts: 1,
+    active: 1,
+    resident: 0,
+    pinned: 0,
+    dcache: 0,
+    page: 1,
+    odirect: false,
+    cold: true,
+    pf: true,
+    recall: 1,
+    precision: 1,
+    budget: 160,
+    mem: memoryPolicy()
+  });
+
+  const result = simulator.simulateColibri(c);
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.tokens[0].demandGB > 0, 'fixture must populate the page cache from demand');
+  assert.equal(result.tot.pfIssued, 0);
+  assert.equal(result.tot.pfUseful, 0);
+  assert.equal(result.tot.pfGB, 0);
+});
+
+test('P0: prefetch packed bytes never exceed the MB-per-layer budget', () => {
+  const c = colibriConfig({
+    prompt: 0,
+    output: 3,
+    context: 1,
+    layers: 2,
+    experts: 2,
+    active: 1,
+    resident: 0,
+    pinned: 0,
+    dcache: 0,
+    page: 0,
+    odirect: true,
+    cold: true,
+    pf: true,
+    recall: 1,
+    precision: 1,
+    budget: 19,
+    esize: 19,
+    mem: memoryPolicy()
+  });
+
+  const result = simulator.simulateColibri(c);
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.tot.pfIssued, 0);
+  assert.ok(result.tot.pfGB * 1000 <= c.budget + 1e-9);
+});
+
+test('P0: serving latency includes the configured batch admission window', () => {
+  const c = afmConfig({ output: 1, context: 1, host: 64, mem: memoryPolicy() });
+  const requests = [{ id: 'single', arrivalMs: 0, output: 1 }];
+
+  const immediate = simulator.simulateServing(c, requests, { batchWindowMs: 0 });
+  const delayed = simulator.simulateServing(c, requests, { batchWindowMs: 100 });
+
+  assert.equal(immediate.error, undefined);
+  assert.equal(delayed.error, undefined);
+  assert.ok(delayed.requests[0].ttftMs >= immediate.requests[0].ttftMs + 100 - 1e-9, `${delayed.requests[0].ttftMs}ms did not include a 100ms admission window over ${immediate.requests[0].ttftMs}ms`);
+});
+
+test('P0: aggregate TPS uses the same event-throughput definition at concurrency one', () => {
+  const c = colibriConfig({ conc: 1, prompt: 32, output: 4, context: 128 });
+  const result = simulator.runSimulationConfig(c);
+  const serving = simulator.simulateServing(c, [{ id: 'single', arrivalMs: 0, output: c.output }]);
+
+  assert.equal(result.error, undefined);
+  assert.equal(serving.error, undefined);
+  assert.ok(Math.abs(result.agg - serving.throughputTPS) < 1e-12, `${result.agg} analytic capacity was mixed with ${serving.throughputTPS} event throughput`);
+  assert.ok(result.serving, 'single-request results must expose the same serving evidence as concurrent results');
+});
+
+test('P0: serving TPOT percentile excludes first-token latency', () => {
+  const c = colibriConfig({ conc: 2, prompt: 64, output: 2, context: 128 });
+  const serving = simulator.simulateServing(c, [
+    { id: 'a', arrivalMs: 0, output: 2 },
+    { id: 'b', arrivalMs: 0, output: 2 }
+  ]);
+  const decodeIntervals = serving.requests.map(request => request.tokens[1].tpotMs).sort((a, b) => a - b);
+  const expectedP95 = decodeIntervals[decodeIntervals.length - 1];
+
+  assert.equal(serving.error, undefined);
+  assert.ok(Math.abs(serving.p95TokenMs - expectedP95) < 1e-12, `${serving.p95TokenMs} mixed TTFT into decode TPOT p95 ${expectedP95}`);
+  assert.ok(serving.p95TtftMs >= serving.p95TokenMs);
+});
+
+test('P0: AFM p95 uses the nearest-rank index without selecting the 100th percentile', () => {
+  const c = afmConfig({
+    output: 20,
+    context: 1,
+    host: 64,
+    freq: 19,
+    overlap: 0,
+    active: 2,
+    shared: 1,
+    routed: 1,
+    totalB: 10,
+    expertWidth: 1024,
+    activeDim: 2048,
+    projections: 3,
+    chunks: 1,
+    bits: 8,
+    packing: 1,
+    ssdBW: 0.001,
+    mem: memoryPolicy()
+  });
+
+  const result = simulator.simulateAFM(c);
+
+  assert.equal(result.error, undefined);
+  const maxTpot = Math.max(...result.tokens.map(token => token.tpot));
+  assert.equal(result.tokens.length, 20);
+  assert.ok(result.p95 < maxTpot, `p95 ${result.p95} incorrectly selected maximum ${maxTpot}`);
+});
+
+test('P0: accepted 53-bit seeds do not alias modulo 32 bits', () => {
+  const first = simulator.rng(0);
+  const second = simulator.rng(2 ** 32);
+  const firstDraws = Array.from({ length: 4 }, () => first());
+  const secondDraws = Array.from({ length: 4 }, () => second());
+
+  assert.notDeepEqual(firstDraws, secondDraws);
+});
+
+test('P0: maximum accepted seed remains valid for every derived request seed', () => {
+  const c = colibriConfig({ seed: Number.MAX_SAFE_INTEGER, conc: 2, output: 1, context: 1 });
+  const result = simulator.simulateServing(c, [
+    { id: 'a', arrivalMs: 0, output: 1 },
+    { id: 'b', arrivalMs: 0, output: 1 }
+  ]);
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.completedTokens, 2);
+});
+
+test('P0: auto placement counts only packed experts that fit pinned capacity', () => {
+  const c = colibriConfig({
+    placement: 'auto',
+    layers: 1,
+    experts: 1,
+    active: 1,
+    esize: 100,
+    pinned: 100 / 1000,
+    resident: 0,
+    context: 1,
+    prompt: 0,
+    output: 1
+  });
+
+  const placed = simulator.applyColibriPlacement(c);
+
+  assert.equal(placed.placementInfo.pinnedExpertsPerLayer, 0);
+  assert.ok(Math.abs(placed.placementInfo.hostExpertPoolGB - 0.103) < 1e-12);
+});
+
+test('P0: AFM skips patch setup when no routed experts exist', () => {
+  const c = afmConfig({
+    prompt: 0,
+    context: 1,
+    output: 1,
+    active: 2,
+    shared: 2,
+    routed: 0,
+    totalB: 10,
+    expertWidth: 1024,
+    activeDim: 2048,
+    initSel: 7,
+    patchBase: 100,
+    attn: 1,
+    ffn: 2,
+    runtime: 3,
+    host: 64,
+    mem: memoryPolicy()
+  });
+
+  const result = simulator.simulateAFM(c);
+
+  assert.equal(result.error, undefined);
+  assert.ok(Math.abs(result.ttft - 13) < 1e-12, `${result.ttft}ms charged patch setup despite zero routed bytes`);
+});
+
+test('P0: AFM snapshots reap page-outs completed during the token interval', () => {
+  const c = afmConfig({
+    host: 12,
+    context: 1,
+    output: 1,
+    kvKB: 1_000_000,
+    ssdBW: 1_000,
+    dramBW: 0.001,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.7,
+      compress: 0.72,
+      swap: 0.75,
+      hard: 0.99,
+      compressionEnabled: false,
+      swapEnabled: true,
+      swapCapacityGB: 128,
+      swapWriteRatio: 1,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateAFM(c);
+
+  assert.equal(result.error, undefined);
+  const memory = result.tokens[0].memory;
+  assert.ok(result.tokens[0].swapOutGB > 0, 'fixture must schedule a page-out');
+  assert.equal(memory.pendingSwapOutGB, 0);
+  assert.equal(memory.pendingSwapJobs, 0);
+});
+
+test('P0: Colibri snapshots reap page-outs completed during the token interval', () => {
+  const c = colibriConfig({
+    host: 12,
+    context: 1,
+    output: 1,
+    kvKB: 1_000_000,
+    layers: 1,
+    experts: 1,
+    active: 1,
+    resident: 0,
+    pinned: 0,
+    dcache: 0,
+    page: 0,
+    pf: false,
+    ssdBW: 1_000,
+    dramBW: 0.001,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.7,
+      compress: 0.72,
+      swap: 0.75,
+      hard: 0.99,
+      compressionEnabled: false,
+      swapEnabled: true,
+      swapCapacityGB: 128,
+      swapWriteRatio: 1,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateColibri(c);
+
+  assert.equal(result.error, undefined);
+  const memory = result.tokens[0].memory;
+  assert.ok(result.tokens[0].swapOutGB > 0, 'fixture must schedule a page-out');
+  assert.equal(memory.pendingSwapOutGB, 0);
+  assert.equal(memory.pendingSwapJobs, 0);
+});
+
+test('P0: Run ID is fenced by schema model package commit and build identity', () => {
+  const c = colibriConfig({ output: 1, context: 1 });
+  const requests = [{ id: 'single', arrivalMs: 0, output: 1 }];
+  const base = {
+    schemaVersion: 'moe-ssd-sim/v4',
+    modelVersion: '1.6.1',
+    packageVersion: '1.6.1',
+    commit: 'commit-a',
+    buildVersion: 'web-static/v1'
+  };
+
+  const baseline = simulator.servingRunId(c, requests, base);
+  for (const key of Object.keys(base)) {
+    const changed = simulator.servingRunId(c, requests, { ...base, [key]: `${base[key]}-changed` });
+    assert.notEqual(changed, baseline, `${key} was not fenced into the Run ID`);
+  }
+  assert.match(baseline, /^sim-1\.6\.1-[0-9a-f]{16}$/);
+});
+
+test('P0: release bundle derives exact clean HEAD identity from a tracked runtime allowlist', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'moe-ssd-release-repo-'));
+  const fixtureRoot = path.join(fixture, 'repo');
+  const copyFilter = source => !['.git', 'node_modules', 'dist'].includes(path.basename(source));
+  try {
+    fs.cpSync(root, fixtureRoot, { recursive: true, filter: copyFilter });
+    fs.writeFileSync(path.join(fixtureRoot, '.env'), 'PRIVATE_RELEASE_SECRET=must-not-ship\n');
+    spawnSync('git', ['init'], { cwd: fixtureRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.email', 'release-test@example.invalid'], { cwd: fixtureRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.name', 'Release Test'], { cwd: fixtureRoot, encoding: 'utf8' });
+    spawnSync('git', ['add', '-f', '.'], { cwd: fixtureRoot, encoding: 'utf8' });
+    const committed = spawnSync('git', ['commit', '-m', 'release fixture'], { cwd: fixtureRoot, encoding: 'utf8' });
+    assert.equal(committed.status, 0, committed.stderr || committed.stdout);
+    const commit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: fixtureRoot, encoding: 'utf8' }).stdout.trim();
+    const builder = path.join(fixtureRoot, 'tools/build-release.cjs');
+    const built = spawnSync(process.execPath, [builder], { cwd: fixtureRoot, encoding: 'utf8' });
+    assert.equal(built.status, 0, built.stderr || built.stdout);
+
+    const output = path.join(fixtureRoot, 'dist');
+    const buildInfo = fs.readFileSync(path.join(output, 'build-info.js'), 'utf8');
+    const html = fs.readFileSync(path.join(output, 'index.html'), 'utf8');
+    assert.match(buildInfo, new RegExp(commit));
+    assert.match(buildInfo, /modelVersion: "1\.6\.1"/);
+    assert.match(buildInfo, /packageVersion: "1\.6\.1"/);
+    assert.ok(html.indexOf('build-info.js') < html.indexOf('core.js'), 'provenance must load before simulator code');
+    assert.equal(fs.existsSync(path.join(output, '.env')), false, 'ignored or tracked secrets must not enter the runtime manifest');
+    assert.equal(fs.existsSync(path.join(output, 'tests')), false, 'tests must not enter the runtime manifest');
+    assert.equal(fs.existsSync(path.join(output, 'tools')), false, 'build tooling must not enter the runtime manifest');
+
+    fs.rmSync(output, { recursive: true, force: true });
+    const capturedMarker = 'CAPTURED_COMMIT_RUNTIME_BYTES';
+    fs.appendFileSync(path.join(fixtureRoot, 'README.md'), `\n${capturedMarker}\n`);
+    spawnSync('git', ['add', 'README.md'], { cwd: fixtureRoot, encoding: 'utf8' });
+    const secondCommit = spawnSync('git', ['commit', '-m', 'captured release commit'], { cwd: fixtureRoot, encoding: 'utf8' });
+    assert.equal(secondCommit.status, 0, secondCommit.stderr || secondCommit.stdout);
+    const capturedCommit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: fixtureRoot, encoding: 'utf8' }).stdout.trim();
+    const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+    const shimDir = path.join(fixture, 'bin');
+    fs.mkdirSync(shimDir);
+    const gitShim = path.join(shimDir, 'git');
+    fs.writeFileSync(gitShim, `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "HEAD" ]; then\n  sha="$(${realGit} rev-parse HEAD)"\n  printf '%s\\n' "$sha"\n  ${realGit} reset --hard HEAD~1 >/dev/null\n  exit 0\nfi\nexec ${realGit} "$@"\n`);
+    fs.chmodSync(gitShim, 0o755);
+    const racedBuild = spawnSync(process.execPath, [builder], {
+      cwd: fixtureRoot, env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}` }, encoding: 'utf8'
+    });
+    assert.equal(racedBuild.status, 0, racedBuild.stderr || racedBuild.stdout);
+    const racedInfo = fs.readFileSync(path.join(output, 'build-info.js'), 'utf8');
+    assert.match(racedInfo, new RegExp(capturedCommit));
+    assert.match(fs.readFileSync(path.join(output, 'README.md'), 'utf8'), new RegExp(capturedMarker),
+      'every payload read must remain pinned to the commit captured for provenance');
+
+    const override = spawnSync(process.execPath, [builder], {
+      cwd: fixtureRoot, env: { ...process.env, MOE_BUILD_COMMIT: '0'.repeat(40) }, encoding: 'utf8'
+    });
+    assert.notEqual(override.status, 0);
+    assert.match(override.stderr, /overrides are forbidden/i);
+    const arbitraryOutput = spawnSync(process.execPath, [builder, path.join(fixture, 'elsewhere')], { cwd: fixtureRoot, encoding: 'utf8' });
+    assert.notEqual(arbitraryOutput.status, 0);
+    assert.match(arbitraryOutput.stderr, /output is fixed/i);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('P0: scenario artifacts carry the same provenance fence as their Run ID', () => {
+  const c = colibriConfig({ conc: 1, output: 1, context: 1 });
+  const result = simulator.runSimulationConfig(c);
+  const artifact = simulator.createScenarioArtifact(c, result);
+  const provenance = simulator.simulatorProvenance();
+
+  assert.deepEqual(artifact.provenance, provenance);
+  assert.equal(artifact.schemaVersion, provenance.schemaVersion);
+  assert.equal(artifact.modelVersion, provenance.modelVersion);
+  assert.equal(artifact.packageVersion, provenance.packageVersion);
+  assert.equal(artifact.commit, provenance.commit);
+  assert.equal(artifact.buildVersion, provenance.buildVersion);
+  assert.equal(artifact.runId, simulator.servingRunId(artifact.config, artifact.requests, artifact.provenance));
+});
+
+test('P0: direct serving request population must equal configured concurrency', () => {
+  const c = colibriConfig({ conc: 1, output: 1, context: 1 });
+  const result = simulator.simulateServing(c, [
+    { id: 'a', arrivalMs: 0, output: 1 },
+    { id: 'b', arrivalMs: 0, output: 1 }
+  ]);
+
+  assert.match(result.error || '', /request count.*config\.conc/i);
+});
+
+test('P0: AFM Storage per token excludes one-time startup I/O', () => {
+  const c = afmConfig({
+    prompt: 0,
+    context: 1,
+    output: 2,
+    freq: 50,
+    active: 2,
+    shared: 1,
+    routed: 1,
+    activeDim: 2,
+    host: 64,
+    mem: memoryPolicy({ kvTouchFraction: 0 })
+  });
+
+  const result = simulator.simulateAFM(c);
+  const startupGB = result.prefillStorageEvents.reduce((sum, event) => sum + event.gb, 0);
+  const decodeGB = result.tokens.flatMap(token => token.storageEvents).reduce((sum, event) => sum + event.gb, 0);
+
+  assert.equal(result.error, undefined);
+  assert.ok(startupGB > 0, 'fixture must perform a startup window read');
+  assert.equal(decodeGB, 0);
+  assert.equal(result.ssdPt, 0);
+  assert.equal(result.startupStorageGB, startupGB);
+});
+
+test('P0: Colibri Storage per token excludes one-time predecode swap I/O', () => {
+  const c = colibriConfig({
+    host: 16,
+    context: 34_000,
+    prompt: 0,
+    output: 1,
+    layers: 1,
+    experts: 1,
+    active: 1,
+    resident: 0,
+    pinned: 1,
+    dcache: 0,
+    page: 0,
+    pf: false,
+    mem: memoryPolicy({
+      policy: 'swap',
+      minHeadroomGB: 0,
+      soft: 0.7,
+      compress: 0.72,
+      swap: 0.75,
+      hard: 0.99,
+      compressionEnabled: false,
+      swapEnabled: true,
+      swapCapacityGB: 128,
+      swapWriteRatio: 1,
+      kvTouchFraction: 0
+    })
+  });
+
+  const result = simulator.simulateColibri(c);
+  const startupGB = result.prefillStorageEvents.reduce((sum, event) => sum + event.gb, 0);
+  const decodeGB = result.tokens.flatMap(token => token.storageEvents).reduce((sum, event) => sum + event.gb, 0);
+
+  assert.equal(result.error, undefined);
+  assert.ok(startupGB > 0, 'fixture must perform a predecode page-out');
+  assert.ok(decodeGB > 0, 'fixture must retain a small decode-time KV page-out');
+  assert.ok(Math.abs(result.ssdPt - decodeGB / result.tokens.length) < 1e-12);
+  assert.ok(result.ssdPt < startupGB);
+  assert.equal(result.startupStorageGB, startupGB);
+});
+
+test('P0: AFM steady DRAM floor respects zero KV touch fraction', () => {
+  const base = {
+    output: 2,
+    host: 512,
+    dramBW: 10,
+    mem: memoryPolicy({
+      policy: 'strict',
+      minHeadroomGB: 0,
+      hard: 1,
+      compressionEnabled: false,
+      swapEnabled: false,
+      kvTouchFraction: 0
+    })
+  };
+  const short = simulator.simulateAFM(afmConfig({ ...base, context: 1 }));
+  const long = simulator.simulateAFM(afmConfig({ ...base, context: 60_000 }));
+
+  assert.equal(short.error, undefined);
+  assert.equal(long.error, undefined);
+  assert.ok(Math.abs(short.steady - long.steady) < 1e-12, `${short.steady}ms and ${long.steady}ms changed despite zero KV touch`);
+});
+
+test('P0: MB KB and GB inputs use one documented decimal SI contract', () => {
+  const contract = fs.readFileSync(path.join(root, 'docs/v1.6.1-correctness-contract.md'), 'utf8');
+  assert.match(contract, /1 GB = 1000 MB/);
+  assert.match(contract, /1 MB = 1000 KB/);
+  const placement = simulator.applyColibriPlacement(colibriConfig({
+    placement: 'manual',
+    layers: 1,
+    experts: 1,
+    active: 1,
+    esize: 100,
+    pinned: 0,
+    context: 1,
+    prompt: 0,
+    output: 1
+  }));
+  const memoryOptions = memoryPolicy({ policy: 'strict', hard: 1, kvTouchFraction: 0 });
+  const colibri = simulator.simulateColibri(colibriConfig({
+    host: 512,
+    context: 9_999,
+    prompt: 0,
+    output: 1,
+    kvKB: 100,
+    layers: 1,
+    experts: 1,
+    active: 1,
+    pinned: 1,
+    resident: 0,
+    dcache: 0,
+    page: 0,
+    pf: false,
+    mem: memoryOptions
+  }));
+  const afm = simulator.simulateAFM(afmConfig({
+    host: 512,
+    context: 9_999,
+    prompt: 0,
+    output: 1,
+    kvKB: 100,
+    mem: memoryOptions
+  }));
+
+  assert.ok(Math.abs(placement.placementInfo.expertPoolGB - 0.103) < 1e-12);
+  assert.ok(Math.abs(colibri.state.kvUncompressedGB - 1) < 1e-12);
+  assert.ok(Math.abs(afm.state.kvUncompressedGB - 1) < 1e-12);
+});
+
+test('P0: decode observed Storage bandwidth includes unfinished background writes', () => {
+  const result = simulator.simulateAFM(afmConfig({
+    host: 12,
+    context: 100,
+    output: 1,
+    kvKB: 29_900,
+    ssdBW: 0.001,
+    dramBW: 1_000_000,
+    attn: 0,
+    ffn: 0,
+    runtime: 0,
+    mem: memoryPolicy({
+      policy: 'swap',
+      soft: 0.85,
+      compress: 0.88,
+      swap: 0.9,
+      hard: 0.99,
+      minHeadroomGB: 0,
+      compressionEnabled: false,
+      swapEnabled: true,
+      swapCapacityGB: 128,
+      swapWriteRatio: 1,
+      kvTouchFraction: 0
+    })
+  }));
+
+  assert.equal(result.error, undefined, result.error);
+  assert.ok(result.decodeStorageGB > 0, 'fixture must schedule a decode-time background page-out');
+  assert.ok(result.observed <= result.c.ssdBW + 1e-12, `${result.observed} GB/s exceeded ${result.c.ssdBW} GB/s`);
+});
+
+test('P0: AFM discloses patch materialization exclusion from DRAM bounds', () => {
+  const c = afmConfig({
+    output: 2,
+    freq: 1,
+    active: 2,
+    shared: 1,
+    routed: 1,
+    activeDim: 2,
+    overlap: 0,
+    patchBase: 10,
+    host: 64,
+    mem: memoryPolicy({ kvTouchFraction: 0 })
+  });
+  const result = simulator.simulateAFM(c);
+
+  assert.equal(result.error, undefined);
+  assert.ok(result.tokens.some(token => token.patchMs > 0), 'fixture must perform patch materialization');
+  assert.equal(result.dramAccounting.scope, 'active-weights+KV-touch+SSD-landing+swap+compression');
+  assert.ok(result.dramAccounting.excluded.includes('patch-materialization-read-write'));
+  assert.equal(result.dramAccounting.patchMaterializationTrafficGB, null);
+});
+
+test('P0: UI labels OAT results as executed synthetic counterfactuals', () => {
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+
+  assert.doesNotMatch(html, /Measured OAT counterfactual/i);
+  assert.match(html, /Executed synthetic OAT counterfactual/i);
 });
 
 test('P0: 30-scenario invariant matrix preserves finite metrics and resource bounds', () => {

@@ -17,6 +17,7 @@ function createMemoryState(c, mode, initialKvGB, deviceKvCap = 0) {
     totalCompressionTrafficGB: 0,
     totalPageReclaimedGB: 0,
     totalExpertReclaimedGB: 0,
+    peakAllocationDemandGB: 0,
     peakPhysicalGB: 0,
     minFreeGB: Infinity,
     peakSwapGB: 0,
@@ -29,6 +30,22 @@ function createMemoryState(c, mode, initialKvGB, deviceKvCap = 0) {
     oom: false,
     lastState: 'NORMAL'
   };
+}
+
+function snapshotMemoryState(state) {
+  return {
+    ...state,
+    swappedExperts: new Set(state.swappedExperts),
+    pendingSwapOutJobs: state.pendingSwapOutJobs.map(job => ({ ...job }))
+  };
+}
+
+function restoreMemoryState(state, snapshot) {
+  for (const key of Object.keys(state)) delete state[key];
+  Object.assign(state, snapshot, {
+    swappedExperts: new Set(snapshot.swappedExperts),
+    pendingSwapOutJobs: snapshot.pendingSwapOutJobs.map(job => ({ ...job }))
+  });
 }
 
 function kvPhysicalGB(state, c) {
@@ -175,9 +192,10 @@ function applyPressureColibri(c, state, V, D, P, unitGB, token) {
   const swap = thresholdGB(c, c.mem.swap);
   const hard = thresholdGB(c, c.mem.hard);
   let dyn = colibriDynamic(c, state, V, D, P, unitGB);
+  const eventualPhysicalGB = () => dyn.physicalGB - state.pendingSwapOutGB;
 
   if (c.mem.policy === 'strict') {
-    if (dyn.physicalGB > hard + EPS) {
+    if (eventualPhysicalGB() > hard + EPS) {
       out.state = 'OOM';
       out.oom = true;
       state.oom = true;
@@ -185,8 +203,8 @@ function applyPressureColibri(c, state, V, D, P, unitGB, token) {
     return { ...out, dyn };
   }
 
-  if (dyn.physicalGB > soft + EPS) {
-    const needEntries = Math.ceil((dyn.physicalGB - soft) / unitGB);
+  if (eventualPhysicalGB() > soft + EPS) {
+    const needEntries = Math.ceil((eventualPhysicalGB() - soft) / unitGB);
     const removed = evictEntries(P, needEntries);
     out.pageReclaimGB += removed * unitGB;
     state.totalPageReclaimedGB += removed * unitGB;
@@ -194,11 +212,11 @@ function applyPressureColibri(c, state, V, D, P, unitGB, token) {
     if (removed) out.state = 'RECLAIM';
   }
 
-  if (dyn.physicalGB > soft + EPS && c.expertBacking === 'file') {
+  if (eventualPhysicalGB() > soft + EPS && c.expertBacking === 'file') {
     const currentD = totalEntries(D);
     const minEntries = Math.floor(c.minDCache / unitGB);
     const removable = Math.max(0, currentD - minEntries);
-    const needed = Math.min(removable, Math.ceil((dyn.physicalGB - soft) / unitGB));
+    const needed = Math.min(removable, Math.ceil((eventualPhysicalGB() - soft) / unitGB));
     if (needed > 0) {
       const removed = evictEntries(D, needed);
       out.expertReclaimGB += removed * unitGB;
@@ -208,8 +226,8 @@ function applyPressureColibri(c, state, V, D, P, unitGB, token) {
     }
   }
 
-  if (c.mem.policy === 'swap' && c.mem.compressionEnabled && dyn.physicalGB > compress + EPS && c.mem.compressionRatio > 1) {
-    const excess = dyn.physicalGB - compress;
+  if (c.mem.policy === 'swap' && c.mem.compressionEnabled && eventualPhysicalGB() > compress + EPS && c.mem.compressionRatio > 1) {
+    const excess = eventualPhysicalGB() - compress;
     const savingPerOriginal = 1 - 1 / c.mem.compressionRatio;
     const originalToCompress = Math.min(state.kvUncompressedGB, excess / Math.max(EPS, savingPerOriginal));
     if (originalToCompress > EPS) {
@@ -223,8 +241,8 @@ function applyPressureColibri(c, state, V, D, P, unitGB, token) {
     }
   }
 
-  if (c.mem.policy === 'swap' && c.mem.swapEnabled && dyn.physicalGB > swap + EPS) {
-    let excess = dyn.physicalGB - swap;
+  if (c.mem.policy === 'swap' && c.mem.swapEnabled && eventualPhysicalGB() > swap + EPS) {
+    let excess = eventualPhysicalGB() - swap;
     let remainingCapacity = Math.max(0, c.mem.swapCapacityGB - state.swapStoredGB);
 
     if (c.expertBacking === 'anonymous' && excess > EPS && remainingCapacity > EPS) {
@@ -275,7 +293,7 @@ function applyPressureColibri(c, state, V, D, P, unitGB, token) {
   if (out.swapOutGB > EPS && state.swapStartToken === null) state.swapStartToken = token;
   state.totalSwapOutGB += out.swapOutGB;
 
-  if (dyn.physicalGB > hard + EPS) {
+  if (eventualPhysicalGB() > hard + EPS) {
     out.state = 'OOM';
     out.oom = true;
     state.oom = true;
@@ -291,9 +309,10 @@ function applyPressureAFM(c, d, state, token) {
   const swap = thresholdGB(c, c.mem.swap);
   const hard = thresholdGB(c, c.mem.hard);
   let dyn = afmDynamic(c, d, state);
+  const eventualPhysicalGB = () => dyn.physicalGB - state.pendingSwapOutGB;
 
   if (c.mem.policy === 'strict') {
-    if (dyn.physicalGB > hard + EPS) {
+    if (eventualPhysicalGB() > hard + EPS) {
       out.state = 'OOM';
       out.oom = true;
       state.oom = true;
@@ -301,8 +320,8 @@ function applyPressureAFM(c, d, state, token) {
     return { ...out, dyn };
   }
 
-  if (c.mem.policy === 'swap' && c.mem.compressionEnabled && dyn.physicalGB > compress + EPS && c.mem.compressionRatio > 1) {
-    const excess = dyn.physicalGB - compress;
+  if (c.mem.policy === 'swap' && c.mem.compressionEnabled && eventualPhysicalGB() > compress + EPS && c.mem.compressionRatio > 1) {
+    const excess = eventualPhysicalGB() - compress;
     const savingPerOriginal = 1 - 1 / c.mem.compressionRatio;
     const original = Math.min(state.kvUncompressedGB, excess / Math.max(EPS, savingPerOriginal));
     if (original > EPS) {
@@ -316,8 +335,8 @@ function applyPressureAFM(c, d, state, token) {
     }
   }
 
-  if (c.mem.policy === 'swap' && c.mem.swapEnabled && dyn.physicalGB > swap + EPS) {
-    let excess = dyn.physicalGB - swap;
+  if (c.mem.policy === 'swap' && c.mem.swapEnabled && eventualPhysicalGB() > swap + EPS) {
+    let excess = eventualPhysicalGB() - swap;
     let remainingCapacity = Math.max(0, c.mem.swapCapacityGB - state.swapStoredGB);
     const raw = Math.min(excess, state.kvUncompressedGB, remainingCapacity);
     if (raw > EPS) {
@@ -342,7 +361,7 @@ function applyPressureAFM(c, d, state, token) {
 
   if (out.swapOutGB > EPS && state.swapStartToken === null) state.swapStartToken = token;
   state.totalSwapOutGB += out.swapOutGB;
-  if (dyn.physicalGB > hard + EPS) {
+  if (eventualPhysicalGB() > hard + EPS) {
     out.state = 'OOM';
     out.oom = true;
     state.oom = true;
@@ -374,6 +393,7 @@ function memorySnapshot(c, state, dyn, pressure, token, extra = {}) {
     swapInGB: extra.swapInGB || 0,
     swapOutGB: pressure.swapOutGB || 0,
     pendingSwapOutGB: state.pendingSwapOutGB,
+    pendingSwapJobs: state.pendingSwapOutJobs.length,
     pageReclaimGB: pressure.pageReclaimGB || 0,
     expertReclaimGB: pressure.expertReclaimGB || 0,
     compressionTrafficGB: (extra.compressionTrafficGB || 0) + (pressure.compressionTrafficGB || 0),

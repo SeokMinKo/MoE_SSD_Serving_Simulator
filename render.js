@@ -87,7 +87,7 @@ function renderColibri(r) {
     ['Device cache / KV / reserve', `${fmt(last.deviceUsedGB, 3)} / ${fmt(r.c.vram, 1)} GB`],
     ['O_DIRECT', r.c.odirect ? 'Enabled' : 'Disabled']
   ]);
-  $('modelStatus').innerHTML = `<b>Estimated · Colibri V1.5 event/resource model</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>Prefill warms the Expert tiers. Demand, causal Prefetch, Swap-in and Swap-out share storage. Concurrency &gt; 1 uses an event queue with shared SSD, PCIe, DRAM and batched compute resources.<br><br><b>Interpretation:</b> Results remain uncalibrated sensitivity estimates, not measured hardware predictions. Cross-request Expert-cache sharing, GPU VRAM bandwidth, and OS page-level behavior remain outside this model.`;
+  $('modelStatus').innerHTML = `<b>Estimated · Colibri V1.5 event/resource model</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>Prefill warms the Expert tiers. Demand, causal Prefetch, Swap-in and Swap-out share storage. Concurrency &gt; 1 uses an event queue with shared SSD, PCIe, DRAM and batched compute resources.<br><br><b>Interpretation:</b> Results remain uncalibrated sensitivity estimates, not measured hardware predictions. Completed requests commit shared Expert-cache residency; overlapping misses remain conservatively independent. GPU VRAM bandwidth and OS page-level behavior remain outside this model.`;
 }
 function renderAFM(r) {
   $('tpotLabel').textContent = 'Effective TPOT';

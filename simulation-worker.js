@@ -1,6 +1,7 @@
 'use strict';
 
 importScripts(
+  'build-info.js',
   'core.js',
   'presets.js',
   'config.js',
