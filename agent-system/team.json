@@ -1,0 +1,376 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "slug": "moe-ssd-serving-simulator",
+    "name": "MoE SSD Serving Simulator",
+    "repoRoot": "/Users/lov2fn/MoE_SSD_Serving_Simulator",
+    "board": {
+      "slug": "moe-ssd-serving-simulator",
+      "name": "MoE SSD Serving Simulator",
+      "description": "Durable model, simulator, browser-reproducibility, and release-gate work."
+    },
+    "requiredDocs": [
+      "AGENTS.md",
+      "README.md",
+      "ROADMAP.md",
+      "docs/v1.6.1-correctness-contract.md"
+    ]
+  },
+  "profiles": [
+    {
+      "name": "moe-spec",
+      "description": "Defines bounded MoE SSD simulator change contracts, units, invariants, trust claims, acceptance criteria, and falsifying RED probes.",
+      "source": "create",
+      "cloneFrom": "default",
+      "soulFile": "agent-system/profiles/moe-spec.md",
+      "terminalCwd": "/Users/lov2fn/MoE_SSD_Serving_Simulator",
+      "toolPolicy": "exact",
+      "toolsets": [
+        "terminal",
+        "file",
+        "skills"
+      ],
+      "skills": [
+        "simulation-model-validation"
+      ],
+      "messagingDisabled": true,
+      "updatePolicy": "reconcile"
+    },
+    {
+      "name": "moe-simulator-builder",
+      "description": "Implements minimal test-first simulator and browser changes while preserving units, causality, capacity, and provenance contracts.",
+      "source": "create",
+      "cloneFrom": "default",
+      "soulFile": "agent-system/profiles/moe-simulator-builder.md",
+      "terminalCwd": "/Users/lov2fn/MoE_SSD_Serving_Simulator",
+      "toolPolicy": "exact",
+      "toolsets": [
+        "terminal",
+        "file",
+        "code_execution",
+        "skills",
+        "browser"
+      ],
+      "skills": [
+        "test-driven-development",
+        "systematic-debugging",
+        "simulation-software-audit"
+      ],
+      "messagingDisabled": true,
+      "updatePolicy": "reconcile"
+    },
+    {
+      "name": "moe-model-validator",
+      "description": "Independently validates units, causality, conservation, metric populations, hand oracles, sensitivity, and external-validity limits.",
+      "source": "create",
+      "cloneFrom": "default",
+      "soulFile": "agent-system/profiles/moe-model-validator.md",
+      "terminalCwd": "/Users/lov2fn/MoE_SSD_Serving_Simulator",
+      "toolPolicy": "exact",
+      "toolsets": [
+        "terminal",
+        "file",
+        "code_execution",
+        "skills",
+        "browser"
+      ],
+      "skills": [
+        "simulation-model-validation",
+        "simulation-software-audit"
+      ],
+      "messagingDisabled": true,
+      "updatePolicy": "reconcile"
+    },
+    {
+      "name": "moe-browser-repro-reviewer",
+      "description": "Independently verifies real-browser behavior, Worker boundaries, accessibility, artifact replay, release identity, and regression evidence.",
+      "source": "create",
+      "cloneFrom": "default",
+      "soulFile": "agent-system/profiles/moe-browser-repro-reviewer.md",
+      "terminalCwd": "/Users/lov2fn/MoE_SSD_Serving_Simulator",
+      "toolPolicy": "exact",
+      "toolsets": [
+        "terminal",
+        "file",
+        "skills",
+        "browser",
+        "computer_use"
+      ],
+      "skills": [
+        "simulation-software-audit",
+        "dogfood"
+      ],
+      "messagingDisabled": true,
+      "updatePolicy": "reconcile"
+    },
+    {
+      "name": "moe-release-gate",
+      "description": "Issues conservative release Go or No-Go decisions from immutable provenance, full gates, independent approvals, rollback, and remote CI evidence.",
+      "source": "create",
+      "cloneFrom": "default",
+      "soulFile": "agent-system/profiles/moe-release-gate.md",
+      "terminalCwd": "/Users/lov2fn/MoE_SSD_Serving_Simulator",
+      "toolPolicy": "exact",
+      "toolsets": [
+        "terminal",
+        "file",
+        "skills",
+        "browser"
+      ],
+      "skills": [
+        "simulation-model-validation",
+        "simulation-software-audit",
+        "github-pr-workflow"
+      ],
+      "messagingDisabled": true,
+      "updatePolicy": "reconcile"
+    }
+  ],
+  "stages": {
+    "spec": {
+      "assignee": "moe-spec",
+      "label": "Scientific change contract",
+      "evidence": [
+        "bounded claim and non-goals",
+        "units and invariants",
+        "Given/When/Then acceptance criteria",
+        "falsifying RED probes"
+      ],
+      "workspace": "board-default",
+      "maxRuntime": "1h",
+      "maxRetries": 2,
+      "remediationOwner": "moe-spec",
+      "terminalStates": {
+        "done": "The change contract is implementation-ready and distinguishes internal correctness from external validity.",
+        "blocked": "A product claim or authority decision changes the valid contract.",
+        "failed": "The proposed contract contradicts the repository trust boundary or lacks a falsifiable acceptance criterion."
+      }
+    },
+    "implement": {
+      "assignee": "moe-simulator-builder",
+      "label": "Test-first simulator implementation",
+      "evidence": [
+        "observed RED",
+        "minimal GREEN change",
+        "targeted and full automated gates",
+        "runtime evidence or explicit limitation",
+        "changed-file inventory"
+      ],
+      "workspace": "board-default",
+      "maxRuntime": "4h",
+      "maxRetries": 2,
+      "remediationOwner": "moe-simulator-builder",
+      "terminalStates": {
+        "done": "Acceptance criteria pass with observed RED and GREEN evidence and no unrelated edits.",
+        "blocked": "An external prerequisite or unresolved contract conflict prevents a safe change.",
+        "failed": "A required invariant, quality gate, or runtime contract remains contradicted."
+      }
+    },
+    "model-validate": {
+      "assignee": "moe-model-validator",
+      "label": "Independent model validation",
+      "evidence": [
+        "independent hand oracle",
+        "unit and conservation invariants",
+        "adversarial and metamorphic probes",
+        "external-calibration limitation",
+        "permitted and prohibited uses"
+      ],
+      "workspace": "board-default",
+      "maxRuntime": "3h",
+      "maxRetries": 1,
+      "remediationOwner": "moe-simulator-builder",
+      "terminalStates": {
+        "done": "Independent evidence supports the scoped model claim without upgrading the Unvalidated Alpha trust boundary.",
+        "blocked": "Required calibration, reference trace, or executable environment is unavailable.",
+        "failed": "A reproducible unit, causality, conservation, population, or claim-boundary violation exists."
+      }
+    },
+    "browser-verify": {
+      "assignee": "moe-browser-repro-reviewer",
+      "label": "Independent browser and reproducibility verification",
+      "evidence": [
+        "fresh npm gates",
+        "real-browser desktop and mobile behavior",
+        "Worker and artifact replay evidence",
+        "accessibility and console evidence",
+        "source and release provenance checks"
+      ],
+      "workspace": "board-default",
+      "maxRuntime": "3h",
+      "maxRetries": 1,
+      "remediationOwner": "moe-simulator-builder",
+      "terminalStates": {
+        "done": "Fresh automated and real-browser evidence passes with zero release-blocking regression.",
+        "blocked": "The browser, runtime, immutable target, or required artifact cannot be verified.",
+        "failed": "A reproducible software, browser, accessibility, replay, or provenance regression exists."
+      }
+    },
+    "release-gate": {
+      "assignee": "moe-release-gate",
+      "label": "Release and provenance gate",
+      "evidence": [
+        "immutable source revision",
+        "full post-change gates",
+        "model and browser independent PASS",
+        "clean release bundle and rollback",
+        "successful remote CI when release is requested"
+      ],
+      "workspace": "board-default",
+      "maxRuntime": "2h",
+      "maxRetries": 1,
+      "remediationOwner": "moe-simulator-builder",
+      "terminalStates": {
+        "done": "All release evidence exists and any production action remains within explicit human approval.",
+        "blocked": "Approval, credentials, remote CI, signing, publication, or external calibration evidence is missing.",
+        "failed": "Provenance, build, installation, rollback, or mandatory release evidence is reproducibly invalid."
+      }
+    }
+  },
+  "workflows": {
+    "model-change": {
+      "description": "Specify, implement, and independently validate a scientific model change before release assessment.",
+      "nodes": [
+        {
+          "id": "model-spec",
+          "stage": "spec",
+          "parents": [],
+          "idempotencyKeyTemplate": "moe-model-{request_digest}-spec"
+        },
+        {
+          "id": "model-implement",
+          "stage": "implement",
+          "parents": [
+            "model-spec"
+          ],
+          "idempotencyKeyTemplate": "moe-model-{request_digest}-implement"
+        },
+        {
+          "id": "model-validate",
+          "stage": "model-validate",
+          "parents": [
+            "model-implement"
+          ],
+          "idempotencyKeyTemplate": "moe-model-{request_digest}-validate"
+        },
+        {
+          "id": "browser-verify",
+          "stage": "browser-verify",
+          "parents": [
+            "model-implement"
+          ],
+          "idempotencyKeyTemplate": "moe-model-{request_digest}-browser"
+        },
+        {
+          "id": "model-release-gate",
+          "stage": "release-gate",
+          "parents": [
+            "model-validate",
+            "browser-verify"
+          ],
+          "idempotencyKeyTemplate": "moe-model-{request_digest}-release"
+        }
+      ]
+    },
+    "software-fix": {
+      "description": "Reproduce and minimally repair a software defect, then independently verify browser and replay behavior.",
+      "nodes": [
+        {
+          "id": "fix-implement",
+          "stage": "implement",
+          "parents": [],
+          "idempotencyKeyTemplate": "moe-fix-{request_digest}-implement"
+        },
+        {
+          "id": "fix-browser-verify",
+          "stage": "browser-verify",
+          "parents": [
+            "fix-implement"
+          ],
+          "idempotencyKeyTemplate": "moe-fix-{request_digest}-browser"
+        }
+      ]
+    },
+    "browser-feature": {
+      "description": "Define a browser feature contract, implement it test-first, and independently verify real behavior.",
+      "nodes": [
+        {
+          "id": "browser-spec",
+          "stage": "spec",
+          "parents": [],
+          "idempotencyKeyTemplate": "moe-browser-{request_digest}-spec"
+        },
+        {
+          "id": "browser-implement",
+          "stage": "implement",
+          "parents": [
+            "browser-spec"
+          ],
+          "idempotencyKeyTemplate": "moe-browser-{request_digest}-implement"
+        },
+        {
+          "id": "browser-feature-verify",
+          "stage": "browser-verify",
+          "parents": [
+            "browser-implement"
+          ],
+          "idempotencyKeyTemplate": "moe-browser-{request_digest}-verify"
+        }
+      ]
+    },
+    "release": {
+      "description": "Independently revalidate model and browser evidence before a conservative release decision.",
+      "nodes": [
+        {
+          "id": "release-model-validate",
+          "stage": "model-validate",
+          "parents": [],
+          "idempotencyKeyTemplate": "moe-release-{request_digest}-model"
+        },
+        {
+          "id": "release-browser-verify",
+          "stage": "browser-verify",
+          "parents": [],
+          "idempotencyKeyTemplate": "moe-release-{request_digest}-browser"
+        },
+        {
+          "id": "release-decision",
+          "stage": "release-gate",
+          "parents": [
+            "release-model-validate",
+            "release-browser-verify"
+          ],
+          "idempotencyKeyTemplate": "moe-release-{request_digest}-gate"
+        }
+      ]
+    }
+  },
+  "security": {
+    "denyAllMessaging": true,
+    "disabledMessagingPlatforms": [
+      "telegram",
+      "discord",
+      "slack",
+      "mattermost",
+      "matrix",
+      "whatsapp",
+      "signal"
+    ],
+    "messagingEnvPrefixes": [
+      "TELEGRAM_",
+      "DISCORD_",
+      "SLACK_",
+      "MATTERMOST_",
+      "MATRIX_",
+      "WHATSAPP_",
+      "SIGNAL_"
+    ],
+    "humanGates": [
+      "production release, tag, or publication",
+      "credential, password, payment, or 2FA entry",
+      "claiming absolute performance prediction",
+      "external calibration acceptance",
+      "destructive history or profile deletion"
+    ]
+  }
+}
