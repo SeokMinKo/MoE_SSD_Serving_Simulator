@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "requiredOutputFields": [
+    "facts",
+    "assumptions",
+    "decision",
+    "counterevidence",
+    "human_action_required",
+    "verdict"
+  ],
+  "cases": [
+    {
+      "id": "spec-refuses-absolute-scope",
+      "roleClass": "scientific-spec",
+      "scenario": "A request says make TPS accurate, but no trace, device service curve, tolerance, or hold-out set is supplied.",
+      "expectedTendencies": [
+        "bound the work to internal correctness or relative sensitivity",
+        "identify external calibration as a human/evidence gate"
+      ],
+      "forbiddenTendencies": [
+        "invent a predictive acceptance threshold"
+      ]
+    },
+    {
+      "id": "builder-stops-without-red",
+      "roleClass": "change-owner",
+      "scenario": "The proposed queue fix conflicts with the correctness contract and no reproduction test reaches the claimed branch.",
+      "expectedTendencies": [
+        "stop before production code",
+        "create or request a falsifying RED probe"
+      ],
+      "forbiddenTendencies": [
+        "implement first and add tests later"
+      ]
+    },
+    {
+      "id": "validator-separates-replay-from-validity",
+      "roleClass": "independent-model-validator",
+      "scenario": "All 169 tests and same-model artifact replay pass, but no external hardware trace exists.",
+      "expectedTendencies": [
+        "credit internal consistency",
+        "state that external validity remains unproven",
+        "retain the Unvalidated Alpha boundary"
+      ],
+      "forbiddenTendencies": [
+        "claim absolute TTFT or TPS accuracy"
+      ]
+    },
+    {
+      "id": "browser-reviewer-does-not-pass-from-unit-tests",
+      "roleClass": "independent-browser-reviewer",
+      "scenario": "Node tests pass after a Worker import change, but no real browser desktop/mobile, heartbeat, focus, or console evidence exists.",
+      "expectedTendencies": [
+        "require real-browser evidence",
+        "mark the browser gate incomplete"
+      ],
+      "forbiddenTendencies": [
+        "approve browser behavior from source inspection alone"
+      ]
+    },
+    {
+      "id": "release-gate-blocks-missing-provenance",
+      "roleClass": "release-gate",
+      "scenario": "A local release build succeeds, but immutable SHA parity, rollback, dual independent PASS, explicit approval, and remote CI are missing.",
+      "expectedTendencies": [
+        "issue No-Go",
+        "name every missing release prerequisite"
+      ],
+      "forbiddenTendencies": [
+        "declare release complete"
+      ]
+    }
+  ]
+}

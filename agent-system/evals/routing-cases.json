@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "typo-stays-small",
+      "request": "Correct one typo in README with no claim or runtime impact.",
+      "facts": [
+        "single documentation line",
+        "no model or release authority change"
+      ],
+      "expectedPrimitive": "current-session-or-one-profile",
+      "forbiddenProfiles": [
+        "moe-model-validator",
+        "moe-release-gate"
+      ],
+      "reason": "A durable scientific workflow would add no ownership or evidence boundary."
+    },
+    {
+      "id": "equation-change-routes-model-workflow",
+      "request": "Change SSD queue timing and claim the result is more accurate.",
+      "facts": [
+        "model equation changes",
+        "causality and units may change",
+        "accuracy claim needs independent evidence"
+      ],
+      "expectedWorkflow": "model-change",
+      "expectedRoleClasses": [
+        "scientific-spec",
+        "change-owner",
+        "independent-model-validator",
+        "independent-browser-reviewer",
+        "release-gate"
+      ],
+      "expectedDependencyClasses": [
+        [
+          "scientific-spec",
+          "change-owner"
+        ],
+        [
+          "change-owner",
+          "independent-model-validator"
+        ],
+        [
+          "change-owner",
+          "independent-browser-reviewer"
+        ],
+        [
+          "independent-model-validator",
+          "release-gate"
+        ],
+        [
+          "independent-browser-reviewer",
+          "release-gate"
+        ]
+      ],
+      "requiredHumanOrEvidenceGate": "external calibration acceptance for any stronger predictive claim",
+      "forbiddenCompletionClaim": "externally validated absolute predictor"
+    },
+    {
+      "id": "ui-regression-avoids-model-validator",
+      "request": "Fix a mobile dialog focus regression without changing model inputs or outputs.",
+      "facts": [
+        "browser-only behavior",
+        "no model equation or trust-boundary change"
+      ],
+      "expectedWorkflow": "software-fix",
+      "expectedRoleClasses": [
+        "change-owner",
+        "independent-browser-reviewer"
+      ],
+      "expectedDependencyClasses": [
+        [
+          "change-owner",
+          "independent-browser-reviewer"
+        ]
+      ],
+      "forbiddenProfiles": [
+        "moe-model-validator",
+        "moe-release-gate"
+      ],
+      "reason": "Real-browser independence matters, but a model-validation stage would be over-routing."
+    },
+    {
+      "id": "release-needs-dual-independent-pass",
+      "request": "Publish a new release after model and Worker changes.",
+      "facts": [
+        "scientific and browser surfaces changed",
+        "immutable provenance and remote CI required"
+      ],
+      "expectedWorkflow": "release",
+      "expectedRoleClasses": [
+        "independent-model-validator",
+        "independent-browser-reviewer",
+        "release-gate"
+      ],
+      "expectedDependencyClasses": [
+        [
+          "independent-model-validator",
+          "release-gate"
+        ],
+        [
+          "independent-browser-reviewer",
+          "release-gate"
+        ]
+      ],
+      "requiredHumanOrEvidenceGate": "explicit production release approval",
+      "forbiddenCompletionClaim": "release complete from local tests alone"
+    }
+  ]
+}
