@@ -5,6 +5,7 @@
     'summary', 'pressureSummary', 'memory', 'comparisonSummary',
     'traceSummary', 'storageTraceSummary', 'sweepResults'
   ]);
+  let copyObserver = null;
 
   function escapeMarkdownCell(value) {
     return String(value ?? '')
@@ -154,11 +155,26 @@
     });
   }
 
-  const api = { escapeMarkdownCell, tableGrid, tableToMarkdown, canvasToBlob, safeFilename, copyText, copyCanvasImage, initializeCopyTools };
+  function observeCopyTargets(MutationObserverClass = root.MutationObserver) {
+    if (copyObserver || !root.document?.documentElement || typeof MutationObserverClass !== 'function') return false;
+    copyObserver = new MutationObserverClass(records => {
+      const hasNewElement = records.some(record => Array.from(record.addedNodes || []).some(node => node?.nodeType === 1));
+      if (hasNewElement) initializeCopyTools();
+    });
+    copyObserver.observe(root.document.documentElement, { childList: true, subtree: true });
+    return true;
+  }
+
+  function startCopyTools() {
+    initializeCopyTools();
+    observeCopyTargets();
+  }
+
+  const api = { escapeMarkdownCell, tableGrid, tableToMarkdown, canvasToBlob, safeFilename, copyText, copyCanvasImage, initializeCopyTools, observeCopyTargets };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.MoeExportUI = api;
   if (root.document?.addEventListener) {
-    if (root.document.readyState === 'loading') root.document.addEventListener('DOMContentLoaded', initializeCopyTools, { once: true });
-    else initializeCopyTools();
+    if (root.document.readyState === 'loading') root.document.addEventListener('DOMContentLoaded', startCopyTools, { once: true });
+    else startCopyTools();
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this);
