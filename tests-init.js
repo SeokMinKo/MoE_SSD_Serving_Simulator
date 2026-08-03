@@ -144,6 +144,7 @@ $('graphTab').onchange = syncGraphView;
 $('storageXAxis').onchange = () => { if (lastResult && !lastResult.error) renderStorageIO(lastResult); };
 $('storageYAxis').onchange = () => { if (lastResult && !lastResult.error) renderStorageIO(lastResult); };
 initializeTheme();
+applySimulationInputLimits();
 initializeModelPresets();
 syncMode(false);
 initializeReproControls();
