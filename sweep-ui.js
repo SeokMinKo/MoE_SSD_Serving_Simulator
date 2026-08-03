@@ -10,7 +10,7 @@ let sweepGeneration = 0;
 let sweepScenarioInFlight = false;
 
 function simulateSweepInWorker(config) {
-  if (typeof Worker === 'undefined') return Promise.reject(new Error('Parameter sweeps require Web Worker support.'));
+  if (typeof Worker === 'undefined') return Promise.reject(new Error('매개변수 스윕에는 Web Worker 지원이 필요합니다.'));
   return new Promise((resolve, reject) => {
     const worker = new Worker('simulation-worker.js');
     const task = { worker, cancel: null };
@@ -27,12 +27,12 @@ function simulateSweepInWorker(config) {
       worker.terminate();
       callback(value);
     };
-    task.cancel = () => finish(reject, new Error('Sweep simulation cancelled.'));
-    timeout = setTimeout(() => finish(reject, new Error('Sweep scenario exceeded the 30-second work budget.')), 30000);
+    task.cancel = () => finish(reject, new Error('스윕 시뮬레이션이 취소되었습니다.'));
+    timeout = setTimeout(() => finish(reject, new Error('스윕 시나리오가 30초 작업 제한을 초과했습니다.')), 30000);
     worker.onmessage = event => event.data?.error
       ? finish(reject, new Error(event.data.error))
       : finish(resolve, event.data);
-    worker.onerror = event => finish(reject, new Error(event.message || 'Sweep simulation worker failed.'));
+    worker.onerror = event => finish(reject, new Error(event.message || '스윕 시뮬레이션 Worker 실행에 실패했습니다.'));
     try {
       worker.postMessage({ config: sweepClone(config) });
     } catch (error) {
@@ -70,21 +70,21 @@ function readCurrentSweepConfig() {
   return $('mode').value === 'afm3' ? readAFM() : readColibri();
 }
 
-function sweepBaselineSummaryHtml(config, source = 'Current form snapshot') {
-  if (!config) return '<b>Baseline unavailable</b>';
+function sweepBaselineSummaryHtml(config, source = '현재 입력값 스냅샷') {
+  if (!config) return '<b>기준값을 사용할 수 없습니다.</b>';
   const fields = [
-    ['Engine', config.mode], ['Architecture', config.arch], ['Host', `${config.host} GB`], ['DRAM BW', `${config.dramBW} GB/s`],
-    ['SSD BW', `${config.ssdBW} GB/s`], ['PCIe BW', config.arch === 'unified' ? 'not used (unified memory)' : `${config.pcieBW} GB/s`],
-    ['Prompt / output', `${config.prompt} / ${config.output} tokens`], ['Concurrency', `${config.conc} sequences`]
+    ['엔진', config.mode], ['메모리 구조', config.arch], ['Host 메모리', `${config.host} GB`], ['DRAM 대역폭', `${config.dramBW} GB/s`],
+    ['SSD 대역폭', `${config.ssdBW} GB/s`], ['PCIe 대역폭', config.arch === 'unified' ? '통합 메모리에서는 사용 안 함' : `${config.pcieBW} GB/s`],
+    ['프롬프트 / 출력', `${config.prompt} / ${config.output} 토큰`], ['동시 시퀀스', `${config.conc}개`]
   ];
-  return `<div class="baselineTitle"><b>Sweep baseline</b><span>${advisorEscape(source)}</span></div><p>This is a snapshot: changing the form after the sweep starts does not change retained scenarios.</p><dl>${fields.map(([label, value]) => `<div><dt>${advisorEscape(label)}</dt><dd>${advisorEscape(String(value))}</dd></div>`).join('')}</dl>`;
+  return `<div class="baselineTitle"><b>스윕 기준값</b><span>${advisorEscape(source)}</span></div><p>스윕 시작 시점의 스냅샷입니다. 실행 후 입력 폼을 바꿔도 이미 생성된 시나리오는 변경되지 않습니다.</p><dl>${fields.map(([label, value]) => `<div><dt>${advisorEscape(label)}</dt><dd>${advisorEscape(String(value))}</dd></div>`).join('')}</dl>`;
 }
 
 function sweepSensitivityInsight(execution) {
   if (!execution?.baselineMetrics || !execution?.results?.length) return '';
   const baseline = execution.baselineMetrics;
   const completed = execution.results.filter(row => row.metrics?.status === 'completed');
-  if (!completed.length) return '<b>No completed counterfactual rows to interpret.</b>';
+  if (!completed.length) return '<b>완료된 비교 시나리오가 없어 해석할 수 없습니다.</b>';
   const metricKeys = ['ttftMeanMs', 'singleTPS', 'aggregateTPS'];
   const relativeChanges = completed.flatMap(row => metricKeys.map(key => {
     const before = Number(baseline[key]), after = Number(row.metrics[key]);
@@ -94,10 +94,46 @@ function sweepSensitivityInsight(execution) {
   const flat = relativeChanges.length && Math.max(...relativeChanges) < 1e-6;
   const paths = [...new Set(completed.flatMap(row => Object.keys(row.changes || {})))];
   if (flat && paths.length === 1 && paths[0] === 'dramBW') {
-    return '<b>DRAM BW: no measurable change.</b> This baseline is not DRAM-bandwidth bottlenecked over the tested range. SSD service, PCIe transfer, or compute can remain the critical path, so faster DRAM does not automatically reduce TTFT or raise TPS. This is a valid saturation result, not by itself a simulator failure.';
+    return '<b>DRAM 대역폭 변화로 측정 가능한 차이가 없습니다.</b> 시험 범위에서 기준 시나리오는 DRAM 대역폭 병목이 아닙니다. SSD 서비스, PCIe 전송 또는 연산이 임계 경로로 남을 수 있으므로 DRAM만 빨라져도 TTFT가 줄거나 TPS가 늘지 않을 수 있습니다. 이는 정상적인 포화 결과이며, 그 자체로 시뮬레이터 오류를 의미하지 않습니다.';
   }
-  if (flat) return `<b>No measurable change in TTFT/TPS.</b> The selected input was not on the active critical path over this range, or another resource remained the bottleneck.`;
-  return `<b>Measured sensitivity detected.</b> Largest retained relative TTFT/TPS change: ${fmt(Math.max(...relativeChanges) * 100, 3)}%. Interpret this as a counterfactual for this baseline, not a universal hardware effect.`;
+  if (flat) return '<b>TTFT/TPS에서 측정 가능한 변화가 없습니다.</b> 선택한 입력이 시험 범위의 활성 임계 경로에 없거나 다른 자원이 계속 병목으로 남았습니다.';
+  return `<b>측정 가능한 민감도가 확인되었습니다.</b> 유지된 시나리오의 최대 상대 TTFT/TPS 변화는 ${fmt(Math.max(...relativeChanges) * 100, 3)}%입니다. 이 값은 현재 기준 시나리오의 비교 결과이며 모든 하드웨어에 일반화할 수 없습니다.`;
+}
+
+function sweepCategoryLabel(category) {
+  return ({
+    Workload: '워크로드',
+    Memory: '메모리',
+    Model: '모델',
+    Compute: '연산',
+    Prefetch: '프리페치',
+    'System / Storage': '시스템 / 스토리지'
+  })[category] || category;
+}
+
+function sweepStatusLabel(status) {
+  return ({
+    ready: '준비됨',
+    running: '실행 중',
+    paused: '일시정지',
+    completed: '완료',
+    cancelled: '취소됨',
+    failed: '실패',
+    oom: '메모리 부족(OOM)',
+    invalid: '잘못된 설정'
+  })[status] || status || '알 수 없음';
+}
+
+function localizeSweepMessage(message) {
+  return String(message || '')
+    .replace(/^Invalid configuration:/, '잘못된 설정:')
+    .replace(/^Simulation failed\.$/, '시뮬레이션에 실패했습니다.')
+    .replace(/^Simulation reached OOM or hard pressure\.$/, '시뮬레이션이 OOM 또는 하드 메모리 압력에 도달했습니다.')
+    .replace(/custom values must all be valid numbers\./, '사용자 지정 값은 모두 유효한 숫자여야 합니다.')
+    .replace(/custom values must be integers\./, '사용자 지정 값은 모두 정수여야 합니다.')
+    .replace(/custom values are outside the valid range\./, '사용자 지정 값이 유효 범위를 벗어났습니다.')
+    .replace(/sweep bounds are outside the valid range\./, '스윕 범위가 유효 범위를 벗어났습니다.')
+    .replace(/sweep bounds must be integers\./, '스윕 범위는 정수여야 합니다.');
 }
 
 function renderSweepBaselineSummary(config = readCurrentSweepConfig(), source) {
@@ -112,7 +148,7 @@ function renderSweepParameterPicker() {
   const categories = [...new Set(currentSweepCatalog.map(item => item.category))];
   const category = $('parameterCategory');
   const previousCategory = category.value || 'all';
-  category.innerHTML = `<option value="all">All categories</option>${categories.map(value => `<option value="${advisorEscape(value)}">${advisorEscape(value)}</option>`).join('')}`;
+  category.innerHTML = `<option value="all">전체 범주</option>${categories.map(value => `<option value="${advisorEscape(value)}">${advisorEscape(sweepCategoryLabel(value))}</option>`).join('')}`;
   category.value = categories.includes(previousCategory) ? previousCategory : 'all';
   const query = ($('parameterSearch').value || '').trim().toLowerCase();
   const visible = currentSweepCatalog.filter(item => {
@@ -122,9 +158,9 @@ function renderSweepParameterPicker() {
   $('parameterChecklist').innerHTML = visible.map(item => {
     const guide = sweepParameterGuide(item, baseline);
     return `<label class="parameterChoice"><input type="checkbox" data-sweep-path="${advisorEscape(item.path)}" ${sweepSelectedPaths.has(item.path) ? 'checked' : ''}><span><b>${advisorEscape(guide.label)}</b> <code>${advisorEscape(item.path)}</code><br><small>${advisorEscape(guide.unit)} · ${advisorEscape(guide.description)}</small><br><small class="parameterRelation">${advisorEscape(guide.relationship)}</small></span></label>`;
-  }).join('') || '<p class="note">No matching parameters.</p>';
-  renderSweepBaselineSummary(baseline, 'Current form snapshot · canonicalized in Worker when Run starts');
-  $('sweepSelectedCount').textContent = `${sweepSelectedPaths.size} selected`;
+  }).join('') || '<p class="note">일치하는 매개변수가 없습니다.</p>';
+  renderSweepBaselineSummary(baseline, '현재 입력값 · 실행 시 Worker에서 정규화');
+  $('sweepSelectedCount').textContent = `${sweepSelectedPaths.size}개 선택`;
   document.querySelectorAll('[data-sweep-path]').forEach(input => input.onchange = () => {
     if (input.checked) sweepSelectedPaths.add(input.dataset.sweepPath); else sweepSelectedPaths.delete(input.dataset.sweepPath);
     renderSweepParameterCards(baseline);
@@ -141,21 +177,21 @@ function renderSweepParameterCards(baseline = readCurrentSweepConfig()) {
     const baselineValue = sweepValueAtPath(baseline, item.path);
     const guide = sweepParameterGuide(item, baseline);
     const baselineDisplay = `${baselineValue} ${guide.unit}`;
-    const guideHeader = `<div class="parameterGuide"><b>${advisorEscape(guide.label)}</b> <code>${advisorEscape(item.path)}</code><br><small>Baseline: ${advisorEscape(baselineDisplay)}</small><p>${advisorEscape(guide.description)}</p><p><b>관계:</b> ${advisorEscape(guide.relationship)}</p><p><b>결과 해석:</b> ${advisorEscape(guide.behavior)}</p></div>`;
+    const guideHeader = `<div class="parameterGuide"><b>${advisorEscape(guide.label)}</b> <code>${advisorEscape(item.path)}</code><br><small>기준값: ${advisorEscape(baselineDisplay)}</small><p>${advisorEscape(guide.description)}</p><p><b>관계:</b> ${advisorEscape(guide.relationship)}</p><p><b>결과 해석:</b> ${advisorEscape(guide.behavior)}</p></div>`;
     const draft = sweepParameterDrafts.get(item.path);
     if (item.type !== 'number') return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}">${guideHeader}${item.values.map(value => `<label><input type="checkbox" data-category-value="${advisorEscape(String(value))}" ${(draft?.selectedValues || [String(baselineValue)]).includes(String(value)) ? 'checked' : ''}>${advisorEscape(String(value))}</label>`).join('')}</div>`;
     const auto = autoSweepValues(item, baselineValue);
     const step = item.integer ? Math.max(1, Math.round(Math.max(1, baselineValue) / 4)) : Number(Math.max(Math.abs(baselineValue) / 4, 0.001).toPrecision(6));
     const chosen = draft || { strategy: 'auto', min: auto[0], max: auto[auto.length - 1], step, custom: auto.join(', ') };
-    const option = value => `<option value="${value}" ${chosen.strategy === value ? 'selected' : ''}>${value === 'custom' ? 'Custom list' : value[0].toUpperCase() + value.slice(1)}</option>`;
-    return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}">${guideHeader}<label>Strategy<select data-sweep-strategy>${['auto', 'linear', 'log', 'custom'].map(option).join('')}</select></label><label>Min (${advisorEscape(guide.unit)})<input data-sweep-min type="number" value="${advisorEscape(String(chosen.min))}" min="${item.min}" max="${item.max}"></label><label>Max (${advisorEscape(guide.unit)})<input data-sweep-max type="number" value="${advisorEscape(String(chosen.max))}" min="${item.min}" max="${item.max}"></label><label>Step / points<input data-sweep-step type="number" value="${advisorEscape(String(chosen.step))}" min="${item.integer ? 1 : Number.EPSILON}"><input data-sweep-custom type="text" value="${advisorEscape(String(chosen.custom))}" aria-label="Custom values for ${advisorEscape(guide.label)} in ${advisorEscape(guide.unit)}"></label></div>`;
-  }).join('') : 'Choose one or more parameters.';
+    const option = value => `<option value="${value}" ${chosen.strategy === value ? 'selected' : ''}>${({ auto: '자동', linear: '선형', log: '로그', custom: '사용자 목록' })[value]}</option>`;
+    return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}">${guideHeader}<label>생성 방식<select data-sweep-strategy>${['auto', 'linear', 'log', 'custom'].map(option).join('')}</select></label><label>최솟값 (${advisorEscape(guide.unit)})<input data-sweep-min type="number" value="${advisorEscape(String(chosen.min))}" min="${item.min}" max="${item.max}"></label><label>최댓값 (${advisorEscape(guide.unit)})<input data-sweep-max type="number" value="${advisorEscape(String(chosen.max))}" min="${item.min}" max="${item.max}"></label><label>간격 / 지점 수<input data-sweep-step type="number" value="${advisorEscape(String(chosen.step))}" min="${item.integer ? 1 : Number.EPSILON}"><input data-sweep-custom type="text" value="${advisorEscape(String(chosen.custom))}" aria-label="${advisorEscape(guide.label)} 사용자 지정 값(${advisorEscape(guide.unit)})"></label></div>`;
+  }).join('') : '하나 이상의 매개변수를 선택하세요.';
 }
 
 function parseSweepCardSelection(descriptor, card, baseline) {
   if (descriptor.type !== 'number') {
     const values = [...card.querySelectorAll('[data-category-value]:checked')].map(input => descriptor.type === 'boolean' ? input.dataset.categoryValue === 'true' : input.dataset.categoryValue);
-    if (!values.length) throw new Error(`${descriptor.path}: select at least one value.`);
+    if (!values.length) throw new Error(`${descriptor.path}: 하나 이상의 값을 선택하세요.`);
     return { path: descriptor.path, values };
   }
   const strategy = card.querySelector('[data-sweep-strategy]').value;
@@ -164,19 +200,19 @@ function parseSweepCardSelection(descriptor, card, baseline) {
   const minInput = card.querySelector('[data-sweep-min]').value.trim();
   const maxInput = card.querySelector('[data-sweep-max]').value.trim();
   const stepInput = card.querySelector('[data-sweep-step]').value.trim();
-  if (!minInput || !maxInput || !stepInput) throw new Error(`${descriptor.path}: min, max, and step/points are required.`);
+  if (!minInput || !maxInput || !stepInput) throw new Error(`${descriptor.path}: 최솟값, 최댓값, 간격/지점 수가 필요합니다.`);
   const min = Number(minInput), max = Number(maxInput), step = Number(stepInput);
   if (strategy === 'log') return { path: descriptor.path, values: linearSweepValues(descriptor, min, max, step, 'log') };
-  if (![min, max, step].every(Number.isFinite) || step <= 0 || min > max || min < descriptor.min || max > descriptor.max) throw new Error(`${descriptor.path}: linear min/max/step is invalid.`);
-  if (descriptor.integer && (![min, max, step].every(Number.isInteger))) throw new Error(`${descriptor.path}: linear min/max/step must be integers.`);
+  if (![min, max, step].every(Number.isFinite) || step <= 0 || min > max || min < descriptor.min || max > descriptor.max) throw new Error(`${descriptor.path}: 선형 최솟값/최댓값/간격이 잘못되었습니다.`);
+  if (descriptor.integer && (![min, max, step].every(Number.isInteger))) throw new Error(`${descriptor.path}: 선형 최솟값/최댓값/간격은 정수여야 합니다.`);
   const values = [];
   for (let value = min; value <= max + EPS && values.length <= SWEEP_LIMIT; value += step) values.push(Number(value.toPrecision(12)));
-  if (!values.length || values.length > SWEEP_LIMIT) throw new Error(`${descriptor.path}: linear range must produce 1–${SWEEP_LIMIT} valid values.`);
+  if (!values.length || values.length > SWEEP_LIMIT) throw new Error(`${descriptor.path}: 선형 범위는 1–${SWEEP_LIMIT}개의 유효한 값을 만들어야 합니다.`);
   return { path: descriptor.path, values: [...new Set(values)] };
 }
 
 function collectSweepSelections(baseline) {
-  if (typeof document?.querySelector !== 'function') throw new Error('Sweep UI is unavailable.');
+  if (typeof document?.querySelector !== 'function') throw new Error('스윕 UI를 사용할 수 없습니다.');
   return currentSweepCatalog.filter(item => sweepSelectedPaths.has(item.path)).map(item => {
     const card = document.querySelector(`[data-sweep-card="${CSS.escape(item.path)}"]`);
     return parseSweepCardSelection(item, card, sweepValueAtPath(baseline, item.path));
@@ -184,27 +220,27 @@ function collectSweepSelections(baseline) {
 }
 
 function updateSweepProjection() {
-  $('sweepSelectedCount').textContent = `${sweepSelectedPaths.size} selected`;
+  $('sweepSelectedCount').textContent = `${sweepSelectedPaths.size}개 선택`;
   if (!sweepSelectedPaths.size) {
-    $('sweepProjectedCount').textContent = '0 projected scenarios';
+    $('sweepProjectedCount').textContent = '예상 시나리오 0개';
     return;
   }
   try {
     const baseline = readCurrentSweepConfig();
     const plan = buildSweepScenarios(baseline, $('sweepMode').value, collectSweepSelections(baseline), SWEEP_LIMIT);
-    $('sweepProjectedCount').textContent = `${plan.total} projected scenarios${plan.omitted ? ` · first ${plan.scenarios.length}, ${plan.omitted} omitted` : ''}`;
+    $('sweepProjectedCount').textContent = `예상 시나리오 ${plan.total}개${plan.omitted ? ` · 앞의 ${plan.scenarios.length}개 실행, ${plan.omitted}개 제외` : ''}`;
   } catch (error) {
-    $('sweepProjectedCount').textContent = `Projection unavailable: ${error.message}`;
+    $('sweepProjectedCount').textContent = `예상 시나리오를 계산할 수 없습니다: ${localizeSweepMessage(error.message)}`;
   }
 }
 
 function sweepResultRows(execution) {
   if (!execution) return [];
-  return [{ index: -1, changes: { Baseline: true }, metrics: execution.baselineMetrics || null }, ...execution.results];
+  return [{ index: -1, changes: { 기준값: true }, metrics: execution.baselineMetrics || null }, ...execution.results];
 }
 
 function sweepChartGroups(execution) {
-  const baselineRow = { index: -1, changes: { Baseline: true }, metrics: execution?.baselineMetrics || null };
+  const baselineRow = { index: -1, changes: { 기준값: true }, metrics: execution?.baselineMetrics || null };
   const selections = Array.isArray(execution?.selections) ? execution.selections : [];
   if (execution?.definition?.mode !== 'oat' || selections.length < 2) return [{ path: selections[0]?.path || null, rows: sweepResultRows(execution) }];
   return selections.map(selection => ({
@@ -227,13 +263,13 @@ function sweepParameterChartData(group, config) {
 
 function renderSweepTable(execution) {
   const rows = sweepResultRows(execution);
-  if (!rows.length || !rows[0].metrics) { $('sweepResults').innerHTML = '<caption>No sweep results.</caption>'; return; }
+  if (!rows.length || !rows[0].metrics) { $('sweepResults').innerHTML = '<caption>스윕 결과가 없습니다.</caption>'; return; }
   const body = rows.map(row => {
     const metrics = row.metrics;
     const values = metrics.status === 'completed' ? [metrics.ttftMeanMs, metrics.ttftP50Ms, metrics.ttftP95Ms, metrics.singleTPS, metrics.aggregateTPS].map(value => fmt(value, 4)) : ['—', '—', '—', '—', '—'];
-    return `<tr><th scope="row">${row.index < 0 ? 'Baseline' : row.index + 1}</th><td>${advisorEscape(Object.entries(row.changes).map(([key, value]) => `${key}=${value}`).join(', '))}</td><td>${advisorEscape(metrics.status)}</td>${values.map(value => `<td>${value}</td>`).join('')}<td>${advisorEscape(metrics.reason || '')}</td></tr>`;
+    return `<tr><th scope="row">${row.index < 0 ? '기준값' : row.index + 1}</th><td>${advisorEscape(Object.entries(row.changes).map(([key, value]) => `${key}=${value}`).join(', '))}</td><td>${advisorEscape(sweepStatusLabel(metrics.status))}</td>${values.map(value => `<td>${value}</td>`).join('')}<td>${advisorEscape(localizeSweepMessage(metrics.reason))}</td></tr>`;
   }).join('');
-  $('sweepResults').innerHTML = `<caption>Raw parameter sweep results</caption><thead><tr><th>Run</th><th>Changes</th><th>Status</th><th>TTFT mean ms</th><th>TTFT p50 ms</th><th>TTFT p95 ms</th><th>Single TPS</th><th>Aggregate TPS</th><th>Reason</th></tr></thead><tbody>${body}</tbody>`;
+  $('sweepResults').innerHTML = `<caption>원시 매개변수 스윕 결과</caption><thead><tr><th>실행</th><th>변경값</th><th>상태</th><th>TTFT 평균(ms)</th><th>TTFT p50(ms)</th><th>TTFT p95(ms)</th><th>단일 시퀀스 TPS</th><th>전체 TPS</th><th>사유</th></tr></thead><tbody>${body}</tbody>`;
 }
 
 function sizeSweepCanvas(canvas, requestedRatio = null) {
@@ -299,20 +335,20 @@ function renderSweepCharts(execution) {
   const catalog = new Map(sweepCatalogForConfig(config).map(item => [item.path, item]));
   target.innerHTML = groups.map((group, index) => {
     const descriptor = catalog.get(group.path);
-    const guide = descriptor ? sweepParameterGuide(descriptor) : { label: group.path || 'Sweep', unit: '' };
+    const guide = descriptor ? sweepParameterGuide(descriptor) : { label: group.path || '스윕', unit: '' };
     const selection = (execution?.selections || []).find(item => item.path === group.path);
     const formatValue = value => `${value}${guide.unit ? ` ${guide.unit}` : ''}`;
     const range = selection?.values?.length ? `${formatValue(selection.values[0])} → ${formatValue(selection.values[selection.values.length - 1])}` : '';
     const suffix = groups.length === 1 ? '' : `-${index}`;
-    return `<section class="sweepChartGroup" data-sweep-chart-path="${advisorEscape(group.path || 'combined')}"><header><h3>${advisorEscape(guide.label)}</h3><span><code>${advisorEscape(group.path || 'combined')}</code>${range ? ` · ${advisorEscape(range)}` : ''} · independent OAT</span></header><div class="sweepChartPair"><section><h4>TTFT mean / p50 / p95</h4><canvas id="sweepTTFTChart${suffix}" width="680" height="250" role="img" aria-label="TTFT sweep chart for ${advisorEscape(guide.label)}"></canvas></section><section><h4>Single-sequence TPS / aggregate TPS</h4><canvas id="sweepTPSChart${suffix}" width="680" height="250" role="img" aria-label="TPS sweep chart for ${advisorEscape(guide.label)}"></canvas></section></div></section>`;
+    return `<section class="sweepChartGroup" data-sweep-chart-path="${advisorEscape(group.path || 'combined')}"><header><h3>${advisorEscape(guide.label)}</h3><span><code>${advisorEscape(group.path || '통합')}</code>${range ? ` · ${advisorEscape(range)}` : ''} · 독립 OAT</span></header><div class="sweepChartPair"><section><h4>TTFT 평균 / p50 / p95</h4><canvas id="sweepTTFTChart${suffix}" width="680" height="250" role="img" aria-label="${advisorEscape(guide.label)} TTFT 스윕 그래프"></canvas></section><section><h4>단일 시퀀스 TPS / 전체 TPS</h4><canvas id="sweepTPSChart${suffix}" width="680" height="250" role="img" aria-label="${advisorEscape(guide.label)} TPS 스윕 그래프"></canvas></section></div></section>`;
   }).join('');
   const palette = chartPalette();
   groups.forEach((group, index) => {
     const suffix = groups.length === 1 ? '' : `-${index}`;
     const chartData = sweepParameterChartData(group, config);
     const xAxis = chartData.xValues ? { values: chartData.xValues, label: chartData.xLabel } : null;
-    drawSweepMetricChart(`sweepTTFTChart${suffix}`, chartData.rows, ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms'], ['#1687b8', palette.green, palette.violet], 'TTFT mean / p50 / p95', 'sweep-ttft', xAxis);
-    drawSweepMetricChart(`sweepTPSChart${suffix}`, chartData.rows, ['singleTPS', 'aggregateTPS'], [palette.yellow, palette.red], 'Single / aggregate TPS', 'sweep-tps', xAxis);
+    drawSweepMetricChart(`sweepTTFTChart${suffix}`, chartData.rows, ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms'], ['#1687b8', palette.green, palette.violet], 'TTFT 평균 / p50 / p95', 'sweep-ttft', xAxis);
+    drawSweepMetricChart(`sweepTPSChart${suffix}`, chartData.rows, ['singleTPS', 'aggregateTPS'], [palette.yellow, palette.red], '단일 시퀀스 / 전체 TPS', 'sweep-tps', xAxis);
   });
 }
 
@@ -320,10 +356,10 @@ function renderSweepResults(execution = activeSweepExecution) {
   renderSweepTable(execution);
   const interpretation = $('sweepInterpretation');
   if (interpretation) {
-    interpretation.innerHTML = execution ? sweepSensitivityInsight(execution) : 'Run a sweep to see whether the selected input is on the active critical path.';
+    interpretation.innerHTML = execution ? sweepSensitivityInsight(execution) : '스윕을 실행하면 선택한 입력이 활성 임계 경로에 있는지 확인할 수 있습니다.';
     interpretation.hidden = false;
   }
-  if (execution?.baselineConfig) renderSweepBaselineSummary(execution.baselineConfig, 'Canonical Worker baseline retained for this sweep');
+  if (execution?.baselineConfig) renderSweepBaselineSummary(execution.baselineConfig, '이 스윕에서 유지한 정규화 Worker 기준값');
   if (typeof renderGuidedSweepSummary === 'function') renderGuidedSweepSummary(execution);
   renderSweepCharts(execution);
   if (!execution) return;
@@ -334,7 +370,7 @@ function renderSweepResults(execution = activeSweepExecution) {
     progress.setAttribute('aria-valuemax', String(total));
     progress.setAttribute('aria-valuenow', String(completed));
   }
-  $('sweepProgressText').textContent = `${execution.status}: ${completed}/${total} retained scenarios${execution.definition.omitted ? ` · ${execution.definition.omitted} omitted by deterministic 50-run cap` : ''}`;
+  $('sweepProgressText').textContent = `${sweepStatusLabel(execution.status)}: 시나리오 ${completed}/${total}개 유지${execution.definition.omitted ? ` · 결정적 50회 제한으로 ${execution.definition.omitted}개 제외` : ''}`;
   $('exportSweepCsv').disabled = !execution.results.length;
   $('runSweep').disabled = ['ready', 'running', 'paused'].includes(execution.status);
   $('pauseSweep').disabled = !['ready', 'running'].includes(execution.status);
@@ -348,7 +384,7 @@ function resetSweepResults() {
   $('sweepProgress').style.width = '0%';
   $('sweepProgressTrack').setAttribute('aria-valuemax', '0');
   $('sweepProgressTrack').setAttribute('aria-valuenow', '0');
-  $('sweepProgressText').textContent = 'No sweep started.';
+  $('sweepProgressText').textContent = '스윕이 시작되지 않았습니다.';
   for (const id of ['pauseSweep', 'resumeSweep', 'cancelSweep', 'exportSweepCsv']) $(id).disabled = true;
 }
 
@@ -371,10 +407,10 @@ function scheduleSweepTick() {
       outcome = await simulateSweepInWorker(scenario.config);
     } catch (error) {
       if (execution !== activeSweepExecution || generation !== sweepGeneration || execution.status === 'cancelled') return;
-      console.error('Sweep scenario failed', { index: scenario.index, message: error.message });
+      console.error('스윕 시나리오 실행 실패', { index: scenario.index, message: error.message });
       execution.status = 'failed';
       renderSweepResults(execution);
-      $('sweepProgressText').textContent = `failed at scenario ${scenario.index + 1}: ${error.message}`;
+      $('sweepProgressText').textContent = `시나리오 ${scenario.index + 1}에서 실패: ${localizeSweepMessage(error.message)}`;
       return;
     } finally {
       sweepScenarioInFlight = false;
@@ -395,7 +431,7 @@ function sweepModeForExecution(guidedContract, requestedMode) {
 async function runSweepFromUI(options = {}) {
   const guidedContract = options?.guidedContract || null;
   if (typeof scenarioImportInProgress !== 'undefined' && scenarioImportInProgress) {
-    $('sweepProgressText').textContent = 'Sweep unavailable while a scenario import is being verified.';
+    $('sweepProgressText').textContent = '시나리오 가져오기를 검증하는 동안에는 스윕을 실행할 수 없습니다.';
     return;
   }
   if (sweepPreparing || ['ready', 'running', 'paused'].includes(activeSweepExecution?.status)) return;
@@ -403,16 +439,16 @@ async function runSweepFromUI(options = {}) {
   try {
     const requestedBaseline = readCurrentSweepConfig();
     const validation = validateSimulationConfig(requestedBaseline);
-    if (!validation.valid) throw new Error(`Baseline configuration invalid: ${formatConfigErrors(validation)}`);
+    if (!validation.valid) throw new Error(`기준 설정이 잘못되었습니다: ${formatConfigErrors(validation)}`);
     resetSweepResults();
     sweepPreparing = true;
     $('runSweep').disabled = true;
     $('cancelSweep').disabled = false;
-    $('sweepProgressText').textContent = 'Preparing canonical baseline in simulation worker…';
+    $('sweepProgressText').textContent = '시뮬레이션 Worker에서 정규화 기준값을 준비하는 중…';
     const baselineRun = await simulateSweepInWorker(requestedBaseline);
     if (generation !== sweepGeneration) return;
     if (guidedContract && baselineRun.metrics?.status !== 'completed') {
-      throw new Error(`Guided baseline must complete before counterfactual analysis (${baselineRun.metrics?.status || 'unknown'}).`);
+      throw new Error(`비교 분석 전에 가이드 기준 실행이 완료되어야 합니다(${sweepStatusLabel(baselineRun.metrics?.status)}).`);
     }
     const baselineConfig = baselineRun.config;
     const selections = guidedContract ? sweepClone(guidedContract.selections) : collectSweepSelections(baselineConfig);
@@ -422,13 +458,13 @@ async function runSweepFromUI(options = {}) {
     activeSweepExecution.baselineMetrics = sweepClone(baselineRun.metrics);
     if (guidedContract) activeSweepExecution.guidedContract = sweepClone(guidedContract);
     $('sweepTruncation').hidden = plan.omitted === 0;
-    $('sweepTruncation').textContent = plan.omitted ? `Requested ${plan.total} combinations. Running deterministic row-major prefix of ${plan.scenarios.length}; ${plan.omitted} omitted.` : '';
+    $('sweepTruncation').textContent = plan.omitted ? `요청 조합 ${plan.total}개 중 결정적 행 우선 순서의 앞 ${plan.scenarios.length}개를 실행하며, ${plan.omitted}개는 제외합니다.` : '';
     renderSweepResults(activeSweepExecution);
     scheduleSweepTick();
   } catch (error) {
     if (generation !== sweepGeneration) return;
-    console.error('Sweep setup failed', { message: error.message });
-    $('sweepProgressText').textContent = `Sweep unavailable: ${error.message}`;
+    console.error('스윕 설정 실패', { message: error.message });
+    $('sweepProgressText').textContent = `스윕을 실행할 수 없습니다: ${localizeSweepMessage(error.message)}`;
   } finally {
     if (generation === sweepGeneration) {
       sweepPreparing = false;
@@ -457,7 +493,7 @@ function initializeSweepLab() {
   const isActive = () => sweepPreparing || ['ready', 'running', 'paused'].includes(activeSweepExecution?.status);
   const requestClose = () => {
     if (isActive()) {
-      $('sweepProgressText').textContent = 'Pause does not end a sweep. Cancel the sweep before closing the lab.';
+      $('sweepProgressText').textContent = '일시정지는 스윕을 끝내지 않습니다. 실험실을 닫기 전에 스윕을 취소하세요.';
       $('cancelSweep').focus();
       return;
     }
@@ -473,7 +509,7 @@ function initializeSweepLab() {
   dialog.addEventListener('cancel', event => {
     if (!isActive()) return;
     event.preventDefault();
-    $('sweepProgressText').textContent = 'Cancel the active sweep before closing the lab.';
+    $('sweepProgressText').textContent = '실험실을 닫기 전에 실행 중인 스윕을 취소하세요.';
     $('cancelSweep').focus();
   });
   dialog.addEventListener('close', () => sweepOpener?.focus());
@@ -503,7 +539,7 @@ function initializeSweepLab() {
     cancelSweepWorker();
     if (activeSweepExecution && ['ready', 'running', 'paused'].includes(activeSweepExecution.status)) cancelSweepExecution(activeSweepExecution);
     renderSweepResults();
-    if (cancelledPreparation) $('sweepProgressText').textContent = 'cancelled: baseline preparation stopped before any scenario was retained';
+    if (cancelledPreparation) $('sweepProgressText').textContent = '취소됨: 시나리오를 유지하기 전에 기준값 준비를 중단했습니다.';
     $('runSweep').disabled = false;
   };
   $('exportSweepCsv').onclick = exportSweepCsv;
