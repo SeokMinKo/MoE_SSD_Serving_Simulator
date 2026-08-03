@@ -157,5 +157,8 @@
   const api = { escapeMarkdownCell, tableGrid, tableToMarkdown, canvasToBlob, safeFilename, copyText, copyCanvasImage, initializeCopyTools };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.MoeExportUI = api;
+  if (root.document?.addEventListener) {
+    if (root.document.readyState === 'loading') root.document.addEventListener('DOMContentLoaded', initializeCopyTools, { once: true });
+    else initializeCopyTools();
+  }
 })(typeof globalThis !== 'undefined' ? globalThis : this);
-
