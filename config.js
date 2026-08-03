@@ -1,3 +1,21 @@
+const SIMULATION_LIMITS = Object.freeze({
+  prompt: Object.freeze({ min: 0, max: 1_000_000, step: 1 }),
+  output: Object.freeze({ min: 1, max: 1024, step: 1 }),
+  swapWriteRatio: Object.freeze({ min: 0.001, max: 1, step: 0.001 })
+});
+
+function applySimulationInputLimits(documentObject = document) {
+  const controls = { prompt: 'prompt', output: 'output', swapWriteRatio: 'swapWriteRatio' };
+  for (const [key, id] of Object.entries(controls)) {
+    const control = documentObject?.getElementById?.(id);
+    if (!control) continue;
+    const limit = SIMULATION_LIMITS[key];
+    control.min = String(limit.min);
+    control.max = String(limit.max);
+    control.step = String(limit.step);
+  }
+}
+
 function intVal(id, fallback) {
   const value = val(id, fallback);
   return Number.isSafeInteger(value) ? value : NaN;
@@ -258,8 +276,8 @@ function validateSimulationConfig(c) {
   if (!c || typeof c !== 'object') return { valid: false, errors: [{ path: 'config', code: 'INVALID_CONFIG', message: 'Configuration must be an object.' }] };
   enumValue('mode', c.mode, ['colibri', 'afm3']);
   enumValue('arch', c.arch, ['unified', 'discrete']);
-  integer('prompt', c.prompt, 0, 1_000_000);
-  integer('output', c.output, 1, 1024);
+  integer('prompt', c.prompt, SIMULATION_LIMITS.prompt.min, SIMULATION_LIMITS.prompt.max);
+  integer('output', c.output, SIMULATION_LIMITS.output.min, SIMULATION_LIMITS.output.max);
   integer('context', c.context, 1, 10_000_000);
   integer('conc', c.conc, 1, 64);
   integer('seed', c.seed, 0, Number.MAX_SAFE_INTEGER);
@@ -286,7 +304,7 @@ function validateSimulationConfig(c) {
     finite('mem.compressionBW', c.mem.compressionBW, 0.001, 100_000);
     boolean('mem.swapEnabled', c.mem.swapEnabled);
     finite('mem.swapCapacityGB', c.mem.swapCapacityGB, 0, 16_384);
-    finite('mem.swapWriteRatio', c.mem.swapWriteRatio, 0.001, 1);
+    finite('mem.swapWriteRatio', c.mem.swapWriteRatio, SIMULATION_LIMITS.swapWriteRatio.min, SIMULATION_LIMITS.swapWriteRatio.max);
     finite('mem.kvTouchFraction', c.mem.kvTouchFraction, 0, 1);
   }
 
