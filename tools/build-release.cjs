@@ -25,6 +25,7 @@ const releaseFiles = Object.freeze([
   'render.js',
   'playback.js',
   'sweep-ui.js',
+  'export-ui.js',
   'tests-init.js',
   'replay-worker.js',
   'simulation-worker.js',
