@@ -98,8 +98,77 @@ test('P1: applying a topology preset changes only mapped routing controls', () =
   assert.equal(kimi.applied, true);
   assert.deepEqual([kimi.layers, kimi.experts, kimi.active], ['92', '896', '16']);
   assert.match(kimi.summary, /Disclosure: official open weights\/config/);
+  assert.match(kimi.summary, /Open weights\/config/);
+  assert.match(kimi.summary, /routing topology.*automatically applied/i);
+  assert.match(kimi.summary, /runtime calibration still requires measured or explicitly assumed inputs/i);
+  assert.doesNotMatch(kimi.summary, /class="bad"/);
   for (const id of protectedIds) assert.equal(elements.get(id).value, before[id], id);
   for (const id of ['layers', 'experts', 'active']) elements.get(id).value = before[id];
+});
+
+test('P1: hardware presets use named product targets and only overwrite sourced fields', () => {
+  const inventory = vm.runInContext(`Object.fromEntries(Object.entries(GUIDED_HW_PRESETS).map(([id, preset]) => [id, {
+    label: preset.label,
+    sourceUrls: preset.sourceUrls || [preset.sourceUrl],
+    values: preset.values,
+    manual: preset.manual
+  }]))`, sandbox);
+  assert.deepEqual(Object.keys(inventory), [
+    'nvidia-dgx-spark-128',
+    'apple-macbook-pro-m5-max-128',
+    'apple-mac-studio-m3-ultra-512',
+    'nvidia-rtx-5090-32',
+    'amd-radeon-pro-w7900-48'
+  ]);
+  assert.ok(Object.values(inventory).every(preset => !/synthetic/i.test(preset.label)));
+  assert.ok(Object.values(inventory).every(preset => preset.sourceUrls.every(url => /^https:\/\//.test(url))));
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory['apple-mac-studio-m3-ultra-512'].sourceUrls)), [
+    'https://www.apple.com/newsroom/2025/03/apple-reveals-m3-ultra-taking-apple-silicon-to-a-new-extreme/',
+    'https://support.apple.com/en-us/122211'
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory['nvidia-dgx-spark-128'].values)), { arch: 'unified', host: 128, dramBW: 273 });
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory['apple-macbook-pro-m5-max-128'].values)), { arch: 'unified', host: 128, dramBW: 614 });
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory['apple-mac-studio-m3-ultra-512'].values)), { arch: 'unified', host: 512, dramBW: 819 });
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory['nvidia-rtx-5090-32'].values)), { arch: 'discrete', vram: 32 });
+  assert.deepEqual(JSON.parse(JSON.stringify(inventory['amd-radeon-pro-w7900-48'].values)), { arch: 'discrete', vram: 48 });
+
+  const state = vm.runInContext(`(() => {
+    $('host').value = '192'; $('dramBW').value = '333'; $('pcieBW').value = '21'; $('ssdBW').value = '7.7'; $('lat').value = '88'; $('qd').value = '11';
+    const applied = applyGuidedHardwarePreset('nvidia-rtx-5090-32');
+    return { applied, arch: $('arch').value, host: $('host').value, vram: $('vram').value, dramBW: $('dramBW').value, pcieBW: $('pcieBW').value, ssdBW: $('ssdBW').value, lat: $('lat').value, qd: $('qd').value, summary: $('hardwarePresetSummary').innerHTML };
+  })()`, sandbox);
+  assert.equal(state.applied, true);
+  assert.deepEqual([state.arch, state.vram], ['discrete', '32']);
+  assert.deepEqual([state.host, state.dramBW, state.pcieBW, state.ssdBW, state.lat, state.qd], ['192', '333', '21', '7.7', '88', '11']);
+  assert.match(state.summary, /NVIDIA GeForce RTX 5090/);
+  assert.match(state.summary, /32 GB VRAM/);
+  assert.match(state.summary, /remain unchanged/i);
+  const mac = vm.runInContext(`(() => ({ applied: applyGuidedHardwarePreset('apple-mac-studio-m3-ultra-512'), summary: $('hardwarePresetSummary').innerHTML }))()`, sandbox);
+  assert.equal(mac.applied, true);
+  assert.match(mac.summary, /512 GB memory source/);
+  assert.match(mac.summary, /819 GB\/s bandwidth source/);
+  assert.match(mac.summary, /apple\.com\/newsroom/);
+  assert.match(mac.summary, /support\.apple\.com/);
+  assert.equal(vm.runInContext("applyGuidedHardwarePreset('__proto__')", sandbox), false);
+  const malicious = vm.runInContext(`(() => {
+    renderGuidedHardwarePresetSummary({ label: '<img src=x onerror=1>', sourced: '<script>1<\\/script>', manual: '<svg onload=1>', sourceUrls: ['javascript:alert(1)'] });
+    return $('hardwarePresetSummary').innerHTML;
+  })()`, sandbox);
+  assert.doesNotMatch(malicious, /<img|<script|<svg|href=/i);
+  assert.match(malicious, /source unavailable/i);
+  const custom = vm.runInContext(`(() => ({ applied: applyGuidedHardwarePreset('custom'), summary: $('hardwarePresetSummary').innerHTML }))()`, sandbox);
+  assert.equal(custom.applied, true);
+  assert.match(custom.summary, /Custom hardware inputs/);
+});
+
+test('P1: hardware preset picker exposes named targets rather than synthetic templates', () => {
+  assert.match(html, /NVIDIA DGX Spark · 128 GB/);
+  assert.match(html, /MacBook Pro · M5 Max · 128 GB/);
+  assert.match(html, /Mac Studio · M3 Ultra · 512 GB/);
+  assert.match(html, /NVIDIA GeForce RTX 5090 · 32 GB/);
+  assert.match(html, /AMD Radeon PRO W7900 · 48 GB/);
+  assert.doesNotMatch(html, /<option[^>]*>Synthetic ·/);
+  assert.match(html, /id="hardwarePresetSummary"[^>]*role="status"/);
 });
 
 test('P1: editing mapped topology controls returns the preset selector to Custom', () => {
@@ -298,6 +367,81 @@ test('P1: sticky action toolbar and Storage I/O workspace expose the approved co
   assert.match(html, /<script src="storage-io\.js"><\/script>[\s\S]*<script src="render\.js"><\/script>/);
 });
 
+test('P1: every canvas graph exposes labeled Cartesian axes and a value at every major tick', () => {
+  assert.equal(vm.runInContext("typeof drawCartesianAxes === 'function' && typeof chartAxisSpec === 'function' && typeof chartSeriesPosition === 'function' && typeof chartUsesAxes === 'function' && typeof drawChartPoint === 'function'", sandbox), true);
+  const labels = vm.runInContext(`(() => {
+    const drawn = [];
+    const context = {
+      fillStyle: '', strokeStyle: '', font: '', textAlign: '', textBaseline: '',
+      beginPath() {}, moveTo() {}, lineTo() {}, stroke() {}, save() {}, restore() {}, translate() {}, rotate() {},
+      fillText(value) { drawn.push(String(value)); }
+    };
+    drawCartesianAxes(context, {
+      left: 56, top: 24, width: 600, height: 160,
+      xTicks: [{ position: 0, label: '0' }, { position: 0.5, label: '5' }, { position: 1, label: '10' }],
+      yTicks: [{ position: 0, label: '100' }, { position: 0.5, label: '50' }, { position: 1, label: '0' }],
+      xLabel: 'Token index', yLabel: 'TPOT (ms)'
+    });
+    return drawn;
+  })()`, sandbox);
+  for (const label of ['0', '5', '10', '100', '50', 'Token index', 'TPOT (ms)']) assert.ok(labels.includes(label), label);
+  const marker = vm.runInContext(`(() => {
+    const calls = [];
+    drawChartPoint({ beginPath() { calls.push('begin'); }, arc(...args) { calls.push(['arc', ...args]); }, fill() { calls.push('fill'); }, fillStyle: '' }, 12, 34, '#123456');
+    return calls;
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(marker)), ['begin', ['arc', 12, 34, 3, 0, Math.PI * 2], 'fill']);
+
+  const specs = vm.runInContext(`({
+    performance: chartAxisSpec('performance'),
+    memory: chartAxisSpec('memory'),
+    storageTime: chartAxisSpec('storage', { xMode: 'completion-time', yMode: 'service-ms' }),
+    storageIO: chartAxisSpec('storage', { xMode: 'cumulative-io', yMode: 'gbps' }),
+    sweepTTFT: chartAxisSpec('sweep-ttft'),
+    sweepTPS: chartAxisSpec('sweep-tps'),
+    overlay: chartAxisSpec('overlay')
+  })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(specs)), {
+    performance: { xLabel: 'Token index', yLabel: 'TPOT (ms)' },
+    memory: { xLabel: 'Token index', yLabel: 'Memory (GB)' },
+    storageTime: { xLabel: 'Completion time (ms)', yLabel: 'Storage service time (ms)' },
+    storageIO: { xLabel: 'Cumulative I/O (GB)', yLabel: 'Effective bandwidth (GB/s)' },
+    sweepTTFT: { xLabel: 'Sweep run (0 = baseline)', yLabel: 'TTFT (ms)' },
+    sweepTPS: { xLabel: 'Sweep run (0 = baseline)', yLabel: 'Throughput (tokens/s)' },
+    overlay: { xLabel: 'Execution index (0 = prefill)', yLabel: 'Normalized value (%)' }
+  });
+  const edgeCases = vm.runInContext(`({
+    onePoint: chartSeriesPosition(0, 1),
+    firstOfTwo: chartSeriesPosition(0, 2),
+    lastOfTwo: chartSeriesPosition(1, 2),
+    tinyLabels: chartLinearTicks(0, EPS, 5, true).map(tick => tick.label),
+    overlayAxes: ['performance', 'storage', 'memory'].map(kind => chartUsesAxes(kind, 'overlay'))
+  })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(edgeCases)), {
+    onePoint: 0.5,
+    firstOfTwo: 0,
+    lastOfTwo: 1,
+    tinyLabels: ['1.0e-12', '7.5e-13', '5.0e-13', '2.5e-13', '0'],
+    overlayAxes: [true, false, false]
+  });
+  const renderSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+  assert.match(renderSource, /storageIOXPositions\(buckets, plotLeft, plotWidth\)/);
+  assert.doesNotMatch(renderSource, /storageIOXPositions\(buckets, plotLeft \+ barWidth \/ 2/);
+  assert.match(renderSource, /if \(!overlay\) x\.fillText\('IFP'/);
+  assert.match(html, /\.graphPanels\.overlay #storageTraceBoundary[^}]*display:none/);
+  for (const functionName of ['drawPerformance', 'renderStorageIO', 'drawMemory', 'drawSweepMetricChart']) {
+    const source = functionName === 'drawSweepMetricChart' ? fs.readFileSync(path.join(root, 'sweep-ui.js'), 'utf8') : fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+    const start = source.indexOf(`function ${functionName}`);
+    const next = source.indexOf('\nfunction ', start + 10);
+    const block = source.slice(start, next < 0 ? undefined : next);
+    assert.match(block, /drawCartesianAxes\(/, functionName);
+    if (functionName !== 'renderStorageIO') {
+      assert.match(block, /chartSeriesPosition\(/, functionName);
+      assert.match(block, /drawChartPoint\(/, functionName);
+    }
+  }
+});
+
 test('P1: Storage I/O renderer exposes read/write data and graph view switching', () => {
   assert.equal(vm.runInContext("typeof renderStorageIO === 'function' && typeof syncGraphView === 'function'", sandbox), true);
   const result = vm.runInContext('simulateColibri(readColibri())', sandbox);
@@ -394,9 +538,9 @@ test('P1: parameter help first pointer click remains open after focus', () => {
 test('P1: OOM sweep metrics render as chart gaps and non-numeric table cells', () => {
   const calls = [];
   const context = {
-    clearRect() {}, fillRect() {}, beginPath() {}, moveTo(...args) { calls.push(['moveTo', ...args]); },
-    lineTo(...args) { calls.push(['lineTo', ...args]); }, stroke() {}, fillText() {},
-    set fillStyle(value) {}, set strokeStyle(value) {}, set lineWidth(value) {}, set font(value) {}
+    clearRect() {}, fillRect() {}, beginPath() {}, save() {}, restore() {}, translate() {}, rotate() {}, moveTo(...args) { calls.push(['moveTo', ...args]); },
+    lineTo(...args) { calls.push(['lineTo', ...args]); }, arc() {}, stroke() {}, fill() {}, fillText() {},
+    set fillStyle(value) {}, set strokeStyle(value) {}, set lineWidth(value) {}, set font(value) {}, set textAlign(value) {}, set textBaseline(value) {}
   };
   elements.set('gapChart', { width: 200, height: 100, getContext: () => context });
   elements.set('sweepResults', { innerHTML: '' });
@@ -406,11 +550,11 @@ test('P1: OOM sweep metrics render as chart gaps and non-numeric table cells', (
       { index: 1, changes: { host: 0.5 }, metrics: { status: 'oom', oom: true, reason: 'OOM', ttftMeanMs: 20, ttftP50Ms: 20, ttftP95Ms: 20, singleTPS: 2, aggregateTPS: 2 } },
       { index: 2, changes: { host: 2 }, metrics: { status: 'completed', oom: false, reason: '', ttftMeanMs: 30, ttftP50Ms: 30, ttftP95Ms: 30, singleTPS: 3, aggregateTPS: 3 } }
     ];
-    drawSweepMetricChart('gapChart', rows, ['ttftMeanMs'], ['#fff'], 'gap');
+    drawSweepMetricChart('gapChart', rows, ['ttftMeanMs'], ['#fff'], 'gap', 'sweep-ttft');
     renderSweepTable({ baselineMetrics: rows[0].metrics, results: rows.slice(1) });
     return $('sweepResults').innerHTML;
   })()`, sandbox);
-  assert.equal(calls.filter(call => call[0] === 'lineTo').length, 5, JSON.stringify(calls));
+  assert.equal(calls.filter(call => call[0] === 'lineTo').length, 10, JSON.stringify(calls));
   assert.match(table, /<td>oom<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td>/);
 });
 
@@ -425,6 +569,42 @@ test('P1: Sweep Lab exposes parameter selection, OAT/Grid execution controls, ch
   assert.match(html, /Estimated sensitivity simulator \/ Unvalidated Alpha/);
   assert.match(html, /<script src="sweep\.js"><\/script>/);
   assert.equal(vm.runInContext("typeof initializeSweepLab === 'function' && typeof renderSweepResults === 'function' && typeof exportSweepCsv === 'function'", sandbox), true);
+});
+
+test('P1: Sweep parameters expose human labels, units, meaning, and coupling guidance', () => {
+  assert.equal(vm.runInContext("typeof sweepParameterGuide === 'function'", sandbox), true);
+  const guides = vm.runInContext(`[...sweepCatalogForConfig({ ...readColibri(), arch: 'discrete', placement: 'manual' }), ...sweepCatalogForConfig(readAFM())].map(item => sweepParameterGuide(item))`, sandbox);
+  for (const guide of guides) {
+    assert.ok(guide.label && guide.unit && guide.description && guide.relationship && guide.behavior, JSON.stringify(guide));
+  }
+  const important = vm.runInContext(`(() => { const config = { ...readColibri(), arch: 'discrete' }; const catalog = sweepCatalogForConfig(config); return { host: sweepParameterGuide(catalog.find(item => item.path === 'host'), config), dram: sweepParameterGuide(catalog.find(item => item.path === 'dramBW'), config), pcie: sweepParameterGuide(catalog.find(item => item.path === 'pcieBW'), config), ssd: sweepParameterGuide(catalog.find(item => item.path === 'ssdBW'), config) }; })()`, sandbox);
+  assert.match(important.host.label, /Host \/ unified memory/);
+  assert.equal(important.host.unit, 'GB');
+  assert.match(important.pcie.description, /host.*GPU/i);
+  assert.match(important.ssd.description, /storage|SSD/i);
+  assert.match(important.dram.behavior, /bottleneck|critical/i);
+});
+
+test('P1: Sweep explains the canonical baseline and no-effect DRAM results', () => {
+  for (const id of ['sweepBaselineSummary', 'sweepInterpretation']) assert.match(html, new RegExp(`id="${id}"`));
+  assert.equal(vm.runInContext("typeof sweepBaselineSummaryHtml === 'function' && typeof sweepSensitivityInsight === 'function'", sandbox), true);
+  const result = vm.runInContext(`(() => {
+    const config = readColibri();
+    const values = [config.dramBW * 0.5, config.dramBW, config.dramBW * 2];
+    const baselineSimulation = runSimulationConfig(config);
+    const execution = {
+      baselineConfig: config,
+      baselineMetrics: summarizeSweepResult(baselineSimulation),
+      selections: [{ path: 'dramBW', values }],
+      results: values.filter(value => value !== config.dramBW).map((value, index) => ({ index, changes: { dramBW: value }, metrics: summarizeSweepResult(runSimulationConfig({ ...config, dramBW: value })) }))
+    };
+    return { baseline: sweepBaselineSummaryHtml(config, 'Current form → canonical Worker baseline'), insight: sweepSensitivityInsight(execution) };
+  })()`, sandbox);
+  assert.match(result.baseline, /Current form/);
+  for (const value of ['Host', 'DRAM BW', 'SSD BW', 'PCIe BW']) assert.match(result.baseline, new RegExp(value));
+  assert.match(result.insight, /DRAM BW/);
+  assert.match(result.insight, /measurable change|측정 가능한 변화/i);
+  assert.match(result.insight, /not.*bottleneck|병목.*아님/i);
 });
 
 test('P1: successful render exposes an equivalent token trace table for non-canvas access', () => {
@@ -499,18 +679,135 @@ test('P1: mobile controls meet 44px targets, avoid sticky overlap, and respect r
   assert.match(html, /\.buttons:has\(#run\)\{position:static/);
 });
 
+test('P1: Light and Dark theme toggle applies, persists, and exposes its next action', () => {
+  assert.match(html, /id="themeToggle"[^>]*aria-pressed="false"/);
+  assert.equal(vm.runInContext("typeof applyTheme === 'function' && typeof initializeTheme === 'function'", sandbox), true);
+  const state = vm.runInContext(`(() => {
+    const attrs = {};
+    const root = { setAttribute(name, value) { attrs[name] = String(value); } };
+    const button = { textContent: '', onclick: null, setAttribute(name, value) { attrs['button:' + name] = String(value); } };
+    const values = new Map([['moe-ssd-theme', 'light']]);
+    const storage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
+    const initial = initializeTheme({ root, button, storage, media: { matches: false }, redraw: false });
+    const beforeToggle = { theme: attrs['data-theme'], text: button.textContent, label: attrs['button:aria-label'], pressed: attrs['button:aria-pressed'], stored: values.get('moe-ssd-theme') };
+    button.onclick();
+    const afterToggle = { theme: attrs['data-theme'], text: button.textContent, label: attrs['button:aria-label'], pressed: attrs['button:aria-pressed'], stored: values.get('moe-ssd-theme') };
+    return { initial, beforeToggle, afterToggle };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    initial: 'light',
+    beforeToggle: { theme: 'light', text: 'Dark', label: 'Switch to dark theme', pressed: 'true', stored: 'light' },
+    afterToggle: { theme: 'dark', text: 'Light', label: 'Switch to light theme', pressed: 'false', stored: 'dark' }
+  });
+  const storageFailures = vm.runInContext(`(() => {
+    const root = { setAttribute() {} };
+    const button = { setAttribute() {}, textContent: '', onclick: null };
+    const read = initializeTheme({ root, button, storage: { getItem() { throw new Error('read denied'); } }, media: { matches: false }, redraw: false });
+    const write = applyTheme('light', { root, button, storage: { setItem() { throw new Error('write denied'); } }, redraw: false });
+    return { read, write };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(storageFailures)), { read: 'dark', write: 'light' });
+  assert.match(html, /:root\[data-theme="light"\]/);
+  assert.match(testsInitFull, /initializeTheme\(\)/);
+  assert.match(html, /:root\[data-theme="light"\][^}]*\.resourceInsight summary/);
+  assert.match(html, /:root\[data-theme="light"\][^}]*\.guidedBottleneck p/);
+  const lightTheme = html.match(/:root\[data-theme="light"\]\{([^}]*)\}/)?.[1] || '';
+  const cssColor = name => lightTheme.match(new RegExp(`${name}:(#[0-9a-fA-F]{6})`))?.[1];
+  const luminance = color => {
+    const channels = color.slice(1).match(/../g).map(value => parseInt(value, 16) / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const contrast = color => (1.05) / (luminance(color) + 0.05);
+  for (const series of ['--chart-cyan', '--chart-green', '--chart-violet', '--chart-red', '--chart-yellow']) assert.ok(contrast(cssColor(series)) >= 3, series);
+  for (const series of ['cyan', 'green', 'violet', 'red']) assert.match(html, new RegExp(`background:var\\(--chart-${series}\\)`));
+  const renderThemeSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+  for (const series of ['cyan', 'green', 'violet', 'red']) assert.match(renderThemeSource, new RegExp(`palette\\.${series}`));
+  for (const variable of ['--b', '--p', '--p2', '--l', '--t', '--m', '--chart-bg', '--chart-grid', '--chart-text', '--chart-cyan', '--chart-green', '--chart-violet', '--chart-red', '--chart-yellow']) assert.match(html, new RegExp(variable.replace('--', '--')));
+});
+
 test('P1: guided workflow exposes three Korean steps, HW preset, Expert mode, and measured analysis landmarks', () => {
   for (const id of ['guidedWorkflow', 'expertModeToggle', 'hardwarePreset', 'guidedAnalysis', 'runGuidedSweep']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   for (const step of ['시나리오 설정', '결과와 병목', '개선 검증']) assert.match(html, new RegExp(step));
   assert.match(html, /aria-current="step"/);
-  assert.match(html, /Synthetic template/);
+  assert.match(html, /HW target preset/);
+  assert.match(uiSource, /official specifications/);
   assert.match(html, /Expert mode/);
 });
 
 test('P1: production guided UI contains no console info debug statements', () => {
   assert.doesNotMatch(uiSource, /console\.info\s*\(/);
+});
+
+test('P1: guided bottleneck sweep spans quarter to four times baseline', () => {
+  assert.equal(vm.runInContext("typeof guidedSweepValues === 'function'", sandbox), true);
+  const values = vm.runInContext(`guidedSweepValues({ path: 'pcieBW', type: 'number', min: 0.001, max: 1e12, integer: false }, 24)`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(values)), [6, 12, 18, 24, 36, 48, 96]);
+});
+
+test('P1: OAT charts separate each swept parameter instead of connecting unrelated rows', () => {
+  assert.equal(vm.runInContext("typeof sweepChartGroups === 'function'", sandbox), true);
+  const groups = JSON.parse(JSON.stringify(vm.runInContext(`sweepChartGroups({
+    definition: { mode: 'oat' },
+    baselineMetrics: { status: 'completed', aggregateTPS: 1 },
+    selections: [{ path: 'pcieBW', values: [12, 24, 48] }, { path: 'ssdBW', values: [4.6, 9.2, 18.4] }],
+    results: [
+      { changes: { pcieBW: 12 }, metrics: { status: 'completed', aggregateTPS: 0.8 } },
+      { changes: { pcieBW: 48 }, metrics: { status: 'completed', aggregateTPS: 1.2 } },
+      { changes: { ssdBW: 4.6 }, metrics: { status: 'completed', aggregateTPS: 0.7 } },
+      { changes: { ssdBW: 18.4 }, metrics: { status: 'completed', aggregateTPS: 1.3 } }
+    ]
+  })`, sandbox)));
+  assert.deepEqual(groups.map(group => group.path), ['pcieBW', 'ssdBW']);
+  assert.deepEqual(groups.map(group => group.rows.length), [3, 3]);
+  for (const group of groups) {
+    assert.equal(group.rows[0].index, -1);
+    assert.ok(group.rows.slice(1).every(row => Object.hasOwn(row.changes, group.path)));
+  }
+});
+
+test('P1: narrow Sweep Lab keeps controls inside the shell and preserves readable canvas text', () => {
+  assert.match(html, /@media\(max-width:600px\)[^{]*\{[^}]*\.sweepParameterCard\{grid-template-columns:1fr/);
+  assert.match(html, /\.sweepHead button\{min-width:44px/);
+  assert.equal(vm.runInContext("typeof sizeSweepCanvas === 'function'", sandbox), true);
+  const sizing = vm.runInContext(`(() => {
+    const transforms = [];
+    const context = { setTransform(...values) { transforms.push(values); } };
+    const canvas = { clientWidth: 255, clientHeight: 250, width: 680, height: 250, getContext() { return context; } };
+    const result = sizeSweepCanvas(canvas, 2);
+    return { width: canvas.width, height: canvas.height, cssWidth: result.width, cssHeight: result.height, transforms };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(sizing)), { width: 510, height: 500, cssWidth: 255, cssHeight: 250, transforms: [[2, 0, 0, 2, 0, 0]] });
+});
+
+test('P1: parameter chart axis uses physical values and units in ascending order', () => {
+  assert.equal(vm.runInContext("typeof sweepParameterChartData === 'function'", sandbox), true);
+  const data = vm.runInContext(`sweepParameterChartData({ path: 'pcieBW', rows: [
+    { index: -1, changes: { Baseline: true }, metrics: { status: 'completed' } },
+    { index: 0, changes: { pcieBW: 6 }, metrics: { status: 'completed' } },
+    { index: 1, changes: { pcieBW: 96 }, metrics: { status: 'completed' } }
+  ] }, { ...readColibri(), arch: 'discrete', pcieBW: 24 })`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify({ values: data.xValues, label: data.xLabel })), { values: [6, 24, 96], label: 'PCIe host ↔ GPU bandwidth (GB/s)' });
+});
+
+test('P1: multi-parameter OAT renders one chart pair per parameter', () => {
+  assert.match(html, /id="sweepCharts"/);
+  assert.equal(vm.runInContext("typeof renderSweepCharts === 'function'", sandbox), true);
+  const output = vm.runInContext(`(() => {
+    renderSweepCharts({
+      definition: { mode: 'oat' },
+      baselineConfig: { ...readColibri(), arch: 'discrete' },
+      baselineMetrics: { status: 'completed', ttftMeanMs: 10, ttftP50Ms: 10, ttftP95Ms: 10, singleTPS: 1, aggregateTPS: 1 },
+      selections: [{ path: 'pcieBW', values: [12, 24, 48] }, { path: 'ssdBW', values: [4.6, 9.2, 18.4] }],
+      results: []
+    });
+    return $('sweepCharts').innerHTML;
+  })()`, sandbox);
+  assert.match(output, /data-sweep-chart-path="pcieBW"/);
+  assert.match(output, /data-sweep-chart-path="ssdBW"/);
+  assert.equal((output.match(/TTFT sweep chart/g) || []).length, 2);
+  assert.equal((output.match(/TPS sweep chart/g) || []).length, 2);
 });
 
 test('P1: guided bottleneck analysis deduplicates resources and chooses at most two sweepable parameters', () => {
@@ -527,7 +824,7 @@ test('P1: guided bottleneck analysis deduplicates resources and chooses at most 
   assert.equal(result.selections.length, result.ranked.length);
   for (const selection of result.selections) {
     assert.ok(result.catalog.includes(selection.path), selection.path);
-    assert.ok(selection.values.length >= 2 && selection.values.length <= 5, JSON.stringify(selection));
+    assert.ok(selection.values.length >= 2 && selection.values.length <= 7, JSON.stringify(selection));
     assert.equal(new Set(selection.values).size, selection.values.length);
   }
 });
@@ -642,28 +939,27 @@ test('P1: guided sweep summary is invalidated when the active scenario no longer
   assert.deepEqual(JSON.parse(JSON.stringify(matches)), { same: true, changed: false, missing: false });
 });
 
-test('P1: synthetic HW preset changes only hardware controls and preserves workload and model inputs', () => {
+test('P1: component GPU target changes only sourced fields and preserves workload, model, host, and storage inputs', () => {
   assert.equal(vm.runInContext("typeof applyGuidedHardwarePreset === 'function'", sandbox), true);
   const result = vm.runInContext(`(() => {
-    const protectedIds = ['prompt', 'output', 'context', 'conc', 'layers', 'experts', 'active', 'attn'];
+    const protectedIds = ['prompt', 'output', 'context', 'conc', 'layers', 'experts', 'active', 'attn', 'host', 'dramBW', 'pcieBW', 'ssdBW', 'lat', 'qd'];
+    $('arch').value = 'unified'; $('vram').value = '8'; $('host').value = '192'; $('dramBW').value = '333'; $('pcieBW').value = '21'; $('ssdBW').value = '7.7'; $('lat').value = '88'; $('qd').value = '11';
     const before = Object.fromEntries(protectedIds.map(id => [id, $(id).value]));
-    const applied = applyGuidedHardwarePreset('synthetic-discrete-large');
-    const hardware = Object.fromEntries(['arch', 'host', 'vram', 'dramBW', 'pcieBW', 'ssdBW', 'lat', 'qd'].map(id => [id, $(id).value]));
+    const applied = applyGuidedHardwarePreset('nvidia-rtx-5090-32');
     const preserved = protectedIds.every(id => $(id).value === before[id]);
-    return { applied, hardware, preserved };
+    return { applied, arch: $('arch').value, vram: $('vram').value, preserved };
   })()`, sandbox);
-  assert.equal(result.applied, true);
-  assert.equal(result.preserved, true);
-  assert.deepEqual(JSON.parse(JSON.stringify(result.hardware)), { arch: 'discrete', host: '256', vram: '24', dramBW: '350', pcieBW: '32', ssdBW: '14', lat: '90', qd: '16' });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { applied: true, arch: 'discrete', vram: '32', preserved: true });
 });
 
-test('P1: unified HW preset preserves dormant discrete controls', () => {
+test('P1: unified product target preserves unsourced storage and dormant discrete controls', () => {
   const result = vm.runInContext(`(() => {
+    $('host').value = '192'; $('dramBW').value = '333'; $('ssdBW').value = '7.7'; $('lat').value = '88';
     $('vram').value = '24'; $('pcieBW').value = '32'; $('qd').value = '16';
-    const applied = applyGuidedHardwarePreset('synthetic-unified');
+    const applied = applyGuidedHardwarePreset('nvidia-dgx-spark-128');
     return { applied, arch: $('arch').value, host: $('host').value, dramBW: $('dramBW').value, ssdBW: $('ssdBW').value, lat: $('lat').value, vram: $('vram').value, pcieBW: $('pcieBW').value, qd: $('qd').value };
   })()`, sandbox);
-  assert.deepEqual(JSON.parse(JSON.stringify(result)), { applied: true, arch: 'unified', host: '128', dramBW: '273', ssdBW: '9.2', lat: '120', vram: '24', pcieBW: '32', qd: '16' });
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), { applied: true, arch: 'unified', host: '128', dramBW: '273', ssdBW: '7.7', lat: '88', vram: '24', pcieBW: '32', qd: '16' });
 });
 
 test('P2: guided navigation respects reduced-motion preference', () => {

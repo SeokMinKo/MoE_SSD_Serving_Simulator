@@ -70,6 +70,41 @@ function readCurrentSweepConfig() {
   return $('mode').value === 'afm3' ? readAFM() : readColibri();
 }
 
+function sweepBaselineSummaryHtml(config, source = 'Current form snapshot') {
+  if (!config) return '<b>Baseline unavailable</b>';
+  const fields = [
+    ['Engine', config.mode], ['Architecture', config.arch], ['Host', `${config.host} GB`], ['DRAM BW', `${config.dramBW} GB/s`],
+    ['SSD BW', `${config.ssdBW} GB/s`], ['PCIe BW', config.arch === 'unified' ? 'not used (unified memory)' : `${config.pcieBW} GB/s`],
+    ['Prompt / output', `${config.prompt} / ${config.output} tokens`], ['Concurrency', `${config.conc} sequences`]
+  ];
+  return `<div class="baselineTitle"><b>Sweep baseline</b><span>${advisorEscape(source)}</span></div><p>This is a snapshot: changing the form after the sweep starts does not change retained scenarios.</p><dl>${fields.map(([label, value]) => `<div><dt>${advisorEscape(label)}</dt><dd>${advisorEscape(String(value))}</dd></div>`).join('')}</dl>`;
+}
+
+function sweepSensitivityInsight(execution) {
+  if (!execution?.baselineMetrics || !execution?.results?.length) return '';
+  const baseline = execution.baselineMetrics;
+  const completed = execution.results.filter(row => row.metrics?.status === 'completed');
+  if (!completed.length) return '<b>No completed counterfactual rows to interpret.</b>';
+  const metricKeys = ['ttftMeanMs', 'singleTPS', 'aggregateTPS'];
+  const relativeChanges = completed.flatMap(row => metricKeys.map(key => {
+    const before = Number(baseline[key]), after = Number(row.metrics[key]);
+    if (!Number.isFinite(before) || !Number.isFinite(after)) return null;
+    return Math.abs(after - before) / Math.max(1e-12, Math.abs(before));
+  })).filter(Number.isFinite);
+  const flat = relativeChanges.length && Math.max(...relativeChanges) < 1e-6;
+  const paths = [...new Set(completed.flatMap(row => Object.keys(row.changes || {})))];
+  if (flat && paths.length === 1 && paths[0] === 'dramBW') {
+    return '<b>DRAM BW: no measurable change.</b> This baseline is not DRAM-bandwidth bottlenecked over the tested range. SSD service, PCIe transfer, or compute can remain the critical path, so faster DRAM does not automatically reduce TTFT or raise TPS. This is a valid saturation result, not by itself a simulator failure.';
+  }
+  if (flat) return `<b>No measurable change in TTFT/TPS.</b> The selected input was not on the active critical path over this range, or another resource remained the bottleneck.`;
+  return `<b>Measured sensitivity detected.</b> Largest retained relative TTFT/TPS change: ${fmt(Math.max(...relativeChanges) * 100, 3)}%. Interpret this as a counterfactual for this baseline, not a universal hardware effect.`;
+}
+
+function renderSweepBaselineSummary(config = readCurrentSweepConfig(), source) {
+  const target = $('sweepBaselineSummary');
+  if (target) target.innerHTML = sweepBaselineSummaryHtml(config, source);
+}
+
 function renderSweepParameterPicker() {
   if (typeof document?.createElement !== 'function') return;
   const baseline = readCurrentSweepConfig();
@@ -80,8 +115,15 @@ function renderSweepParameterPicker() {
   category.innerHTML = `<option value="all">All categories</option>${categories.map(value => `<option value="${advisorEscape(value)}">${advisorEscape(value)}</option>`).join('')}`;
   category.value = categories.includes(previousCategory) ? previousCategory : 'all';
   const query = ($('parameterSearch').value || '').trim().toLowerCase();
-  const visible = currentSweepCatalog.filter(item => (category.value === 'all' || item.category === category.value) && (!query || `${item.path} ${item.category}`.toLowerCase().includes(query)));
-  $('parameterChecklist').innerHTML = visible.map(item => `<label class="parameterChoice"><input type="checkbox" data-sweep-path="${advisorEscape(item.path)}" ${sweepSelectedPaths.has(item.path) ? 'checked' : ''}><span><b>${advisorEscape(item.path)}</b><br><small>${advisorEscape(item.category)} · ${advisorEscape(item.type)}</small></span></label>`).join('') || '<p class="note">No matching parameters.</p>';
+  const visible = currentSweepCatalog.filter(item => {
+    const guide = sweepParameterGuide(item, baseline);
+    return (category.value === 'all' || item.category === category.value) && (!query || `${item.path} ${guide.label} ${guide.unit} ${guide.description} ${item.category}`.toLowerCase().includes(query));
+  });
+  $('parameterChecklist').innerHTML = visible.map(item => {
+    const guide = sweepParameterGuide(item, baseline);
+    return `<label class="parameterChoice"><input type="checkbox" data-sweep-path="${advisorEscape(item.path)}" ${sweepSelectedPaths.has(item.path) ? 'checked' : ''}><span><b>${advisorEscape(guide.label)}</b> <code>${advisorEscape(item.path)}</code><br><small>${advisorEscape(guide.unit)} · ${advisorEscape(guide.description)}</small><br><small class="parameterRelation">${advisorEscape(guide.relationship)}</small></span></label>`;
+  }).join('') || '<p class="note">No matching parameters.</p>';
+  renderSweepBaselineSummary(baseline, 'Current form snapshot · canonicalized in Worker when Run starts');
   $('sweepSelectedCount').textContent = `${sweepSelectedPaths.size} selected`;
   document.querySelectorAll('[data-sweep-path]').forEach(input => input.onchange = () => {
     if (input.checked) sweepSelectedPaths.add(input.dataset.sweepPath); else sweepSelectedPaths.delete(input.dataset.sweepPath);
@@ -97,13 +139,16 @@ function renderSweepParameterCards(baseline = readCurrentSweepConfig()) {
   const selected = currentSweepCatalog.filter(item => sweepSelectedPaths.has(item.path));
   $('sweepParameters').innerHTML = selected.length ? selected.map(item => {
     const baselineValue = sweepValueAtPath(baseline, item.path);
+    const guide = sweepParameterGuide(item, baseline);
+    const baselineDisplay = `${baselineValue} ${guide.unit}`;
+    const guideHeader = `<div class="parameterGuide"><b>${advisorEscape(guide.label)}</b> <code>${advisorEscape(item.path)}</code><br><small>Baseline: ${advisorEscape(baselineDisplay)}</small><p>${advisorEscape(guide.description)}</p><p><b>관계:</b> ${advisorEscape(guide.relationship)}</p><p><b>결과 해석:</b> ${advisorEscape(guide.behavior)}</p></div>`;
     const draft = sweepParameterDrafts.get(item.path);
-    if (item.type !== 'number') return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}"><div><b>${advisorEscape(item.path)}</b><br><small>Baseline: ${advisorEscape(String(baselineValue))}</small></div>${item.values.map(value => `<label><input type="checkbox" data-category-value="${advisorEscape(String(value))}" ${(draft?.selectedValues || [String(baselineValue)]).includes(String(value)) ? 'checked' : ''}>${advisorEscape(String(value))}</label>`).join('')}</div>`;
+    if (item.type !== 'number') return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}">${guideHeader}${item.values.map(value => `<label><input type="checkbox" data-category-value="${advisorEscape(String(value))}" ${(draft?.selectedValues || [String(baselineValue)]).includes(String(value)) ? 'checked' : ''}>${advisorEscape(String(value))}</label>`).join('')}</div>`;
     const auto = autoSweepValues(item, baselineValue);
     const step = item.integer ? Math.max(1, Math.round(Math.max(1, baselineValue) / 4)) : Number(Math.max(Math.abs(baselineValue) / 4, 0.001).toPrecision(6));
     const chosen = draft || { strategy: 'auto', min: auto[0], max: auto[auto.length - 1], step, custom: auto.join(', ') };
     const option = value => `<option value="${value}" ${chosen.strategy === value ? 'selected' : ''}>${value === 'custom' ? 'Custom list' : value[0].toUpperCase() + value.slice(1)}</option>`;
-    return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}"><div><b>${advisorEscape(item.path)}</b><br><small>Baseline: ${advisorEscape(String(baselineValue))}<br>Valid: ${item.min}…${item.max}</small></div><label>Strategy<select data-sweep-strategy>${['auto', 'linear', 'log', 'custom'].map(option).join('')}</select></label><label>Min<input data-sweep-min type="number" value="${advisorEscape(String(chosen.min))}" min="${item.min}" max="${item.max}"></label><label>Max<input data-sweep-max type="number" value="${advisorEscape(String(chosen.max))}" min="${item.min}" max="${item.max}"></label><label>Step / points<input data-sweep-step type="number" value="${advisorEscape(String(chosen.step))}" min="${item.integer ? 1 : Number.EPSILON}"><input data-sweep-custom type="text" value="${advisorEscape(String(chosen.custom))}" aria-label="Custom values for ${advisorEscape(item.path)}"></label></div>`;
+    return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}">${guideHeader}<label>Strategy<select data-sweep-strategy>${['auto', 'linear', 'log', 'custom'].map(option).join('')}</select></label><label>Min (${advisorEscape(guide.unit)})<input data-sweep-min type="number" value="${advisorEscape(String(chosen.min))}" min="${item.min}" max="${item.max}"></label><label>Max (${advisorEscape(guide.unit)})<input data-sweep-max type="number" value="${advisorEscape(String(chosen.max))}" min="${item.min}" max="${item.max}"></label><label>Step / points<input data-sweep-step type="number" value="${advisorEscape(String(chosen.step))}" min="${item.integer ? 1 : Number.EPSILON}"><input data-sweep-custom type="text" value="${advisorEscape(String(chosen.custom))}" aria-label="Custom values for ${advisorEscape(guide.label)} in ${advisorEscape(guide.unit)}"></label></div>`;
   }).join('') : 'Choose one or more parameters.';
 }
 
@@ -158,6 +203,28 @@ function sweepResultRows(execution) {
   return [{ index: -1, changes: { Baseline: true }, metrics: execution.baselineMetrics || null }, ...execution.results];
 }
 
+function sweepChartGroups(execution) {
+  const baselineRow = { index: -1, changes: { Baseline: true }, metrics: execution?.baselineMetrics || null };
+  const selections = Array.isArray(execution?.selections) ? execution.selections : [];
+  if (execution?.definition?.mode !== 'oat' || selections.length < 2) return [{ path: selections[0]?.path || null, rows: sweepResultRows(execution) }];
+  return selections.map(selection => ({
+    path: selection.path,
+    rows: [baselineRow, ...(execution.results || []).filter(row => Object.hasOwn(row?.changes || {}, selection.path))]
+  }));
+}
+
+function sweepParameterChartData(group, config) {
+  if (!group?.path) return { rows: group?.rows || [], xValues: null, xLabel: null };
+  const descriptor = sweepCatalogForConfig(config).find(item => item.path === group.path);
+  const guide = descriptor ? sweepParameterGuide(descriptor) : { label: group.path, unit: '' };
+  const rows = (group.rows || []).map(row => ({ row, x: row.index < 0 ? sweepValueAtPath(config, group.path) : row.changes?.[group.path] })).filter(item => Number.isFinite(item.x)).sort((a, b) => a.x - b.x);
+  return {
+    rows: rows.map(item => item.row),
+    xValues: rows.map(item => item.x),
+    xLabel: `${guide.label}${guide.unit ? ` (${guide.unit})` : ''}`
+  };
+}
+
 function renderSweepTable(execution) {
   const rows = sweepResultRows(execution);
   if (!rows.length || !rows[0].metrics) { $('sweepResults').innerHTML = '<caption>No sweep results.</caption>'; return; }
@@ -169,32 +236,96 @@ function renderSweepTable(execution) {
   $('sweepResults').innerHTML = `<caption>Raw parameter sweep results</caption><thead><tr><th>Run</th><th>Changes</th><th>Status</th><th>TTFT mean ms</th><th>TTFT p50 ms</th><th>TTFT p95 ms</th><th>Single TPS</th><th>Aggregate TPS</th><th>Reason</th></tr></thead><tbody>${body}</tbody>`;
 }
 
-function drawSweepMetricChart(canvasId, rows, keys, colors, title) {
+function sizeSweepCanvas(canvas, requestedRatio = null) {
+  const ratio = Number.isFinite(requestedRatio) && requestedRatio > 0 ? requestedRatio : Math.max(1, Number(globalThis.devicePixelRatio) || 1);
+  const width = Math.max(220, Math.round(canvas.clientWidth || canvas.width || 680));
+  const height = Math.max(220, Math.round(canvas.clientHeight || 250));
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const context = canvas.getContext('2d');
+  if (typeof context?.setTransform === 'function') context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return { context, width, height };
+}
+
+function drawSweepMetricChart(canvasId, rows, keys, colors, title, axisKind, xAxis = null) {
   const canvas = $(canvasId);
   if (!canvas || typeof canvas.getContext !== 'function') return;
-  const context = canvas.getContext('2d'), width = canvas.width, height = canvas.height;
-  context.clearRect(0, 0, width, height); context.fillStyle = '#071525'; context.fillRect(0, 0, width, height);
+  const sized = sizeSweepCanvas(canvas);
+  const context = sized.context, width = sized.width, height = sized.height;
+  const palette = chartPalette();
+  context.clearRect(0, 0, width, height); context.fillStyle = palette.background; context.fillRect(0, 0, width, height);
   const max = Math.max(EPS, ...rows.flatMap(row => keys.map(key => row.metrics?.status === 'completed' && Number.isFinite(row.metrics?.[key]) ? row.metrics[key] : 0)));
-  const left = 44, top = 28, plotWidth = width - 62, plotHeight = height - 54;
-  context.strokeStyle = '#29445f'; for (let line = 0; line < 5; line++) { const y = top + line * plotHeight / 4; context.beginPath(); context.moveTo(left, y); context.lineTo(left + plotWidth, y); context.stroke(); }
+  const left = 68, top = 26, plotWidth = width - 88, plotHeight = height - 82;
+  const xValues = Array.isArray(xAxis?.values) && xAxis.values.length === rows.length ? xAxis.values : null;
+  const xMin = xValues ? Math.min(...xValues) : 0;
+  const xMax = xValues ? Math.max(...xValues) : Math.max(0, rows.length - 1);
+  const xPosition = index => xValues && xMax > xMin ? (xValues[index] - xMin) / (xMax - xMin) : chartSeriesPosition(index, rows.length);
+  const xTicks = xValues
+    ? [...new Set(xValues)].map(value => ({ position: xMax > xMin ? (value - xMin) / (xMax - xMin) : 0.5, label: chartTickLabel(value) }))
+    : chartLinearTicks(0, Math.max(0, rows.length - 1));
+  drawCartesianAxes(context, {
+    left, top, width: plotWidth, height: plotHeight,
+    xTicks,
+    yTicks: chartLinearTicks(0, max, 5, true),
+    ...chartAxisSpec(axisKind),
+    ...(xAxis?.label ? { xLabel: xAxis.label } : {})
+  });
   keys.forEach((key, seriesIndex) => {
-    context.strokeStyle = colors[seriesIndex]; context.lineWidth = 2; context.beginPath(); let drawing = false;
+    context.strokeStyle = colors[seriesIndex]; context.lineWidth = 2;
+    let drawing = false, segmentPoints = 0, lastPoint = null;
+    const finishSegment = () => {
+      if (!drawing) return;
+      context.stroke();
+      if (segmentPoints === 1) drawChartPoint(context, lastPoint.x, lastPoint.y, colors[seriesIndex]);
+      drawing = false; segmentPoints = 0; lastPoint = null;
+    };
     rows.forEach((row, index) => {
       const value = row.metrics?.[key];
-      if (!Number.isFinite(value) || row.metrics.status !== 'completed') { drawing = false; return; }
-      const x = left + plotWidth * index / Math.max(1, rows.length - 1), y = top + plotHeight * (1 - value / max);
-      if (!drawing) context.moveTo(x, y); else context.lineTo(x, y); drawing = true;
-    }); context.stroke();
+      if (!Number.isFinite(value) || row.metrics.status !== 'completed') { finishSegment(); return; }
+      const x = left + plotWidth * xPosition(index), y = top + plotHeight * (1 - value / max);
+      if (!drawing) { context.beginPath(); context.moveTo(x, y); drawing = true; } else context.lineTo(x, y);
+      segmentPoints++; lastPoint = { x, y };
+    });
+    finishSegment();
   });
-  context.fillStyle = '#9db0c8'; context.font = '11px sans-serif'; context.fillText(title, 8, 15);
+  context.fillStyle = palette.text; context.font = '11px sans-serif'; context.textAlign = 'left'; context.textBaseline = 'alphabetic'; context.fillText(title, 8, 15);
+}
+
+function renderSweepCharts(execution) {
+  const target = $('sweepCharts');
+  if (!target) return;
+  const groups = sweepChartGroups(execution);
+  const config = execution?.baselineConfig || readCurrentSweepConfig();
+  const catalog = new Map(sweepCatalogForConfig(config).map(item => [item.path, item]));
+  target.innerHTML = groups.map((group, index) => {
+    const descriptor = catalog.get(group.path);
+    const guide = descriptor ? sweepParameterGuide(descriptor) : { label: group.path || 'Sweep', unit: '' };
+    const selection = (execution?.selections || []).find(item => item.path === group.path);
+    const formatValue = value => `${value}${guide.unit ? ` ${guide.unit}` : ''}`;
+    const range = selection?.values?.length ? `${formatValue(selection.values[0])} → ${formatValue(selection.values[selection.values.length - 1])}` : '';
+    const suffix = groups.length === 1 ? '' : `-${index}`;
+    return `<section class="sweepChartGroup" data-sweep-chart-path="${advisorEscape(group.path || 'combined')}"><header><h3>${advisorEscape(guide.label)}</h3><span><code>${advisorEscape(group.path || 'combined')}</code>${range ? ` · ${advisorEscape(range)}` : ''} · independent OAT</span></header><div class="sweepChartPair"><section><h4>TTFT mean / p50 / p95</h4><canvas id="sweepTTFTChart${suffix}" width="680" height="250" role="img" aria-label="TTFT sweep chart for ${advisorEscape(guide.label)}"></canvas></section><section><h4>Single-sequence TPS / aggregate TPS</h4><canvas id="sweepTPSChart${suffix}" width="680" height="250" role="img" aria-label="TPS sweep chart for ${advisorEscape(guide.label)}"></canvas></section></div></section>`;
+  }).join('');
+  const palette = chartPalette();
+  groups.forEach((group, index) => {
+    const suffix = groups.length === 1 ? '' : `-${index}`;
+    const chartData = sweepParameterChartData(group, config);
+    const xAxis = chartData.xValues ? { values: chartData.xValues, label: chartData.xLabel } : null;
+    drawSweepMetricChart(`sweepTTFTChart${suffix}`, chartData.rows, ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms'], ['#1687b8', palette.green, palette.violet], 'TTFT mean / p50 / p95', 'sweep-ttft', xAxis);
+    drawSweepMetricChart(`sweepTPSChart${suffix}`, chartData.rows, ['singleTPS', 'aggregateTPS'], [palette.yellow, palette.red], 'Single / aggregate TPS', 'sweep-tps', xAxis);
+  });
 }
 
 function renderSweepResults(execution = activeSweepExecution) {
   renderSweepTable(execution);
+  const interpretation = $('sweepInterpretation');
+  if (interpretation) {
+    interpretation.innerHTML = execution ? sweepSensitivityInsight(execution) : 'Run a sweep to see whether the selected input is on the active critical path.';
+    interpretation.hidden = false;
+  }
+  if (execution?.baselineConfig) renderSweepBaselineSummary(execution.baselineConfig, 'Canonical Worker baseline retained for this sweep');
   if (typeof renderGuidedSweepSummary === 'function') renderGuidedSweepSummary(execution);
-  const rows = sweepResultRows(execution);
-  drawSweepMetricChart('sweepTTFTChart', rows, ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms'], ['#67d9ff', '#72e3a6', '#a78bfa'], 'TTFT mean / p50 / p95 (ms)');
-  drawSweepMetricChart('sweepTPSChart', rows, ['singleTPS', 'aggregateTPS'], ['#ffd36b', '#ff8696'], 'Single / aggregate TPS');
+  renderSweepCharts(execution);
   if (!execution) return;
   const completed = execution.results.length, total = execution.scenarios.length;
   $('sweepProgress').style.width = `${total ? completed / total * 100 : 0}%`;

@@ -6,9 +6,13 @@
 
 ## 실행
 
-`index.html`을 Chrome 또는 Edge에서 열면 됩니다. 외부 라이브러리와 서버가 필요하지 않습니다.
+Web Worker를 사용하는 Sweep/Replay까지 실행하려면 `file://`로 직접 열지 말고 로컬 HTTP origin에서 실행하십시오.
 
-Node.js가 있다면 동일한 모델로 기본 HW sweep을 실행할 수 있습니다.
+```bash
+python3 -m http.server 8877 --bind 127.0.0.1
+```
+
+그다음 Chrome 또는 Edge에서 `http://127.0.0.1:8877/`을 엽니다. Node.js가 있다면 동일한 모델로 기본 HW sweep도 실행할 수 있습니다.
 
 ```bash
 node tools/hardware-sweep.cjs
@@ -48,7 +52,11 @@ node tools/hardware-sweep.cjs
 - `Experts / layer`
 - `Active experts / token`
 
-총/활성 parameter, dense/shared Expert 구성과 원본 Hugging Face config 링크는 설명용 metadata로만 표시됩니다. CSV만으로 확정할 수 없는 Expert size, resident weights, KV bytes, compute latency, precision, hardware 및 workload는 변경하지 않습니다. 따라서 모델명을 선택해도 해당 모델의 성능이 calibration되었다는 뜻이 아닙니다. 상세 계약은 [`docs/model-presets.md`](docs/model-presets.md)를 참조하십시오.
+총/활성 parameter, dense/shared Expert 구성과 원본 Hugging Face config 링크는 설명용 metadata로 표시됩니다. Kimi K3처럼 open weights/config가 공개된 경우에도 현재 preset은 공개 routing topology가 적용됐음을 명확히 표시하고, 실행 결과에 직접 영향을 주지만 checkpoint만으로 유일하게 정해지지 않는 quantized Expert payload, resident non-routed weights, KV bytes/token, kernel timing, hardware 값은 measured 또는 명시적 assumed calibration으로 구분합니다. 상세 계약은 [`docs/model-presets.md`](docs/model-presets.md)를 참조하십시오.
+
+## Hardware target presets
+
+HW selector는 Synthetic 이름 대신 NVIDIA DGX Spark, Apple MacBook Pro/Studio, NVIDIA GeForce RTX 5090, AMD Radeon PRO W7900 제품 target을 제공합니다. 각 preset은 공식 사양에서 simulator 필드로 직접 대응되는 값만 적용합니다. GPU 단품 preset의 host/SSD/effective PCIe 값이나 제품 FLOPS에서 추정한 kernel timing은 임의로 채우지 않습니다. 매핑과 공식 출처는 [`docs/hardware-presets.md`](docs/hardware-presets.md)에 기록합니다.
 
 ## V1.5 주요 변경
 
