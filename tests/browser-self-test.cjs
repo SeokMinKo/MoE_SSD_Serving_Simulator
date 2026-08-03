@@ -142,7 +142,7 @@ test('P1: hardware presets use named product targets and only overwrite sourced 
   assert.deepEqual([state.host, state.dramBW, state.pcieBW, state.ssdBW, state.lat, state.qd], ['192', '333', '21', '7.7', '88', '11']);
   assert.match(state.summary, /NVIDIA GeForce RTX 5090/);
   assert.match(state.summary, /32 GB VRAM/);
-  assert.match(state.summary, /remain unchanged/i);
+  assert.match(state.summary, /현재 입력을 유지합니다/);
   const mac = vm.runInContext(`(() => ({ applied: applyGuidedHardwarePreset('apple-mac-studio-m3-ultra-512'), summary: $('hardwarePresetSummary').innerHTML }))()`, sandbox);
   assert.equal(mac.applied, true);
   assert.match(mac.summary, /512 GB memory source/);
@@ -155,10 +155,10 @@ test('P1: hardware presets use named product targets and only overwrite sourced 
     return $('hardwarePresetSummary').innerHTML;
   })()`, sandbox);
   assert.doesNotMatch(malicious, /<img|<script|<svg|href=/i);
-  assert.match(malicious, /source unavailable/i);
+  assert.match(malicious, /출처를 사용할 수 없음/);
   const custom = vm.runInContext(`(() => ({ applied: applyGuidedHardwarePreset('custom'), summary: $('hardwarePresetSummary').innerHTML }))()`, sandbox);
   assert.equal(custom.applied, true);
-  assert.match(custom.summary, /Custom hardware inputs/);
+  assert.match(custom.summary, /사용자 지정 하드웨어 입력/);
 });
 
 test('P1: hardware preset picker exposes named targets rather than synthetic templates', () => {
@@ -306,7 +306,7 @@ test('P0: rendering an error stops stale playback and clears token and progress 
   assert.equal(state.hasResult, false);
   assert.equal(state.token, '');
   assert.equal(state.progress, '0');
-  assert.equal(state.status, 'Invalid result');
+  assert.equal(state.status, '유효하지 않은 결과');
 });
 
 test('P0: concurrent auto placement reserves KV capacity for the full request count', () => {
@@ -357,7 +357,7 @@ test('P1: sticky action toolbar and Storage I/O workspace expose the approved co
   for (const id of ['run', 'pause', 'openSweep', 'test', 'exportScenario', 'importScenario', 'setBaseline']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.match(html, />App integrity test</);
+  assert.match(html, />앱 무결성 테스트</);
   for (const id of ['graphViewMode', 'storageXAxis', 'storageYAxis', 'storageChart', 'storageTraceSummary']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
@@ -402,13 +402,13 @@ test('P1: every canvas graph exposes labeled Cartesian axes and a value at every
     overlay: chartAxisSpec('overlay')
   })`, sandbox);
   assert.deepEqual(JSON.parse(JSON.stringify(specs)), {
-    performance: { xLabel: 'Token index', yLabel: 'TPOT (ms)' },
-    memory: { xLabel: 'Token index', yLabel: 'Memory (GB)' },
-    storageTime: { xLabel: 'Completion time (ms)', yLabel: 'Storage service time (ms)' },
-    storageIO: { xLabel: 'Cumulative I/O (GB)', yLabel: 'Effective bandwidth (GB/s)' },
-    sweepTTFT: { xLabel: 'Sweep run (0 = baseline)', yLabel: 'TTFT (ms)' },
-    sweepTPS: { xLabel: 'Sweep run (0 = baseline)', yLabel: 'Throughput (tokens/s)' },
-    overlay: { xLabel: 'Execution index (0 = prefill)', yLabel: 'Normalized value (%)' }
+    performance: { xLabel: '토큰 인덱스', yLabel: 'TPOT (ms)' },
+    memory: { xLabel: '토큰 인덱스', yLabel: '메모리 (GB)' },
+    storageTime: { xLabel: '완료 시간 (ms)', yLabel: '스토리지 서비스 시간 (ms)' },
+    storageIO: { xLabel: '누적 I/O (GB)', yLabel: '유효 대역폭 (GB/s)' },
+    sweepTTFT: { xLabel: '스윕 실행 (0 = 기준)', yLabel: 'TTFT (ms)' },
+    sweepTPS: { xLabel: '스윕 실행 (0 = 기준)', yLabel: '처리량 (토큰/s)' },
+    overlay: { xLabel: '실행 인덱스 (0 = 프리필)', yLabel: '정규화 값 (%)' }
   });
   const edgeCases = vm.runInContext(`({
     onePoint: chartSeriesPosition(0, 1),
@@ -454,10 +454,10 @@ test('P1: Storage I/O renderer exposes read/write data and graph view switching'
   })()`, sandbox);
   delete sandbox.__storageResult;
   assert.match(output, /Prefill/);
-  assert.match(output, /Expert \/ window read/);
-  assert.match(output, /Prefetch read/);
-  assert.match(output, /Swap-in read/);
-  assert.match(output, /Swap-out write/);
+  assert.match(output, /Expert \/ 윈도 읽기/);
+  assert.match(output, /프리페치 읽기/);
+  assert.match(output, /스왑 인 읽기/);
+  assert.match(output, /스왑 아웃 쓰기/);
   assert.doesNotMatch(output, /undefined|NaN|Infinity/);
 });
 
@@ -555,18 +555,18 @@ test('P1: OOM sweep metrics render as chart gaps and non-numeric table cells', (
     return $('sweepResults').innerHTML;
   })()`, sandbox);
   assert.equal(calls.filter(call => call[0] === 'lineTo').length, 10, JSON.stringify(calls));
-  assert.match(table, /<td>oom<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td>/);
+  assert.match(table, /<td>메모리 부족\(OOM\)<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td><td>—<\/td>/);
 });
 
 test('P1: Sweep Lab exposes parameter selection, OAT/Grid execution controls, charts, table, and CSV', () => {
   for (const id of ['sweepLab', 'sweepMode', 'parameterSearch', 'parameterCategory', 'parameterChecklist', 'selectAllSweep', 'clearSweep', 'sweepSelectedCount', 'sweepProjectedCount', 'sweepParameters', 'runSweep', 'pauseSweep', 'resumeSweep', 'cancelSweep', 'exportSweepCsv', 'sweepProgress', 'sweepTruncation', 'sweepTTFTChart', 'sweepTPSChart', 'sweepResults']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.match(html, /One-at-a-time/);
-  assert.match(html, /Grid/);
-  assert.match(html, /TTFT mean \/ p50 \/ p95/);
-  assert.match(html, /Single-sequence TPS \/ aggregate TPS/);
-  assert.match(html, /Estimated sensitivity simulator \/ Unvalidated Alpha/);
+  assert.match(html, /한 번에 하나\(OAT\)/);
+  assert.match(html, /격자 조합/);
+  assert.match(html, /TTFT 평균 \/ p50 \/ p95/);
+  assert.match(html, /단일 시퀀스 TPS \/ 전체 TPS/);
+  assert.match(html, /추정 민감도 시뮬레이터 \/ 미검증 알파/);
   assert.match(html, /<script src="sweep\.js"><\/script>/);
   assert.equal(vm.runInContext("typeof initializeSweepLab === 'function' && typeof renderSweepResults === 'function' && typeof exportSweepCsv === 'function'", sandbox), true);
 });
@@ -578,11 +578,11 @@ test('P1: Sweep parameters expose human labels, units, meaning, and coupling gui
     assert.ok(guide.label && guide.unit && guide.description && guide.relationship && guide.behavior, JSON.stringify(guide));
   }
   const important = vm.runInContext(`(() => { const config = { ...readColibri(), arch: 'discrete' }; const catalog = sweepCatalogForConfig(config); return { host: sweepParameterGuide(catalog.find(item => item.path === 'host'), config), dram: sweepParameterGuide(catalog.find(item => item.path === 'dramBW'), config), pcie: sweepParameterGuide(catalog.find(item => item.path === 'pcieBW'), config), ssd: sweepParameterGuide(catalog.find(item => item.path === 'ssdBW'), config) }; })()`, sandbox);
-  assert.match(important.host.label, /Host \/ unified memory/);
+  assert.match(important.host.label, /Host \/ 통합 메모리 용량/);
   assert.equal(important.host.unit, 'GB');
   assert.match(important.pcie.description, /host.*GPU/i);
-  assert.match(important.ssd.description, /storage|SSD/i);
-  assert.match(important.dram.behavior, /bottleneck|critical/i);
+  assert.match(important.ssd.description, /스토리지|SSD/i);
+  assert.match(important.dram.behavior, /병목|임계/);
 });
 
 test('P1: Sweep explains the canonical baseline and no-effect DRAM results', () => {
@@ -601,10 +601,10 @@ test('P1: Sweep explains the canonical baseline and no-effect DRAM results', () 
     return { baseline: sweepBaselineSummaryHtml(config, 'Current form → canonical Worker baseline'), insight: sweepSensitivityInsight(execution) };
   })()`, sandbox);
   assert.match(result.baseline, /Current form/);
-  for (const value of ['Host', 'DRAM BW', 'SSD BW', 'PCIe BW']) assert.match(result.baseline, new RegExp(value));
-  assert.match(result.insight, /DRAM BW/);
-  assert.match(result.insight, /measurable change|측정 가능한 변화/i);
-  assert.match(result.insight, /not.*bottleneck|병목.*아님/i);
+  for (const value of ['Host 메모리', 'DRAM 대역폭', 'SSD 대역폭', 'PCIe 대역폭']) assert.match(result.baseline, new RegExp(value));
+  assert.match(result.insight, /DRAM 대역폭/);
+  assert.match(result.insight, /측정 가능한 차이가 없습니다/);
+  assert.match(result.insight, /병목이 아닙니다/);
 });
 
 test('P1: successful render exposes an equivalent token trace table for non-canvas access', () => {
@@ -613,7 +613,7 @@ test('P1: successful render exposes an equivalent token trace table for non-canv
   vm.runInContext('renderTraceTable(__traceResult)', sandbox);
   delete sandbox.__traceResult;
   const trace = elements.get('traceSummary').innerHTML;
-  assert.match(trace, /Token 1/);
+  assert.match(trace, /토큰 1/);
   assert.match(trace, /TPOT/);
   assert.match(trace, /NORMAL|RECLAIM|COMPRESS|SWAP|THRASH|OOM/);
   assert.doesNotMatch(trace, /undefined/);
@@ -623,7 +623,7 @@ test('P1: model status labels results as uncalibrated sensitivity estimates', ()
   const result = vm.runInContext('simulateColibri(readColibri())', sandbox);
   sandbox.__statusResult = result;
   vm.runInContext('renderColibri(__statusResult)', sandbox);
-  assert.match(elements.get('modelStatus').innerHTML, /uncalibrated sensitivity estimates/);
+  assert.match(elements.get('modelStatus').innerHTML, /아직 보정되지 않은 민감도 추정값/);
 });
 
 test('P1: Bottleneck Advisor is directly below KPIs and exposes phase scorecards', () => {
@@ -631,7 +631,7 @@ test('P1: Bottleneck Advisor is directly below KPIs and exposes phase scorecards
   const advisorIndex = html.indexOf('<section id="advisor"');
   const tokenIndex = html.indexOf('<div id="token"');
   assert.ok(kpiIndex >= 0 && advisorIndex > kpiIndex && tokenIndex > advisorIndex, `${kpiIndex}/${advisorIndex}/${tokenIndex}`);
-  assert.match(html, /Estimated sensitivity simulator \/ Unvalidated Alpha/);
+  assert.match(html, /추정 민감도 · 미검증 알파/);
   const result = vm.runInContext('simulateColibri(readColibri())', sandbox);
   sandbox.__advisorResult = result;
   vm.runInContext('renderBottleneckAdvisor(createBottleneckInsight(__advisorResult))', sandbox);
@@ -639,8 +639,8 @@ test('P1: Bottleneck Advisor is directly below KPIs and exposes phase scorecards
   const output = elements.get('advisor').innerHTML;
   for (const label of ['Prefill', 'First token', 'Decode', 'Memory pressure']) assert.match(output, new RegExp(label));
   for (const label of ['Storage', 'Data movement', 'Compute', 'Capacity / policy']) assert.match(output, new RegExp(label));
-  assert.match(output, /Relative pressure/);
-  assert.match(output, /Trade-off/);
+  assert.match(output, /상대 압력/);
+  assert.match(output, /부작용/);
   assert.match(output, /not measured|not a measured/i);
 });
 
@@ -667,9 +667,9 @@ test('P1: swap UI distinguishes allocated or in-flight bytes from completed resi
   sandbox.__swapResult = result;
   vm.runInContext('renderColibri(__swapResult); renderTraceTable(__swapResult)', sandbox);
   delete sandbox.__swapResult;
-  assert.match(elements.get('memory').innerHTML, /Swap allocated \/ in-flight/);
-  assert.match(elements.get('traceSummary').innerHTML, /Swap allocated \/ in-flight/);
-  assert.doesNotMatch(elements.get('memory').innerHTML, /Swap resident/);
+  assert.match(elements.get('memory').innerHTML, /스왑 할당 \/ 처리 중/);
+  assert.match(elements.get('traceSummary').innerHTML, /스왑 할당 \/ 처리 중/);
+  assert.doesNotMatch(elements.get('memory').innerHTML, /스왑 상주/);
 });
 
 test('P1: mobile controls meet 44px targets, avoid sticky overlap, and respect reduced motion', () => {
@@ -696,8 +696,8 @@ test('P1: Light and Dark theme toggle applies, persists, and exposes its next ac
   })()`, sandbox);
   assert.deepEqual(JSON.parse(JSON.stringify(state)), {
     initial: 'light',
-    beforeToggle: { theme: 'light', text: 'Dark', label: 'Switch to dark theme', pressed: 'true', stored: 'light' },
-    afterToggle: { theme: 'dark', text: 'Light', label: 'Switch to light theme', pressed: 'false', stored: 'dark' }
+    beforeToggle: { theme: 'light', text: '어둡게', label: '어두운 테마로 전환', pressed: 'true', stored: 'light' },
+    afterToggle: { theme: 'dark', text: '밝게', label: '밝은 테마로 전환', pressed: 'false', stored: 'dark' }
   });
   const storageFailures = vm.runInContext(`(() => {
     const root = { setAttribute() {} };
@@ -731,9 +731,9 @@ test('P1: guided workflow exposes three Korean steps, HW preset, Expert mode, an
   }
   for (const step of ['시나리오 설정', '결과와 병목', '개선 검증']) assert.match(html, new RegExp(step));
   assert.match(html, /aria-current="step"/);
-  assert.match(html, /HW target preset/);
-  assert.match(uiSource, /official specifications/);
-  assert.match(html, /Expert mode/);
+  assert.match(html, /하드웨어 대상 프리셋/);
+  assert.match(uiSource, /공식 사양/);
+  assert.match(html, /전문가 모드/);
 });
 
 test('P1: production guided UI contains no console info debug statements', () => {
@@ -788,7 +788,7 @@ test('P1: parameter chart axis uses physical values and units in ascending order
     { index: 0, changes: { pcieBW: 6 }, metrics: { status: 'completed' } },
     { index: 1, changes: { pcieBW: 96 }, metrics: { status: 'completed' } }
   ] }, { ...readColibri(), arch: 'discrete', pcieBW: 24 })`, sandbox);
-  assert.deepEqual(JSON.parse(JSON.stringify({ values: data.xValues, label: data.xLabel })), { values: [6, 24, 96], label: 'PCIe host ↔ GPU bandwidth (GB/s)' });
+  assert.deepEqual(JSON.parse(JSON.stringify({ values: data.xValues, label: data.xLabel })), { values: [6, 24, 96], label: 'PCIe Host ↔ GPU 대역폭 (GB/s)' });
 });
 
 test('P1: multi-parameter OAT renders one chart pair per parameter', () => {
@@ -806,8 +806,8 @@ test('P1: multi-parameter OAT renders one chart pair per parameter', () => {
   })()`, sandbox);
   assert.match(output, /data-sweep-chart-path="pcieBW"/);
   assert.match(output, /data-sweep-chart-path="ssdBW"/);
-  assert.equal((output.match(/TTFT sweep chart/g) || []).length, 2);
-  assert.equal((output.match(/TPS sweep chart/g) || []).length, 2);
+  assert.equal((output.match(/TTFT 스윕 그래프/g) || []).length, 2);
+  assert.equal((output.match(/TPS 스윕 그래프/g) || []).length, 2);
 });
 
 test('P1: guided bottleneck analysis deduplicates resources and chooses at most two sweepable parameters', () => {
@@ -900,7 +900,7 @@ test('P2: sweep worker settles and terminates exactly once on cancel, late messa
     };
   `, sandbox);
   const cancelled = vm.runInContext('simulateSweepInWorker(sweepClone(APP_INTEGRITY_COLIBRI_FIXTURE))', sandbox);
-  const cancelledAssertion = assert.rejects(cancelled, /cancelled/);
+  const cancelledAssertion = assert.rejects(cancelled, /스윕 시뮬레이션이 취소되었습니다/);
   vm.runInContext(`const lateSweepMessage = __sweepWorkers[0].onmessage; activeSweepWorker.cancel(); lateSweepMessage({ data: { metrics: { status: 'completed' } } });`, sandbox);
   await cancelledAssertion;
   const cancelState = vm.runInContext(`({ terminations: __sweepWorkers[0].terminations, active: activeSweepWorker !== null })`, sandbox);
