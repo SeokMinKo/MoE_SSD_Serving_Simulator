@@ -30,9 +30,10 @@ function startAnim(r) {
   $('token').innerHTML = (r.mode === 'afm3' ? '초기 IFP 선택 · 구체화 · 프리필…' : 'TTFT · 프리필…') + ' <span class="cursor"></span>';
   $('progress').style.width = '0';
   $('status').textContent = `TTFT ${ms(r.ttft)} · ${speed() === 1 ? '실시간' : speed() + '×'}`;
+  updateTokenIOPlayback(r, 0, { status: 'prefill' });
   schedule(begin, r.ttft);
 }
-function begin() { $('token').innerHTML = '<span id="out"></span><span class="cursor"></span>'; emit(); }
+function begin() { $('token').innerHTML = '<span id="out"></span><span class="cursor"></span>'; setTokenIOPlaybackState('running'); emit(); }
 function nextWaitStatus(tr, index) {
   if (tr.memory && ['SWAP', 'THRASH', 'OOM'].includes(tr.memory.pressureState)) {
     return `토큰 ${index + 1} 전 메모리 ${tr.memory.pressureState} · 스왑 ${fmt(tr.memory.swapGB, 2)}GB · TPOT ${ms(tr.tpot)}`;
@@ -51,11 +52,13 @@ function emit(force = false) {
   anim.index++;
   $('progress').style.width = `${anim.index / anim.parts.length * 100}%`;
   $('status').textContent = `토큰 ${anim.index}/${anim.parts.length} · TPOT ${ms(tr.tpot)} · ${tr.memory ? tr.memory.pressureState : 'NORMAL'}`;
-  if (anim.index < anim.parts.length && !force) {
+  const completed = anim.index >= anim.parts.length;
+  updateTokenIOPlayback(anim.result, anim.index, { status: completed ? 'completed' : 'running' });
+  if (!completed && !force) {
     const next = anim.result.tokens[anim.index];
     $('status').textContent = nextWaitStatus(next, anim.index);
     schedule(() => emit(), next.tpot);
-  } else if (anim.index >= anim.parts.length) {
+  } else if (completed) {
     $('status').textContent = `완료 · 유효 처리량 ${fmt(anim.result.tps, 2)} 토큰/s`;
   }
 }
@@ -68,9 +71,11 @@ function pause() {
       stop();
     }
     $('pause').textContent = '▶ 계속';
+    setTokenIOPlaybackState('paused');
   } else {
     anim.paused = false;
     $('pause').textContent = 'Ⅱ 일시정지';
+    setTokenIOPlaybackState('running');
     if (anim.action) schedule(anim.action, anim.remainingSim);
   }
 }
@@ -81,3 +86,58 @@ function pressureClass(s) {
   if (s === 'RECLAIM' || s === 'COMPRESS') return 'pressureReclaim';
   return 'pressureSwap';
 }
+
+let tokenIOPendingUpdate = null;
+let tokenIOPendingState = null;
+let tokenIOLoadStarted = false;
+
+function tokenIOApi() {
+  return globalThis.TokenIOUI && typeof globalThis.TokenIOUI.update === 'function' ? globalThis.TokenIOUI : null;
+}
+
+function flushTokenIOPending() {
+  const api = tokenIOApi();
+  if (!api) return;
+  api.initialize();
+  if (tokenIOPendingState) api.setStatus(tokenIOPendingState);
+  if (tokenIOPendingUpdate) api.update(tokenIOPendingUpdate.result, tokenIOPendingUpdate.completedCount, tokenIOPendingUpdate.options);
+  tokenIOPendingState = null;
+  tokenIOPendingUpdate = null;
+}
+
+function updateTokenIOPlayback(result, completedCount, options = {}) {
+  const api = tokenIOApi();
+  if (api) api.update(result, completedCount, options);
+  else tokenIOPendingUpdate = { result, completedCount, options };
+}
+
+function setTokenIOPlaybackState(status) {
+  const api = tokenIOApi();
+  if (api) api.setStatus(status);
+  else tokenIOPendingState = status;
+}
+
+function loadTokenIOEnhancement() {
+  if (tokenIOLoadStarted || typeof document !== 'object' || typeof document.createElement !== 'function' || !document.head?.appendChild) return;
+  tokenIOLoadStarted = true;
+  if (!document.getElementById('shadcnBaseUIStylesheet')) {
+    const link = document.createElement('link');
+    link.id = 'shadcnBaseUIStylesheet';
+    link.rel = 'stylesheet';
+    link.href = 'ui-shadcn.css';
+    document.head.appendChild(link);
+  }
+  if (tokenIOApi()) {
+    flushTokenIOPending();
+    return;
+  }
+  const script = document.createElement('script');
+  script.id = 'tokenIOEnhancementScript';
+  script.src = 'token-io.js';
+  script.async = false;
+  script.onload = flushTokenIOPending;
+  script.onerror = () => console.warn('토큰 I/O UI 모듈을 불러오지 못했습니다. 기본 시뮬레이션은 계속 사용할 수 있습니다.');
+  document.head.appendChild(script);
+}
+
+if (typeof document === 'object') loadTokenIOEnhancement();
