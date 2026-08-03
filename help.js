@@ -6,21 +6,21 @@ const COLIBRI_HELP_IDS = new Set(['cold', 'modelPreset', 'layers', 'experts', 'a
 const AFM_HELP_IDS = new Set(['afmTotalB', 'afmLayers', 'afmHidden', 'afmActive', 'afmShared', 'afmExpertWidth', 'afmActiveDim', 'afmProjections', 'afmChunks', 'afmBits', 'afmPacking', 'afmCommonGB', 'afmFreq', 'afmProfile', 'afmOverlap', 'afmInitSel', 'afmPeriodicSel', 'afmPatchBase', 'afmPatchBW', 'afmAttn', 'afmFFN', 'afmRuntime', 'afmPrefillTPS', 'afmChunkMode', 'afmDoubleBuffer']);
 
 function helpUnit(id, label) {
-  const explicit = ({ prompt: 'tokens', output: 'tokens', context: 'tokens', conc: 'sequences', lat: 'µs', qd: 'workers', ssdBW: 'GB/s', dramBW: 'GB/s', pcieBW: 'GB/s', afmPatchBW: 'GB/s', compressionBW: 'GB/s', softPct: '%', compressPct: '%', swapPct: '%', hardPct: '%', kv: 'KB/token' })[id];
-  return explicit || label.match(/\(([^)]+)\)/)?.[1] || 'unitless / enum';
+  const explicit = ({ prompt: '토큰', output: '토큰', context: '토큰', conc: '시퀀스', lat: 'µs', qd: '워커', ssdBW: 'GB/s', dramBW: 'GB/s', pcieBW: 'GB/s', afmPatchBW: 'GB/s', compressionBW: 'GB/s', softPct: '%', compressPct: '%', swapPct: '%', hardPct: '%', kv: 'KB/토큰' })[id];
+  return explicit || label.match(/\(([^)]+)\)/)?.[1] || '단위 없음 / 범주';
 }
 
 function helpDirection(id) {
-  if (/BW$|PrefillTPS$|host$|vram$|cache$|dcache$|vcache$|pinned$|page$|par$|prefillSpeedup$|compressionRatio$/i.test(id)) return '증가하면 이 synthetic simulator에서 관련 처리량 또는 상주 용량이 커질 수 있지만 다른 병목이나 메모리 비용이 생길 수 있습니다.';
-  if (/lat$|Sel$|Base$|attn$|ems$|FFN$|Runtime$|prompt$|output$|context$|conc$/i.test(id)) return '증가하면 이 synthetic simulator에서 작업량·지연·메모리 압력이 커질 수 있습니다.';
-  return '변경 효과는 현재 synthetic trace와 적용 조건에 따라 달라지며 실제 하드웨어 개선을 보장하지 않습니다.';
+  if (/BW$|PrefillTPS$|host$|vram$|cache$|dcache$|vcache$|pinned$|page$|par$|prefillSpeedup$|compressionRatio$/i.test(id)) return '증가하면 이 합성 시뮬레이터에서 관련 처리량 또는 상주 용량이 커질 수 있지만 다른 병목이나 메모리 비용이 생길 수 있습니다.';
+  if (/lat$|Sel$|Base$|attn$|ems$|FFN$|Runtime$|prompt$|output$|context$|conc$/i.test(id)) return '증가하면 이 합성 시뮬레이터에서 작업량·지연·메모리 압력이 커질 수 있습니다.';
+  return '변경 효과는 현재 합성 추적과 적용 조건에 따라 달라지며 실제 하드웨어 개선을 보장하지 않습니다.';
 }
 
 function parameterHelpForControl(id, labelText = '') {
   const key = HELP_KEY_OVERRIDES[id] || id;
   const engine = COLIBRI_HELP_IDS.has(id) ? 'Colibri 전용' : AFM_HELP_IDS.has(id) ? 'AFM 전용' : '모든 엔진 (Colibri 및 AFM)';
-  const label = labelText || ({ ssdBW: 'Effective SSD / NAND bandwidth' })[id] || id;
-  return `${label}: 이 입력은 simulator config \`${key}\`를 설정합니다. 단위: ${helpUnit(id, label)}. 적용: ${engine}. ${helpDirection(id)} Estimated sensitivity simulator / Unvalidated Alpha 경계의 상대 민감도 입력입니다.`;
+  const label = labelText || ({ ssdBW: '유효 SSD / NAND 대역폭' })[id] || id;
+  return `${label}: 이 입력은 시뮬레이터 설정 \`${key}\`를 지정합니다. 단위: ${helpUnit(id, label)}. 적용 대상: ${engine}. ${helpDirection(id)} 추정 민감도 시뮬레이터 · 미검증 알파 경계의 상대 민감도 입력입니다.`;
 }
 
 function parameterHelpClickShouldShow(openedByFocus, hidden) {

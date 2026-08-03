@@ -19,15 +19,15 @@ function schedule(fn, sim) {
 }
 function sampleText(mode) {
   return mode === 'afm3'
-    ? 'AFM 3 Core Advanced는 선택된 expert 집합을 window 동안 유지하고 memory pressure가 발생하면 KV compression과 swap traffic이 NAND 및 DRAM bandwidth를 사용합니다. '
-    : 'Colibri는 필요한 MoE expert를 SSD에서 DRAM으로 가져오며 cache와 swap traffic이 storage 및 DRAM bandwidth를 함께 사용합니다. ';
+    ? 'AFM 3 Core Advanced는 선택된 Expert 집합을 윈도 동안 유지하고 메모리 압력이 발생하면 KV 압축과 스왑 트래픽이 NAND 및 DRAM 대역폭을 사용합니다. '
+    : 'Colibri는 필요한 MoE Expert를 SSD에서 DRAM으로 가져오며 캐시와 스왑 트래픽이 스토리지 및 DRAM 대역폭을 함께 사용합니다. ';
 }
 function startAnim(r) {
   stop();
   anim = { timer: null, paused: false, index: 0, parts: sampleText(r.mode).match(/\S+\s*/g), result: r, due: 0, remainingSim: 0, oldSpeed: speed(), action: null };
   while (anim.parts.length < r.c.output) anim.parts = anim.parts.concat(anim.parts);
   anim.parts = anim.parts.slice(0, r.c.output);
-  $('token').innerHTML = (r.mode === 'afm3' ? 'Initial IFP selection / materialization / prefill…' : 'TTFT / Prefill…') + ' <span class="cursor"></span>';
+  $('token').innerHTML = (r.mode === 'afm3' ? '초기 IFP 선택 · 구체화 · 프리필…' : 'TTFT · 프리필…') + ' <span class="cursor"></span>';
   $('progress').style.width = '0';
   $('status').textContent = `TTFT ${ms(r.ttft)} · ${speed() === 1 ? '실시간' : speed() + '×'}`;
   schedule(begin, r.ttft);
@@ -35,28 +35,28 @@ function startAnim(r) {
 function begin() { $('token').innerHTML = '<span id="out"></span><span class="cursor"></span>'; emit(); }
 function nextWaitStatus(tr, index) {
   if (tr.memory && ['SWAP', 'THRASH', 'OOM'].includes(tr.memory.pressureState)) {
-    return `Memory ${tr.memory.pressureState} before Token ${index + 1} · swap ${fmt(tr.memory.swapGB, 2)}GB · TPOT ${ms(tr.tpot)}`;
+    return `토큰 ${index + 1} 전 메모리 ${tr.memory.pressureState} · 스왑 ${fmt(tr.memory.swapGB, 2)}GB · TPOT ${ms(tr.tpot)}`;
   }
   if (anim.result.mode === 'afm3' && tr.boundary) {
-    return `IFP reselection before Token ${index + 1} · ${tr.changed} new / ${tr.retained} retained · ${mb(tr.readGB)} · wait ${ms(tr.exposed)}`;
+    return `토큰 ${index + 1} 전 IFP 재선택 · 신규 ${tr.changed}개 / 유지 ${tr.retained}개 · ${mb(tr.readGB)} · 대기 ${ms(tr.exposed)}`;
   }
-  return `Waiting Token ${index + 1} · TPOT ${ms(tr.tpot)} · ${speed() === 1 ? '실시간' : speed() + '×'}`;
+  return `토큰 ${index + 1} 대기 · TPOT ${ms(tr.tpot)} · ${speed() === 1 ? '실시간' : speed() + '×'}`;
 }
 function emit(force = false) {
   if ((anim.paused && !force) || anim.index >= anim.parts.length) return;
   const tr = anim.result.tokens[anim.index], out = $('out');
-  if (anim.result.mode === 'afm3' && tr.boundary) out.textContent += `\n[IFP Window ${tr.window} · ${tr.changed} experts changed]\n`;
-  if (tr.memory && ['SWAP', 'THRASH'].includes(tr.memory.pressureState)) out.textContent += `\n[Memory ${tr.memory.pressureState} · swap ${fmt(tr.memory.swapGB, 2)}GB]\n`;
+  if (anim.result.mode === 'afm3' && tr.boundary) out.textContent += `\n[IFP 윈도 ${tr.window} · Expert ${tr.changed}개 변경]\n`;
+  if (tr.memory && ['SWAP', 'THRASH'].includes(tr.memory.pressureState)) out.textContent += `\n[메모리 ${tr.memory.pressureState} · 스왑 ${fmt(tr.memory.swapGB, 2)}GB]\n`;
   out.textContent += anim.parts[anim.index];
   anim.index++;
   $('progress').style.width = `${anim.index / anim.parts.length * 100}%`;
-  $('status').textContent = `Token ${anim.index}/${anim.parts.length} · TPOT ${ms(tr.tpot)} · ${tr.memory ? tr.memory.pressureState : 'NORMAL'}`;
+  $('status').textContent = `토큰 ${anim.index}/${anim.parts.length} · TPOT ${ms(tr.tpot)} · ${tr.memory ? tr.memory.pressureState : 'NORMAL'}`;
   if (anim.index < anim.parts.length && !force) {
     const next = anim.result.tokens[anim.index];
     $('status').textContent = nextWaitStatus(next, anim.index);
     schedule(() => emit(), next.tpot);
   } else if (anim.index >= anim.parts.length) {
-    $('status').textContent = `Done · effective ${fmt(anim.result.tps, 2)} tok/s`;
+    $('status').textContent = `완료 · 유효 처리량 ${fmt(anim.result.tps, 2)} 토큰/s`;
   }
 }
 function pause() {
@@ -67,10 +67,10 @@ function pause() {
       anim.remainingSim = Math.max(0, anim.due - performance.now()) * anim.oldSpeed;
       stop();
     }
-    $('pause').textContent = '▶ Resume';
+    $('pause').textContent = '▶ 계속';
   } else {
     anim.paused = false;
-    $('pause').textContent = 'Ⅱ Pause';
+    $('pause').textContent = 'Ⅱ 일시정지';
     if (anim.action) schedule(anim.action, anim.remainingSim);
   }
 }
