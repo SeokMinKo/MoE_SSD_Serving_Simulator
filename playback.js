@@ -118,7 +118,7 @@ function setTokenIOPlaybackState(status) {
 }
 
 function loadTokenIOEnhancement() {
-  if (tokenIOLoadStarted || typeof document !== 'object') return;
+  if (tokenIOLoadStarted || typeof document !== 'object' || typeof document.createElement !== 'function' || !document.head?.appendChild) return;
   tokenIOLoadStarted = true;
   if (!document.getElementById('shadcnBaseUIStylesheet')) {
     const link = document.createElement('link');
