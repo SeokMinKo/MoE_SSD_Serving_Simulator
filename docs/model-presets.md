@@ -11,7 +11,7 @@ Accepted for V1.5 Alpha.
 - Dataset rows: 31
 - Eligible topology presets: 29
 - Excluded because required topology is undisclosed: Qwen3.7-Max, Qwen3.8-Max-Preview
-- Kimi K3 was refreshed on 2026-07-31 from the official [`moonshotai/Kimi-K3` model card](https://huggingface.co/moonshotai/Kimi-K3) and [`config.json`](https://huggingface.co/moonshotai/Kimi-K3/blob/main/config.json) after its open-weight release.
+- Kimi K3 was refreshed on 2026-07-31 from the official [`moonshotai/Kimi-K3` model card](https://huggingface.co/moonshotai/Kimi-K3) and [`config.json`](https://huggingface.co/moonshotai/Kimi-K3/blob/main/config.json) after its open-weight release. The UI identifies that open weights/config make the routing topology sourceable, while quantized payload size, resident non-routed weights, KV bytes/token, runtime kernel timing, and hardware still require measured or explicitly assumed calibration.
 - Each preset retains its supplied release date, family, model name, parameter metadata, layer schedule note, disclosure status, and source URL.
 
 The CSV is input metadata, not an independent performance oracle.

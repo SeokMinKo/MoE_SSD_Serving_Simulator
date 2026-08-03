@@ -189,6 +189,114 @@ function storageIOUnit(yMode) {
   return ({ gb: 'GB', gbps: 'GB/s', 'service-ms': 'ms service', 'queue-ms': 'ms queue' })[yMode] || 'GB';
 }
 
+function chartAxisSpec(kind, options = {}) {
+  if (kind === 'overlay') return { xLabel: 'Execution index (0 = prefill)', yLabel: 'Normalized value (%)' };
+  if (kind === 'performance') return { xLabel: 'Token index', yLabel: 'TPOT (ms)' };
+  if (kind === 'memory') return { xLabel: 'Token index', yLabel: 'Memory (GB)' };
+  if (kind === 'sweep-ttft') return { xLabel: 'Sweep run (0 = baseline)', yLabel: 'TTFT (ms)' };
+  if (kind === 'sweep-tps') return { xLabel: 'Sweep run (0 = baseline)', yLabel: 'Throughput (tokens/s)' };
+  if (kind === 'storage') {
+    const xLabel = ({
+      'token-index': 'Execution bucket (0 = prefill)',
+      'completion-time': 'Completion time (ms)',
+      'cumulative-io': 'Cumulative I/O (GB)'
+    })[options.xMode] || 'Execution bucket (0 = prefill)';
+    const yLabel = ({
+      gb: 'Storage I/O (GB)',
+      gbps: 'Effective bandwidth (GB/s)',
+      'service-ms': 'Storage service time (ms)',
+      'queue-ms': 'Storage queue time (ms)'
+    })[options.yMode] || 'Storage I/O (GB)';
+    return { xLabel, yLabel };
+  }
+  return { xLabel: 'X', yLabel: 'Y' };
+}
+
+function chartTickLabel(value) {
+  if (!Number.isFinite(value)) return '—';
+  const magnitude = Math.abs(value);
+  if (magnitude > 0 && magnitude < 0.01) return value.toExponential(1);
+  if (magnitude >= 1000) return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  if (magnitude >= 100) return value.toFixed(0);
+  if (magnitude >= 10) return value.toFixed(1).replace(/\.0$/, '');
+  return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+}
+
+function chartSeriesPosition(index, length) {
+  return length <= 1 ? 0.5 : index / (length - 1);
+}
+
+function chartDomainPosition(value, min, max) {
+  return max <= min ? 0.5 : (value - min) / (max - min);
+}
+
+function chartUsesAxes(kind, mode) {
+  return mode !== 'overlay' || kind === 'performance';
+}
+
+function drawChartPoint(context, x, y, color) {
+  context.fillStyle = color;
+  context.beginPath();
+  context.arc(x, y, 3, 0, Math.PI * 2);
+  context.fill();
+}
+
+function chartLinearTicks(min, max, count = 5, descending = false) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+  if (max <= min) return [{ position: 0.5, label: chartTickLabel(min) }];
+  return Array.from({ length: count }, (_, index) => {
+    const position = index / Math.max(1, count - 1);
+    const value = descending ? max - (max - min) * position : min + (max - min) * position;
+    return { position, label: chartTickLabel(value) };
+  });
+}
+
+function chartPalette() {
+  const read = (name, fallback) => {
+    if (typeof getComputedStyle !== 'function' || !document?.documentElement) return fallback;
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  };
+  return {
+    background: read('--chart-bg', '#071525'),
+    grid: read('--chart-grid', '#29445f'),
+    text: read('--chart-text', '#9db0c8'),
+    cyan: read('--chart-cyan', '#67d9ff'),
+    green: read('--chart-green', '#34b77a'),
+    violet: read('--chart-violet', '#8b6fe8'),
+    red: read('--chart-red', '#e4526f'),
+    yellow: read('--chart-yellow', '#c78a00')
+  };
+}
+
+function drawCartesianAxes(context, options) {
+  const palette = chartPalette();
+  const { left, top, width, height, xTicks = [], yTicks = [], xLabel, yLabel } = options;
+  context.save();
+  context.font = '10px sans-serif';
+  context.lineWidth = 1;
+  context.strokeStyle = palette.grid;
+  context.fillStyle = palette.text;
+  for (const tick of yTicks) {
+    const y = top + height * tick.position;
+    context.beginPath(); context.moveTo(left, y); context.lineTo(left + width, y); context.stroke();
+    context.textAlign = 'right'; context.textBaseline = 'middle'; context.fillText(tick.label, left - 8, y);
+  }
+  for (const tick of xTicks) {
+    const x = left + width * tick.position;
+    context.beginPath(); context.moveTo(x, top); context.lineTo(x, top + height); context.stroke();
+    context.textAlign = 'center'; context.textBaseline = 'top'; context.fillText(tick.label, x, top + height + 7);
+  }
+  context.textAlign = 'center'; context.textBaseline = 'top';
+  context.fillText(xLabel, left + width / 2, top + height + 27);
+  context.save();
+  context.translate(12, top + height / 2);
+  context.rotate(-Math.PI / 2);
+  context.textBaseline = 'top';
+  context.fillText(yLabel, 0, 0);
+  context.restore();
+  context.restore();
+}
+
 function renderStorageIO(r) {
   const xMode = $('storageXAxis')?.value || 'token-index';
   const yMode = $('storageYAxis')?.value || 'gb';
@@ -201,27 +309,41 @@ function renderStorageIO(r) {
   const canvas = $('storageChart');
   if (!canvas || typeof canvas.getContext !== 'function') return;
   const context = canvas.getContext('2d'), width = canvas.width, height = canvas.height;
+  const palette = chartPalette();
+  const viewMode = $('graphViewMode')?.value || 'tabs';
   context.clearRect(0, 0, width, height);
-  context.fillStyle = '#071525'; context.fillRect(0, 0, width, height);
+  if (viewMode !== 'overlay') { context.fillStyle = palette.background; context.fillRect(0, 0, width, height); }
   const maxValue = Math.max(EPS, ...buckets.map(bucket => Object.values(bucket.series).reduce((sum, value) => sum + value, 0)));
-  const colors = { expertRead: '#67d9ff', prefetchRead: '#72e3a6', swapInRead: '#a78bfa', swapOutWrite: '#ff8696' };
-  const plotLeft = 48, plotTop = 24, plotWidth = width - 68, plotHeight = height - 54;
-  context.strokeStyle = '#29445f';
-  for (let index = 0; index < 5; index++) { const y = plotTop + plotHeight * index / 4; context.beginPath(); context.moveTo(plotLeft, y); context.lineTo(plotLeft + plotWidth, y); context.stroke(); }
+  const colors = { expertRead: palette.cyan, prefetchRead: palette.green, swapInRead: palette.violet, swapOutWrite: palette.red };
+  const plotLeft = 68, plotTop = 26, plotWidth = width - 88, plotHeight = height - 82;
+  const xValues = buckets.map(bucket => Number(bucket.x)).filter(Number.isFinite);
+  const xMin = xValues.length ? Math.min(...xValues) : 0;
+  const xMax = xValues.length ? Math.max(...xValues) : 1;
+  if (chartUsesAxes('storage', viewMode)) {
+    drawCartesianAxes(context, {
+      left: plotLeft, top: plotTop, width: plotWidth, height: plotHeight,
+      xTicks: chartLinearTicks(xMin, xMax),
+      yTicks: chartLinearTicks(0, maxValue, 5, true),
+      ...chartAxisSpec('storage', { xMode, yMode })
+    });
+  }
   const barWidth = Math.max(2, plotWidth / Math.max(1, buckets.length) * 0.65);
-  const xPositions = storageIOXPositions(buckets, plotLeft + barWidth / 2, Math.max(0, plotWidth - barWidth));
+  const xPositions = storageIOXPositions(buckets, plotLeft, plotWidth);
   buckets.forEach((bucket, index) => {
     const x = xPositions[index];
+    const barLeft = Math.max(plotLeft, x - barWidth / 2);
+    const barRight = Math.min(plotLeft + plotWidth, x + barWidth / 2);
     let bottom = plotTop + plotHeight;
     for (const [series] of STORAGE_IO_SERIES) {
       const barHeight = plotHeight * bucket.series[series] / maxValue;
       context.fillStyle = colors[series];
-      context.fillRect(x - barWidth / 2, bottom - barHeight, barWidth, barHeight);
+      context.fillRect(barLeft, bottom - barHeight, barRight - barLeft, barHeight);
       bottom -= barHeight;
     }
   });
-  context.fillStyle = '#9db0c8'; context.font = '11px sans-serif';
-  context.fillText(`Read stacks + Write · ${storageIOUnit(yMode)} · X ${xMode}`, 8, 14);
+  context.fillStyle = palette.text; context.font = '11px sans-serif';
+  context.textAlign = 'left'; context.textBaseline = 'alphabetic';
+  if (viewMode !== 'overlay') context.fillText(`Read stacks + Write · ${storageIOUnit(yMode)}`, 8, 14);
 }
 
 function syncGraphView() {
@@ -241,33 +363,55 @@ function syncGraphView() {
 function drawPerformance(r) {
   const cv = $('chart'), x = cv.getContext('2d'), W = cv.width, H = cv.height;
   const d = r.tokens.map(t => t.tpot), mx = Math.max(...d) * 1.15 || 1;
+  const palette = chartPalette();
+  const viewMode = $('graphViewMode')?.value || 'tabs';
+  const overlay = viewMode === 'overlay';
+  const plotLeft = 68, plotTop = 26, plotWidth = W - 88, plotHeight = H - 82;
   x.clearRect(0, 0, W, H);
-  x.fillStyle = '#071525'; x.fillRect(0, 0, W, H);
-  x.strokeStyle = '#29445f';
-  for (let i = 0; i < 5; i++) { const y = 20 + i * 50; x.beginPath(); x.moveTo(48, y); x.lineTo(W - 15, y); x.stroke(); }
+  x.fillStyle = palette.background; x.fillRect(0, 0, W, H);
+  drawCartesianAxes(x, {
+    left: plotLeft, top: plotTop, width: plotWidth, height: plotHeight,
+    xTicks: overlay ? chartLinearTicks(0, Math.max(1, d.length)) : chartLinearTicks(1, Math.max(1, d.length)),
+    yTicks: overlay ? chartLinearTicks(0, 100, 5, true) : chartLinearTicks(0, mx, 5, true),
+    ...chartAxisSpec(overlay ? 'overlay' : 'performance')
+  });
   if (r.mode === 'afm3') {
-    x.strokeStyle = '#a78bfa'; x.lineWidth = 1;
+    x.strokeStyle = palette.violet; x.lineWidth = 1;
     for (let i = 0; i < r.tokens.length; i++) if (r.tokens[i].boundary) {
-      const xx = 48 + (W - 73) * i / Math.max(1, d.length - 1);
-      x.beginPath(); x.moveTo(xx, 15); x.lineTo(xx, H - 25); x.stroke(); x.fillStyle = '#c4b5fd'; x.fillText('IFP', xx + 3, 27);
+      const xx = plotLeft + plotWidth * (overlay ? chartDomainPosition(i + 1, 0, d.length) : chartSeriesPosition(i, d.length));
+      x.beginPath(); x.moveTo(xx, plotTop); x.lineTo(xx, plotTop + plotHeight); x.stroke(); x.fillStyle = '#7657cf'; if (!overlay) x.fillText('IFP', xx + 3, plotTop + 11);
     }
   }
-  x.strokeStyle = '#67d9ff'; x.lineWidth = 2; x.beginPath();
-  d.forEach((v, i) => { const xx = 48 + (W - 73) * i / Math.max(1, d.length - 1), yy = 18 + (H - 45) * (1 - v / mx); i ? x.lineTo(xx, yy) : x.moveTo(xx, yy); });
-  x.stroke(); x.fillStyle = '#9db0c8'; x.font = '11px sans-serif'; x.fillText(r.mode === 'afm3' ? 'TPOT · violet = IFP boundary' : 'TPOT per token', 8, 14);
+  x.strokeStyle = '#1687b8'; x.lineWidth = 2; x.beginPath();
+  d.forEach((v, i) => { const xx = plotLeft + plotWidth * (overlay ? chartDomainPosition(i + 1, 0, d.length) : chartSeriesPosition(i, d.length)), yy = plotTop + plotHeight * (1 - v / mx); i ? x.lineTo(xx, yy) : x.moveTo(xx, yy); });
+  x.stroke();
+  if (d.length === 1) drawChartPoint(x, plotLeft + plotWidth * (overlay ? chartDomainPosition(1, 0, 1) : chartSeriesPosition(0, 1)), plotTop + plotHeight * (1 - d[0] / mx), '#1687b8');
+  x.fillStyle = palette.text; x.font = '11px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'alphabetic'; if (!overlay) x.fillText(r.mode === 'afm3' ? 'TPOT · violet = IFP boundary' : 'TPOT per token', 8, 14);
 }
 function drawMemory(r) {
   const cv = $('memoryChart'), x = cv.getContext('2d'), W = cv.width, H = cv.height;
   const used = r.tokens.map(t => t.memory.physicalUsedGB);
   const sw = r.tokens.map(t => t.memory.swapGB);
   const maxY = Math.max(r.c.host, ...used) * 1.05 || 1;
-  x.clearRect(0, 0, W, H); x.fillStyle = '#071525'; x.fillRect(0, 0, W, H);
-  const yOf = v => 18 + (H - 45) * (1 - v / maxY);
-  const line = (arr, color) => { x.strokeStyle = color; x.lineWidth = 2; x.beginPath(); arr.forEach((v, i) => { const xx = 48 + (W - 73) * i / Math.max(1, arr.length - 1), yy = yOf(v); i ? x.lineTo(xx, yy) : x.moveTo(xx, yy); }); x.stroke(); };
+  const palette = chartPalette();
+  const viewMode = $('graphViewMode')?.value || 'tabs';
+  const plotLeft = 68, plotTop = 26, plotWidth = W - 88, plotHeight = H - 82;
+  x.clearRect(0, 0, W, H);
+  if (viewMode !== 'overlay') { x.fillStyle = palette.background; x.fillRect(0, 0, W, H); }
+  if (chartUsesAxes('memory', viewMode)) {
+    drawCartesianAxes(x, {
+      left: plotLeft, top: plotTop, width: plotWidth, height: plotHeight,
+      xTicks: chartLinearTicks(1, Math.max(1, used.length)),
+      yTicks: chartLinearTicks(0, maxY, 5, true),
+      ...chartAxisSpec('memory')
+    });
+  }
+  const yOf = v => plotTop + plotHeight * (1 - v / maxY);
+  const line = (arr, color) => { x.strokeStyle = color; x.lineWidth = 2; x.beginPath(); arr.forEach((v, i) => { const xx = plotLeft + plotWidth * (viewMode === 'overlay' ? chartDomainPosition(i + 1, 0, arr.length) : chartSeriesPosition(i, arr.length)), yy = yOf(v); i ? x.lineTo(xx, yy) : x.moveTo(xx, yy); }); x.stroke(); if (arr.length === 1) drawChartPoint(x, plotLeft + plotWidth * (viewMode === 'overlay' ? chartDomainPosition(1, 0, 1) : chartSeriesPosition(0, 1)), yOf(arr[0]), color); };
   const trigger = thresholdGB(r.c, r.c.mem.swap);
   const hard = thresholdGB(r.c, r.c.mem.hard);
-  x.setLineDash([5, 4]); x.strokeStyle = '#ffd36b'; x.beginPath(); x.moveTo(48, yOf(trigger)); x.lineTo(W - 15, yOf(trigger)); x.stroke();
-  x.strokeStyle = '#ff8696'; x.beginPath(); x.moveTo(48, yOf(hard)); x.lineTo(W - 15, yOf(hard)); x.stroke(); x.setLineDash([]);
-  line(used, '#67d9ff'); line(sw, '#a78bfa');
-  x.fillStyle = '#9db0c8'; x.font = '11px sans-serif'; x.fillText('cyan: physical memory · violet: swap · dashed: swap/hard trigger', 8, 14);
+  x.setLineDash([5, 4]); x.strokeStyle = palette.yellow; x.beginPath(); x.moveTo(plotLeft, yOf(trigger)); x.lineTo(plotLeft + plotWidth, yOf(trigger)); x.stroke();
+  x.strokeStyle = palette.red; x.beginPath(); x.moveTo(plotLeft, yOf(hard)); x.lineTo(plotLeft + plotWidth, yOf(hard)); x.stroke(); x.setLineDash([]);
+  line(used, '#1687b8'); line(sw, palette.violet);
+  x.fillStyle = palette.text; x.font = '11px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'alphabetic'; if (viewMode !== 'overlay') x.fillText('blue: physical memory · violet: swap · dashed: swap/hard trigger', 8, 14);
 }

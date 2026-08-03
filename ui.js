@@ -1,17 +1,103 @@
 'use strict';
 
+const THEME_STORAGE_KEY = 'moe-ssd-theme';
+
+function normalizedTheme(theme) {
+  return theme === 'light' ? 'light' : 'dark';
+}
+
+function applyTheme(theme, options = {}) {
+  const selected = normalizedTheme(theme);
+  const root = options.root || (typeof document === 'object' ? document.documentElement : null);
+  const button = options.button || (typeof $ === 'function' ? $('themeToggle') : null);
+  const storage = Object.prototype.hasOwnProperty.call(options, 'storage')
+    ? options.storage
+    : typeof localStorage === 'undefined' ? null : localStorage;
+  root?.setAttribute('data-theme', selected);
+  if (button) {
+    const light = selected === 'light';
+    button.textContent = light ? 'Dark' : 'Light';
+    button.setAttribute('aria-label', light ? 'Switch to dark theme' : 'Switch to light theme');
+    button.setAttribute('aria-pressed', String(light));
+  }
+  if (options.persist !== false && storage) {
+    try {
+      storage.setItem(THEME_STORAGE_KEY, selected);
+    } catch (error) {
+      console.warn('Theme preference persistence failed', { message: error.message });
+    }
+  }
+  if (options.redraw !== false) {
+    if (typeof lastResult === 'object' && lastResult && !lastResult.error) {
+      drawPerformance(lastResult); renderStorageIO(lastResult); drawMemory(lastResult);
+    }
+    if (typeof activeSweepExecution === 'object' && activeSweepExecution && typeof renderSweepResults === 'function') renderSweepResults(activeSweepExecution);
+  }
+  return selected;
+}
+
+function initializeTheme(options = {}) {
+  const root = options.root || (typeof document === 'object' ? document.documentElement : null);
+  const button = options.button || (typeof $ === 'function' ? $('themeToggle') : null);
+  const storage = Object.prototype.hasOwnProperty.call(options, 'storage')
+    ? options.storage
+    : typeof localStorage === 'undefined' ? null : localStorage;
+  const media = options.media || (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null);
+  let stored = null;
+  if (storage) {
+    try {
+      stored = storage.getItem(THEME_STORAGE_KEY);
+    } catch (error) {
+      console.warn('Theme preference read failed', { message: error.message });
+    }
+  }
+  let current = stored === 'light' || stored === 'dark' ? stored : media?.matches ? 'light' : 'dark';
+  current = applyTheme(current, { ...options, root, button, storage, persist: false });
+  if (button) button.onclick = () => {
+    current = applyTheme(current === 'light' ? 'dark' : 'light', { ...options, root, button, storage, persist: true });
+  };
+  return current;
+}
+
 const GUIDED_HW_PRESETS = Object.freeze({
-  'synthetic-discrete': Object.freeze({
-    label: 'Synthetic discrete baseline',
-    values: Object.freeze({ arch: 'discrete', host: 128, vram: 8, dramBW: 273, pcieBW: 24, ssdBW: 9.2, lat: 120, qd: 8 })
+  'nvidia-dgx-spark-128': Object.freeze({
+    label: 'NVIDIA DGX Spark · 128 GB',
+    sourceUrl: 'https://www.nvidia.com/en-us/products/workstations/dgx-spark/',
+    sourced: '128 GB coherent unified memory · 273 GB/s memory bandwidth',
+    manual: 'effective SSD bandwidth, storage latency/QD, and model runtime compute calibration',
+    values: Object.freeze({ arch: 'unified', host: 128, dramBW: 273 })
   }),
-  'synthetic-discrete-large': Object.freeze({
-    label: 'Synthetic discrete high-capacity',
-    values: Object.freeze({ arch: 'discrete', host: 256, vram: 24, dramBW: 350, pcieBW: 32, ssdBW: 14, lat: 90, qd: 16 })
+  'apple-macbook-pro-m5-max-128': Object.freeze({
+    label: 'Apple MacBook Pro · M5 Max · 128 GB',
+    sourceUrl: 'https://support.apple.com/en-us/126318',
+    sourced: '128 GB unified memory · 614 GB/s memory bandwidth',
+    manual: 'effective SSD bandwidth, storage latency/QD, and model runtime compute calibration',
+    values: Object.freeze({ arch: 'unified', host: 128, dramBW: 614 })
   }),
-  'synthetic-unified': Object.freeze({
-    label: 'Synthetic unified baseline',
-    values: Object.freeze({ arch: 'unified', host: 128, dramBW: 273, ssdBW: 9.2, lat: 120 })
+  'apple-mac-studio-m3-ultra-512': Object.freeze({
+    label: 'Apple Mac Studio · M3 Ultra · 512 GB',
+    sourceUrls: Object.freeze([
+      'https://www.apple.com/newsroom/2025/03/apple-reveals-m3-ultra-taking-apple-silicon-to-a-new-extreme/',
+      'https://support.apple.com/en-us/122211'
+    ]),
+    sourceLabels: Object.freeze(['512 GB memory source', '819 GB/s bandwidth source']),
+    sourced: '512 GB unified memory · 819 GB/s memory bandwidth',
+    manual: 'effective SSD bandwidth, storage latency/QD, and model runtime compute calibration',
+    values: Object.freeze({ arch: 'unified', host: 512, dramBW: 819 })
+  }),
+  'nvidia-rtx-5090-32': Object.freeze({
+    label: 'NVIDIA GeForce RTX 5090 · 32 GB',
+    sourceUrl: 'https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090/',
+    sourced: '32 GB VRAM · discrete GPU architecture',
+    manual: 'host RAM, host DRAM bandwidth, effective PCIe bandwidth, SSD service values, and model runtime compute calibration',
+    values: Object.freeze({ arch: 'discrete', vram: 32 })
+  }),
+  'amd-radeon-pro-w7900-48': Object.freeze({
+    label: 'AMD Radeon PRO W7900 · 48 GB',
+    sourceUrl: 'https://www.amd.com/en/products/graphics/workstations/radeon-pro/w7900.html',
+    sourced: '48 GB VRAM · discrete GPU architecture',
+    manual: 'host RAM, host DRAM bandwidth, effective PCIe bandwidth, SSD service values, and model runtime compute calibration',
+    values: Object.freeze({ arch: 'discrete', vram: 48 })
   })
 });
 
@@ -56,6 +142,13 @@ function guidedRankBottlenecks(insight, config = null) {
   return [...strongest.values()].sort((a, b) => b.score - a.score || a.resourceId.localeCompare(b.resourceId)).slice(0, 2);
 }
 
+function guidedSweepValues(descriptor, baseline) {
+  if (descriptor?.type !== 'number' || !Number.isFinite(baseline)) return autoSweepValues(descriptor, baseline);
+  const ratios = [0.25, 0.5, 0.75, 1, 1.5, 2, 4];
+  const values = ratios.map(ratio => clamp(baseline * ratio, descriptor.min, descriptor.max)).map(value => descriptor.integer ? Math.round(value) : Number(value.toPrecision(12)));
+  return [...new Set(values)].sort((a, b) => a - b);
+}
+
 function guidedSweepSelections(insight, config) {
   const catalog = sweepCatalogForConfig(config);
   const descriptors = new Map(catalog.map(item => [item.path, item]));
@@ -64,7 +157,7 @@ function guidedSweepSelections(insight, config) {
     const descriptor = descriptors.get(item.parameterPath);
     if (!descriptor) continue;
     const baseline = sweepValueAtPath(config, descriptor.path);
-    const values = autoSweepValues(descriptor, baseline).slice(0, 5);
+    const values = guidedSweepValues(descriptor, baseline);
     if (values.length < 2 || values.every(value => stableValue(value) === stableValue(baseline))) continue;
     selections.push({ path: descriptor.path, values, resourceId: item.resourceId, score: item.score });
   }
@@ -126,13 +219,37 @@ function guidedScrollBehavior(targetWindow) {
   return targetWindow.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
 }
 
+function renderGuidedHardwarePresetSummary(preset) {
+  const target = typeof $ === 'function' ? $('hardwarePresetSummary') : null;
+  if (!target) return;
+  if (!preset) {
+    target.innerHTML = '<b>Custom hardware inputs</b> · No product target is selected; all hardware and storage values are manual.';
+    return;
+  }
+  const sourceUrls = Array.isArray(preset.sourceUrls) ? preset.sourceUrls : [preset.sourceUrl];
+  const sourceLinks = sourceUrls.flatMap((url, index) => {
+    const safeUrl = typeof url === 'string' && /^https:\/\/[^\s"'<>]+$/.test(url) ? url : null;
+    if (!safeUrl) return [];
+    const label = Array.isArray(preset.sourceLabels) && preset.sourceLabels[index] ? preset.sourceLabels[index] : 'official specifications';
+    return [`<a href="${presetHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${presetHtml(label)}</a>`];
+  });
+  const source = sourceLinks.length ? sourceLinks.join(' · ') : 'source unavailable';
+  target.innerHTML = `<b>${presetHtml(preset.label)}</b><br>Applied from source: ${presetHtml(preset.sourced)} · ${source}<br>` +
+    `System- and workload-dependent fields remain unchanged: ${presetHtml(preset.manual)}.`;
+}
+
 function applyGuidedHardwarePreset(id) {
+  if (id === 'custom') {
+    renderGuidedHardwarePresetSummary(null);
+    return true;
+  }
+  if (!Object.hasOwn(GUIDED_HW_PRESETS, id)) return false;
   const preset = GUIDED_HW_PRESETS[id];
-  if (!preset) return false;
   for (const [controlId, value] of Object.entries(preset.values)) {
     const control = typeof $ === 'function' ? $(controlId) : null;
     if (control) control.value = String(value);
   }
+  renderGuidedHardwarePresetSummary(preset);
   if (typeof syncModeControls === 'function') syncModeControls(false);
   return true;
 }
@@ -140,6 +257,7 @@ function applyGuidedHardwarePreset(id) {
 function markGuidedHardwareCustom() {
   const preset = typeof $ === 'function' ? $('hardwarePreset') : null;
   if (preset) preset.value = 'custom';
+  renderGuidedHardwarePresetSummary(null);
 }
 
 function setGuidedStep(step) {
@@ -222,7 +340,7 @@ function initializeGuidedUI() {
     expert.textContent = enabled ? 'Expert mode 닫기' : 'Expert mode 열기';
   };
   $('hardwarePreset').onchange = event => {
-    if (event.target.value !== 'custom' && applyGuidedHardwarePreset(event.target.value)) render(simulate());
+    if (applyGuidedHardwarePreset(event.target.value) && event.target.value !== 'custom') render(simulate());
   };
   for (const id of ['arch', 'host', 'vram', 'dramBW', 'pcieBW', 'ssdBW', 'lat', 'qd']) {
     const control = $(id);

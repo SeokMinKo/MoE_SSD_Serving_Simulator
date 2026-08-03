@@ -1,5 +1,58 @@
 const SWEEP_LIMIT = 50;
 
+const SWEEP_GUIDE = Object.freeze({
+  host: { label: 'Host / unified memory capacity', unit: 'GB', description: 'Physical host RAM, or the shared memory pool on a unified-memory system.', relationship: 'Conditional: changes memory-pressure thresholds and, with auto placement, the derived DRAM Expert cache budget.' },
+  dramBW: { label: 'DRAM bandwidth', unit: 'GB/s', description: 'Bandwidth of the host or unified DRAM path after data is resident in memory.', relationship: 'Independent resource limit, but it matters only for traffic modeled on the DRAM path.' },
+  ssdBW: { label: 'Effective SSD / NAND bandwidth', unit: 'GB/s', description: 'Rate at which storage can service Expert, window, prefetch, and swap reads/writes.', relationship: 'Independent storage-stage limit; queue depth, latency, workload, and PCIe can still dominate end-to-end time.' },
+  pcieBW: { label: 'PCIe host ↔ GPU bandwidth', unit: 'GB/s', description: 'Transfer-link bandwidth between host memory and a discrete GPU; it is not the SSD media read rate.', relationship: 'Conditional: used for discrete GPU transfers and hidden for unified-memory architecture.' },
+  vram: { label: 'GPU VRAM capacity', unit: 'GB', description: 'Physical memory capacity on a discrete GPU.', relationship: 'Conditional: with auto placement it changes the derived VRAM Expert cache after KV/workspace reservation.' },
+  arch: { label: 'Memory architecture', unit: 'category', description: 'Selects discrete GPU versus unified memory data paths.', relationship: 'Coupled switch: determines whether PCIe and VRAM parameters participate.' },
+  placement: { label: 'Expert cache placement', unit: 'category', description: 'Selects automatic capacity-derived caches or explicit manual cache budgets.', relationship: 'Coupled switch: auto derives dcache/vcache; manual uses their configured values.' },
+  experts: { label: 'Experts per layer', unit: 'experts', description: 'Total routed Expert count in each MoE layer.', relationship: 'Coupled constraint: active experts cannot exceed total experts.' },
+  active: { label: 'Active experts per token', unit: 'experts/token', description: 'Experts selected for each token or AFM active-set size.', relationship: 'Coupled: must fit total experts; AFM also normalizes shared/routed/active dimension.' },
+  shared: { label: 'Shared active experts', unit: 'experts/token', description: 'AFM active experts shared across selections.', relationship: 'Coupled: cannot exceed active; changing it updates routed experts.' },
+  expertWidth: { label: 'Expert channel width', unit: 'channels', description: 'AFM width contributed by each active Expert.', relationship: 'Coupled: changing it normally updates active FFN dimension.' },
+  activeDim: { label: 'Active FFN dimension', unit: 'channels', description: 'Explicit aggregate active feed-forward dimension.', relationship: 'Derived by default from active × expert width unless swept explicitly.' },
+  'mem.soft': { label: 'Soft pressure trigger', unit: 'ratio (0–1)', description: 'Physical-memory utilization where reclaim pressure starts.', relationship: 'Ordered threshold: soft ≤ compression ≤ swap ≤ hard.' },
+  'mem.compress': { label: 'Compression trigger', unit: 'ratio (0–1)', description: 'Utilization where memory compression starts.', relationship: 'Ordered threshold: soft ≤ compression ≤ swap ≤ hard; compression must be enabled.' },
+  'mem.swap': { label: 'Swap trigger', unit: 'ratio (0–1)', description: 'Utilization where swap admission starts.', relationship: 'Ordered threshold: soft ≤ compression ≤ swap ≤ hard; swap policy and swap must be enabled.' },
+  'mem.hard': { label: 'Hard pressure limit', unit: 'ratio (0–1)', description: 'Maximum admitted physical-memory utilization before allocations block or fail.', relationship: 'Ordered threshold: soft ≤ compression ≤ swap ≤ hard.' },
+  'mem.compressionEnabled': { label: 'Memory compression enabled', unit: 'boolean', description: 'Enables the modeled memory-compression path.', relationship: 'Controls whether compression ratio and bandwidth can affect results.' },
+  'mem.swapEnabled': { label: 'Swap enabled', unit: 'boolean', description: 'Enables modeled swap capacity and I/O.', relationship: 'Requires a compatible memory policy; controls swap capacity/write ratio/touch fraction relevance.' },
+  pf: { label: 'Prefetch enabled', unit: 'boolean', description: 'Enables Expert prefetch before demand.', relationship: 'Controls whether policy, recall, precision, and budget affect the run.' },
+  prefetchPolicy: { label: 'Prefetch policy', unit: 'category', description: 'Selects how candidate Experts are predicted.', relationship: 'Conditional on prefetch enabled; none disables prediction effects.' },
+  qd: { label: 'Storage queue depth / workers', unit: 'requests', description: 'Maximum modeled parallel storage service slots.', relationship: 'Interacts with SSD bandwidth and base latency; more workers do not raise the configured SSD bandwidth cap.' }
+});
+
+const SWEEP_UNITS = Object.freeze({
+  prompt: 'tokens', output: 'tokens', context: 'tokens', conc: 'sequences', seed: 'integer', lat: 'µs', layers: 'layers', esize: 'MB/expert', resident: 'GB', kvKB: 'KB/token', dcache: 'GB', minDCache: 'GB', vcache: 'GB', pinned: 'GB', page: 'GB', corr: 'ratio (0–1)', attn: 'ms/token', ems: 'ms/expert', par: 'experts', prefillSpeedup: '×', recall: 'ratio (0–1)', precision: 'ratio (0–1)', budget: 'MB/layer', totalB: 'billion parameters', hidden: 'channels', projections: 'projections', chunks: 'chunks', bits: 'bits/weight', packing: '×', commonGB: 'GB', freq: 'tokens', overlap: 'ratio (0–1)', initSel: 'ms', periodicSel: 'ms', patchBase: 'ms', patchBW: 'GB/s', ffn: 'ms/token', runtime: 'ms/token', prefillTPS: 'tokens/s', 'mem.backgroundGB': 'GB', 'mem.osReservedGB': 'GB', 'mem.minHeadroomGB': 'GB', 'mem.compressionRatio': '×', 'mem.compressionBW': 'GB/s', 'mem.swapCapacityGB': 'GB', 'mem.swapWriteRatio': 'ratio', 'mem.kvTouchFraction': 'ratio (0–1)'
+});
+
+function sweepHumanLabel(path) {
+  return path.replace(/^mem\./, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replaceAll('.', ' / ').replace(/^./, value => value.toUpperCase());
+}
+
+function sweepParameterGuide(descriptor, config = {}) {
+  const explicit = SWEEP_GUIDE[descriptor.path] || {};
+  const typeUnit = descriptor.type === 'boolean' ? 'boolean' : descriptor.type === 'enum' ? 'category' : 'unitless';
+  const categoryMeaning = {
+    Workload: 'Defines the synthetic request population; it changes demand rather than hardware capacity.',
+    Memory: 'Controls memory capacity, residency, pressure, compression, or swap behavior.',
+    Model: 'Controls model topology or calibrated model footprint.',
+    Compute: 'Controls a calibrated compute or runtime stage.',
+    Prefetch: 'Controls speculative Expert loading and its accuracy or budget.',
+    'System / Storage': 'Controls a hardware capacity, transfer stage, or storage service limit.'
+  }[descriptor.category] || 'Controls one simulator input.';
+  return {
+    path: descriptor.path,
+    label: explicit.label || sweepHumanLabel(descriptor.path),
+    unit: explicit.unit || SWEEP_UNITS[descriptor.path] || typeUnit,
+    description: explicit.description || categoryMeaning,
+    relationship: explicit.relationship || 'OAT changes only this configured value; validity and downstream bottlenecks can still depend on other inputs.',
+    behavior: explicit.behavior || 'Metrics change only when this resource or behavior is exercised on the active critical path; a flat sweep can be a valid saturation result.'
+  };
+}
+
 function sweepDescriptor(path, category, min, max, options = {}) {
   return Object.freeze({ path, category, min, max, type: options.type || 'number', integer: Boolean(options.integer), values: options.values || null, label: options.label || path });
 }

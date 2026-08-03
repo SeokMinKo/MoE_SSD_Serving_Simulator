@@ -518,11 +518,15 @@ function renderModelPresetSummary(preset) {
   const source = safeSourceUrl
     ? `<a href="${presetHtml(safeSourceUrl)}" target="_blank" rel="noopener noreferrer">source config</a>`
     : 'source unavailable';
+  const openWeights = /open weights\/config/i.test(String(preset.disclosureStatus));
+  const calibration = openWeights
+    ? '<span><b>Open weights/config:</b> routing topology is automatically applied. Runtime calibration still requires measured or explicitly assumed inputs: quantized Expert payload size, resident non-routed weights, KV bytes/token, attention/Expert timing, and hardware.</span>'
+    : '<span>Published topology is automatically applied. Quantized Expert payload size, resident non-routed weights, KV bytes/token, runtime timing, and hardware remain explicit calibration inputs.</span>';
   summary.innerHTML = `<b>Topology only · ${presetHtml(preset.model)}</b><br>` +
     `${presetHtml(preset.family)} · ${presetHtml(preset.releaseDate)} · total ${presetNumber(preset.totalParamsB, 'B')} / active ${presetNumber(preset.activeParamsB, 'B')}<br>` +
     `${preset.transformerLayers} Transformer layers · ${preset.layers} MoE · ${preset.denseLayers} dense · ${preset.experts} routed Experts · top-k ${preset.active} · ${presetNumber(preset.sharedExperts)} shared<br>` +
     `${presetHtml(preset.layerScheduleNotes)} · Disclosure: ${presetHtml(preset.disclosureStatus)} · ${source}<br>` +
-    '<span class="bad">Expert size, resident weights, KV, compute, and hardware remain manual calibration inputs.</span>';
+    calibration;
 }
 
 function initializeModelPresets() {
