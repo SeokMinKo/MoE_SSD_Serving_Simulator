@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MoE SSD Serving Simulator V1.6</title>
+<title>MoE SSD Serving Simulator V1.6.2</title>
 <style>
 :root{color-scheme:dark;--b:#07111e;--p:#101d2e;--p2:#071525;--l:#29445f;--t:#edf5ff;--m:#9db0c8;--a:#67d9ff;--g:#72e3a6;--w:#ffd36b;--r:#ff8696;--violet:#a78bfa}
 *{box-sizing:border-box}body{margin:0;overflow-x:hidden;background:var(--b);color:var(--t);font:14px system-ui,-apple-system,sans-serif}.wrap{max-width:1580px;margin:auto;padding:16px}h1{margin:0;font-size:24px}.sub{color:var(--m);margin:4px 0 14px}.grid{display:grid;grid-template-columns:385px minmax(0,1fr);gap:14px}.panel,main{min-width:0}.panel{background:var(--p);border:1px solid var(--l);border-radius:14px;padding:14px}.controls{display:grid;gap:8px;align-content:start}.section{font-weight:800;border-top:1px solid var(--l);padding-top:10px;margin-top:4px}.f{display:grid;grid-template-columns:minmax(0,1fr) minmax(110px,138px);gap:10px;align-items:center}.f label{color:#cfdded;font-size:12px}.f small{grid-column:1/-1;color:var(--m);font-size:10px;margin-top:-5px}.f.presetControl{grid-template-columns:1fr}.presetControl label,.presetControl select{grid-column:1/-1}input,select,button,textarea{width:100%;padding:8px;border:1px solid var(--l);border-radius:8px;background:var(--p2);color:var(--t)}input[type=checkbox]{width:19px;justify-self:end}button{background:#155f7b;font-weight:750;cursor:pointer}.buttons{display:grid;grid-template-columns:2fr 1fr 1fr;gap:7px}.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}.kpi{background:var(--p2);border:1px solid var(--l);border-radius:10px;padding:11px}.kpi b{font-size:20px;display:block;margin-top:4px}.kpi span{color:var(--m);font-size:10px}.advisor{margin:12px 0;padding:12px;border:1px solid var(--l);border-radius:10px;background:#091728}.advisorHead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}.advisorHead h2{font-size:16px;margin:0}.advisorGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:9px}.phaseCard{min-width:0;border:1px solid #21364f;border-radius:9px;background:var(--p2);padding:9px}.phaseCard h3{font-size:13px;margin:0 0 3px}.phaseNote{min-height:30px;color:var(--m);font-size:10px}.resourceInsight{border-top:1px solid #21364f;padding:6px 0}.resourceInsight summary{cursor:pointer;display:flex;justify-content:space-between;gap:6px;color:#cfdded;font-size:11px}.score{font-weight:800;color:var(--a)}.scoreHigh{color:var(--r)}.scoreMedium{color:var(--w)}.advisorEvidence{margin:6px 0;padding-left:16px;color:var(--m);font-size:10px}.advisorEvidence li{margin:3px 0}.advisorRecommendation{font-size:10px;line-height:1.45;color:#cfdded}.advisorUnavailable{padding:10px;color:var(--w)}.token{min-height:165px;background:#050d17;border:1px solid var(--l);border-radius:10px;padding:14px;font:14px/1.65 ui-monospace,monospace;white-space:pre-wrap}.bar{height:8px;background:#06111e;border-radius:99px;overflow:hidden;margin-top:10px}.bar div{height:100%;background:linear-gradient(90deg,var(--a),#8e83ff);width:0}.rows{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}.tbl{width:100%;border-collapse:collapse}.tbl td{padding:7px;border-bottom:1px solid #21364f}.tbl td:last-child{text-align:right}.warn{border:1px solid #725d26;background:#3c3217;padding:10px;border-radius:9px;color:#ffe5a3;margin-bottom:12px}.bad{color:var(--r)}.good{color:var(--g)}.afmMark{color:var(--violet);font-weight:700}canvas{width:100%;height:250px;background:var(--p2);border:1px solid var(--l);border-radius:10px}.status{color:var(--m);font-size:11px;margin-top:8px}.tests{white-space:pre-wrap;font:11px ui-monospace,monospace;background:#06111e;padding:9px;border-radius:8px;max-height:210px;overflow:auto}.note{font-size:11px;color:var(--m);line-height:1.5}.cursor{display:inline-block;width:7px;height:15px;background:var(--a);vertical-align:text-bottom;animation:blink 1s step-end infinite}.modeBadge{display:inline-block;padding:2px 7px;border-radius:99px;border:1px solid var(--l);font-size:10px;color:var(--a);margin-left:6px}.hidden{display:none!important}.pressureNormal{color:var(--g)}.pressureReclaim{color:var(--w)}.pressureSwap{color:var(--r)}@keyframes blink{50%{opacity:0}}@media(prefers-reduced-motion:reduce){.cursor{animation:none}.bar div{transition:none}}@media(max-width:1150px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(3,1fr)}.advisorGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.rows{grid-template-columns:1fr}}@media(max-width:600px){.wrap{padding:8px}.panel{padding:10px}.f{grid-template-columns:minmax(0,1fr) minmax(120px,44%)}input,select,button,textarea{min-height:44px}input[type=checkbox]{width:44px;height:44px}.buttons:has(#run){position:static;padding:7px;background:var(--p);border:1px solid var(--l);border-radius:10px}.kpis{grid-template-columns:repeat(2,1fr)}.advisorGrid{grid-template-columns:1fr}.advisor{padding:9px}h1{font-size:20px}}
@@ -27,7 +27,7 @@
 </style>
 </head>
 <body><div id="copyStatus" class="copyStatus" role="status" aria-live="polite"></div><div class="wrap">
-<header class="appHeader"><div><div class="eyebrow">MoE 서빙 시스템 분석</div><h1>MoE SSD Serving Simulator <small>V1.6</small><span id="modeBadge" class="modeBadge">Colibri</span></h1>
+<header class="appHeader"><div><div class="eyebrow">MoE 서빙 시스템 분석</div><h1>MoE SSD Serving Simulator <small>V1.6.2</small><span id="modeBadge" class="modeBadge">Colibri</span></h1>
 <div class="sub">HW·memory policy 변화가 serving throughput과 병목에 미치는 영향을 비교합니다.</div></div><div class="headerActions"><button id="themeToggle" class="themeToggle" type="button" aria-pressed="false" aria-label="밝은 테마로 전환">밝게</button><div class="trustBadge">추정 민감도 · 미검증 알파</div></div></header>
 <div id="warn" class="warn" hidden></div>
 <nav id="guidedWorkflow" class="guidedWorkflow" aria-label="분석 단계"><button class="guideStep" data-guide-step="1" aria-current="step"><span class="stepNumber">1</span><span><b>시나리오 설정</b><small>모델 · 하드웨어 · 워크로드</small></span></button><button class="guideStep" data-guide-step="2"><span class="stepNumber">2</span><span><b>결과와 병목</b><small>전체 TPS · 자원 압력</small></span></button><button class="guideStep" data-guide-step="3"><span class="stepNumber">3</span><span><b>개선 검증</b><small>실행 기반 합성 OAT 비교 (Executed synthetic OAT counterfactual)</small></span></button></nav>
@@ -41,8 +41,8 @@
 <div class="f"><label>모델 / 실행 엔진</label><select id="mode"><option value="colibri">Colibri Token-Routed MoE</option><option value="afm3">AFM 3 Core Advanced IFP</option></select><small>AFM 3은 32-token window 동안 선택된 subnetwork를 유지합니다.</small></div>
 
 <div class="section">워크로드 / 재생</div>
-<div class="f"><label>프롬프트 토큰 수</label><input id="prompt" type="number" value="128" min="1"></div>
-<div class="f"><label>출력 토큰 수</label><input id="output" type="number" value="64" min="1" max="512"></div>
+<div class="f"><label>프롬프트 토큰 수</label><input id="prompt" type="number" value="128" min="0" max="1000000" step="1"></div>
+<div class="f"><label>출력 토큰 수</label><input id="output" type="number" value="64" min="1" max="1024" step="1"></div>
 <div class="f"><label>컨텍스트 토큰 수</label><input id="context" type="number" value="4096" min="1"></div>
 <div class="f"><label>동시 시퀀스 수</label><input id="conc" type="number" value="1" min="1"></div>
 <div class="f colibriOnly"><label>콜드 Expert 캐시</label><input id="cold" type="checkbox" checked></div>
@@ -62,7 +62,7 @@
 
 <div class="afmOnly hidden">
 <div class="section">AFM 3 Core Advanced</div>
-<div class="f"><label>전체 모델 매개변수 (B)</label><input id="afmTotalB" type="number" value="20" min="1" step="0.1"></div>
+<div class="f"><label>전체 모델 매개변수 (B)</label><input id="afmTotalB" type="number" value="20" min="1" step="0.1"><small>NAND 저장 용량 산정용 메타데이터입니다. TTFT·TPOT·TPS·상주 메모리에는 영향을 주지 않으며 성능 스윕에서 제외됩니다.</small></div>
 <div class="f"><label>레이어 수</label><input id="afmLayers" type="number" value="44" min="1"></div>
 <div class="f"><label>Hidden 차원</label><input id="afmHidden" type="number" value="1536" min="1"></div>
 <div class="f"><label>활성 Expert 수</label><input id="afmActive" type="number" value="46" min="1"></div>
@@ -101,7 +101,7 @@
 <div class="f"><label>압축 대역폭 (GB/s)</label><input id="compressionBW" type="number" value="25" min="0.1" step="1"></div>
 <div class="f"><label>스왑 사용</label><input id="swapEnabled" type="checkbox" checked></div>
 <div class="f"><label>스왑 용량 (GB)</label><input id="swapCapacityGB" type="number" value="32" min="0" step="1"></div>
-<div class="f"><label>스왑 쓰기 대역폭 비율</label><input id="swapWriteRatio" type="number" value="0.7" min="0.05" max="2" step="0.05"></div>
+<div class="f"><label>스왑 쓰기 대역폭 비율</label><input id="swapWriteRatio" type="number" value="0.7" min="0.001" max="1" step="0.001"></div>
 <div class="f"><label>KV 재접근 비율</label><input id="kvTouchFraction" type="number" value="1" min="0" max="1" step="0.05"><small>Swap된 KV 중 매 token에서 다시 접근하는 비율입니다.</small></div>
 
 <div class="colibriOnly">
