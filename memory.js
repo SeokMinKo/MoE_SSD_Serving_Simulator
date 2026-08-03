@@ -148,6 +148,8 @@ function touchMemoryAtTokenStart(c, state, storage, now) {
   let storageQueueMs = 0;
   let readyAt = now;
   const f = c.mem.kvTouchFraction;
+  const residentCompressedOriginal = state.kvCompressedOriginalGB;
+  let swappedInCompressedOriginal = 0;
 
   const rawOriginal = state.kvSwapRawOriginalGB * f;
   if (rawOriginal > EPS) {
@@ -163,6 +165,7 @@ function touchMemoryAtTokenStart(c, state, storage, now) {
 
   const compressedOriginal = state.kvSwapCompressedOriginalGB * f;
   if (compressedOriginal > EPS) {
+    swappedInCompressedOriginal = compressedOriginal;
     const storedGB = compressedOriginal / c.mem.compressionRatio;
     const job = storage.reserveGB(storedGB, now, 'swap-in-read', 1, 1);
     storageServiceMs += job.service;
@@ -174,7 +177,9 @@ function touchMemoryAtTokenStart(c, state, storage, now) {
     swapInGB += storedGB;
   }
 
-  const compressedTouch = state.kvCompressedOriginalGB * f;
+  // Bytes fetched for this touch are already selected by f. Applying f again
+  // would undercount their decompression cost by f².
+  const compressedTouch = residentCompressedOriginal * f + swappedInCompressedOriginal;
   if (compressedTouch > EPS) {
     compressionTrafficGB = compressedTouch * (1 + 1 / c.mem.compressionRatio);
     compressionCpuMs = compressedTouch / c.mem.compressionBW * 1000;
