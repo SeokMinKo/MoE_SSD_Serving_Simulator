@@ -11,6 +11,7 @@ function helpUnit(id, label) {
 }
 
 function helpDirection(id) {
+  if (id === 'afmTotalB') return 'NAND 저장 용량 산정용 메타데이터이며 TTFT·TPOT·TPS·상주 메모리에는 영향을 주지 않습니다.';
   if (/BW$|PrefillTPS$|host$|vram$|cache$|dcache$|vcache$|pinned$|page$|par$|prefillSpeedup$|compressionRatio$/i.test(id)) return '증가하면 이 합성 시뮬레이터에서 관련 처리량 또는 상주 용량이 커질 수 있지만 다른 병목이나 메모리 비용이 생길 수 있습니다.';
   if (/lat$|Sel$|Base$|attn$|ems$|FFN$|Runtime$|prompt$|output$|context$|conc$/i.test(id)) return '증가하면 이 합성 시뮬레이터에서 작업량·지연·메모리 압력이 커질 수 있습니다.';
   return '변경 효과는 현재 합성 추적과 적용 조건에 따라 달라지며 실제 하드웨어 개선을 보장하지 않습니다.';

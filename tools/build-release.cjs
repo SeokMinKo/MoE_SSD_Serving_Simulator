@@ -42,7 +42,7 @@ if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('Release provenance requires
 
 const readCommitted = relative => execFileSync('git', ['show', `${commit}:${relative}`], { cwd: root });
 const pkg = JSON.parse(readCommitted('package.json').toString('utf8'));
-if (!/^1\.6\.1(?:$|-)/.test(pkg.version)) throw new Error(`Release package version must identify v1.6.1, received ${pkg.version}.`);
+if (!/^1\.6\.2(?:$|-)/.test(pkg.version)) throw new Error(`Release package version must identify v1.6.2, received ${pkg.version}.`);
 
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });

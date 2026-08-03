@@ -2,7 +2,7 @@
 
 브라우저에서 실행되는 Colibri 및 AFM 3 Core Advanced용 SSD/NAND offloading 시뮬레이터입니다. 절대 성능 예측보다 **Storage·DRAM·Memory Capacity·Swap 정책 변화에 따른 병목과 상대 트렌드 분석**을 목표로 합니다.
 
-> Current version: **V1.5 — Estimated sensitivity simulator / Unvalidated Alpha**
+> Current version: **V1.6.2 — Estimated sensitivity simulator / Unvalidated Alpha**
 
 ## 실행
 
@@ -58,7 +58,11 @@ node tools/hardware-sweep.cjs
 
 HW selector는 Synthetic 이름 대신 NVIDIA DGX Spark, Apple MacBook Pro/Studio, NVIDIA GeForce RTX 5090, AMD Radeon PRO W7900 제품 target을 제공합니다. 각 preset은 공식 사양에서 simulator 필드로 직접 대응되는 값만 적용합니다. GPU 단품 preset의 host/SSD/effective PCIe 값이나 제품 FLOPS에서 추정한 kernel timing은 임의로 채우지 않습니다. 매핑과 공식 출처는 [`docs/hardware-presets.md`](docs/hardware-presets.md)에 기록합니다.
 
-## V1.5 주요 변경
+## V1.6.2 주요 변경
+
+- 압축 KV partial-touch에서 이번에 swap-in한 원본에 재접근 비율을 두 번 적용하던 해제 비용 과소계산 수정
+- AFM `totalB`를 성능 Sweep에서 제외하고 NAND 저장 용량 산정용 메타데이터로 명시
+- `prompt`, `output`, `swapWriteRatio`의 검증·Sweep·브라우저 허용 범위를 단일 계약으로 통합
 
 - 계산에 사용하는 모든 필수 numeric/enum/boolean 및 관계 조건을 실행 전에 fail-closed 검증
 - 잘못된 입력을 clamp·정렬·32-bit wrapping하지 않으며 오류 시 이전 KPI·playback·canvas를 폐기
@@ -68,7 +72,7 @@ HW selector는 Synthetic 이름 대신 NVIDIA DGX Spark, Apple MacBook Pro/Studi
 - Stable min-heap event queue, 공유 SSD/DRAM/PCIe/compute timeline, request arrival과 admission-window batching
 - 단일 요청에서는 analytic token timeline을 보존하고, 다중 요청에서는 그 baseline에 공유 자원의 queue contention을 추가
 - Swap read/write를 shared SSD contention에 포함하고 AFM selector/initial patch/prefill을 TTFT event chain에 포함
-- `moe-ssd-sim/v3` JSON export/import, deterministic Run ID, baseline diff, result·Advisor insight·completed parameter sweep replay 검증. V2 artifact import는 의도적으로 호환하지 않으며 V3로 다시 export해야 합니다.
+- `moe-ssd-sim/v4` JSON export/import, deterministic Run ID, baseline diff, result·Advisor insight·completed parameter sweep replay 검증. V3 이하 artifact import는 호환하지 않으며 현재 버전에서 다시 export해야 합니다.
 - Prefill/first-token/decode/memory-pressure별 0–100 상대 병목 압력, 근거, 조건부 설정 방향 및 부작용
 - 공개 구조가 완전한 29개 MoE 모델의 topology-only 프리셋과 원본 config provenance
 - Node 22 syntax/test CI, mobile 44px touch targets, reduced-motion, canvas와 동등한 token trace 표
@@ -97,7 +101,7 @@ HW selector는 Synthetic 이름 대신 NVIDIA DGX Spark, Apple MacBook Pro/Studi
 - 각 scenario 사이에서 pause/resume/cancel할 수 있으며 이미 완료된 결과는 보존합니다.
 - 결과는 baseline과 함께 TTFT mean/p50/p95, single-sequence TPS, aggregate TPS를 별도 그래프와 raw table로 표시합니다.
 - invalid/OOM point는 raw status와 reason을 보존하고 그래프에서 정상점으로 연결하지 않습니다.
-- CSV export와 scenario V3 JSON export를 지원합니다. JSON import는 저장된 sweep 결과를 신뢰하지 않고 최대 50개 scenario를 deterministic replay합니다.
+- CSV export와 scenario V4 JSON export를 지원합니다. JSON import는 저장된 sweep 결과를 신뢰하지 않고 최대 50개 scenario를 deterministic replay합니다.
 
 이 기능은 사용자 실행형 synthetic counterfactual 분석이며 Advisor가 자동으로 개선율을 예측하는 기능이 아닙니다.
 
@@ -133,6 +137,7 @@ npm test
 - V1.4 요구사항: [`docs/V1.4_HW_SENSITIVITY_SPEC.md`](docs/V1.4_HW_SENSITIVITY_SPEC.md)
 - V1.4 검증 결과: [`docs/v1.4-validation.md`](docs/v1.4-validation.md)
 - V1.5 검증 결과와 신뢰 경계: [`docs/v1.5-validation.md`](docs/v1.5-validation.md)
+- V1.6.2 계산·입력·메타데이터 계약: [`docs/v1.6.2-correctness-contract.md`](docs/v1.6.2-correctness-contract.md)
 - 모델 프리셋 매핑과 제외 범위: [`docs/model-presets.md`](docs/model-presets.md)
 - Bottleneck Advisor 점수와 artifact 계약: [`docs/bottleneck-advisor.md`](docs/bottleneck-advisor.md)
 - 상세 계획 및 검토: [`docs/DRAM_SWAP_IMPLEMENTATION_PLAN.md`](docs/DRAM_SWAP_IMPLEMENTATION_PLAN.md)
@@ -144,9 +149,9 @@ npm test
 - Prefill routing union과 cache hit는 synthetic Zipf aggregate estimate입니다.
 - GPU VRAM bandwidth, GPU page migration, kernel launch/graph 최적화는 모델링하지 않습니다.
 - Discrete GPU의 고정 runtime/device weight 사용량은 0.8GB workspace calibration으로 단순화합니다.
-- V1.5 scheduler는 analytic trace를 no-contention baseline으로 사용하는 resource-level approximation입니다. Aggregate roofline work는 streaming overlap으로 취급하고 공유 자원의 queue delay를 추가합니다. GPU kernel-level batching, scheduler fairness, request 간 Expert-cache 공유, in-flight read coalescing은 모델링하지 않습니다.
+- V1.6.2 scheduler는 analytic trace를 no-contention baseline으로 사용하는 resource-level approximation입니다. Aggregate roofline work는 streaming overlap으로 취급하고 공유 자원의 queue delay를 추가합니다. GPU kernel-level batching, scheduler fairness, request 간 Expert-cache 공유, in-flight read coalescing은 모델링하지 않습니다.
 - SSD QD는 command-latency wave와 aggregate bandwidth cap으로 근사하며 실제 outstanding-slot service curve가 아닙니다.
-- Scenario import의 동일 결과/Run ID/Advisor insight/sweep 검증은 같은 V1.5 JavaScript 모델의 deterministic replay이며 외부 독립 oracle이 아닙니다.
+- Scenario import의 동일 결과/Run ID/Advisor insight/sweep 검증은 같은 V1.6.2 JavaScript 모델의 deterministic replay이며 외부 독립 oracle이 아닙니다.
 - CPU/GPU 제품명이나 FLOPS에서 kernel 시간을 자동 산출하지 않습니다.
 - 모델/런타임 trace와 SSD service curve로 calibration하기 전에는 절대 TPS/TTFT 오차 범위를 보장할 수 없습니다.
 - 절대 TPS보다 동일 설정에서 변수 하나를 변경한 상대 비교에 사용하십시오.

@@ -109,8 +109,8 @@ function simulatorProvenance() {
   const readIdentity = (key, fallback) => typeof injected[key] === 'string' && injected[key] ? injected[key] : fallback;
   return Object.freeze({
     schemaVersion: readIdentity('schemaVersion', 'moe-ssd-sim/v4'),
-    modelVersion: readIdentity('modelVersion', '1.6.1-candidate'),
-    packageVersion: readIdentity('packageVersion', '1.6.1'),
+    modelVersion: readIdentity('modelVersion', '1.6.2'),
+    packageVersion: readIdentity('packageVersion', '1.6.2'),
     commit: readIdentity('commit', 'development'),
     buildVersion: readIdentity('buildVersion', 'source-tree')
   });
@@ -246,7 +246,9 @@ function validateServingRequests(config, requestSpecs, options) {
     const arrivalMs = spec.arrivalMs ?? 0;
     if (!Number.isFinite(arrivalMs) || arrivalMs < 0 || arrivalMs > 1_000_000_000) return `Request ${id} arrivalMs must be finite and nonnegative.`;
     const output = spec.output ?? config.output;
-    if (!Number.isSafeInteger(output) || output < 1 || output > 1024) return `Request ${id} output must be a safe integer between 1 and 1024.`;
+    if (!Number.isSafeInteger(output) || output < SIMULATION_LIMITS.output.min || output > SIMULATION_LIMITS.output.max) {
+      return `Request ${id} output must be a safe integer between ${SIMULATION_LIMITS.output.min} and ${SIMULATION_LIMITS.output.max}.`;
+    }
     totalOutput += output;
   }
   if (totalOutput > 65_536) return 'Total requested output exceeds the serving work budget.';

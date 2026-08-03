@@ -87,7 +87,7 @@ function renderColibri(r) {
     ['장치 캐시 / KV / 예약 영역', `${fmt(last.deviceUsedGB, 3)} / ${fmt(r.c.vram, 1)} GB`],
     ['O_DIRECT', r.c.odirect ? '사용' : '사용 안 함']
   ]);
-  $('modelStatus').innerHTML = `<b>추정 모델 · Colibri V1.5 이벤트/자원 모델</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>프리필 단계에서 Expert 계층을 준비합니다. 요청 읽기, 인과적 프리페치, 스왑 인·아웃은 스토리지를 공유합니다. 동시성 &gt; 1에서는 공유 SSD·PCIe·DRAM과 배치 연산 자원을 이벤트 큐로 모델링합니다.<br><br><b>해석:</b> 결과는 실측 하드웨어 예측값이 아니라 아직 보정되지 않은 민감도 추정값입니다. 완료된 요청은 공유 Expert 캐시 상주 상태에 반영되며, 동시에 발생한 miss는 보수적으로 독립 처리합니다. GPU VRAM 대역폭과 OS 페이지 단위 동작은 모델 범위 밖입니다.`;
+  $('modelStatus').innerHTML = `<b>추정 모델 · Colibri V1.6.2 이벤트/자원 모델</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>프리필 단계에서 Expert 계층을 준비합니다. 요청 읽기, 인과적 프리페치, 스왑 인·아웃은 스토리지를 공유합니다. 동시성 &gt; 1에서는 공유 SSD·PCIe·DRAM과 배치 연산 자원을 이벤트 큐로 모델링합니다.<br><br><b>해석:</b> 결과는 실측 하드웨어 예측값이 아니라 아직 보정되지 않은 민감도 추정값입니다. 완료된 요청은 공유 Expert 캐시 상주 상태에 반영되며, 동시에 발생한 miss는 보수적으로 독립 처리합니다. GPU VRAM 대역폭과 OS 페이지 단위 동작은 모델 범위 밖입니다.`;
 }
 function renderAFM(r) {
   $('tpotLabel').textContent = '유효 TPOT';
@@ -124,9 +124,9 @@ function renderAFM(r) {
     ['이중 버퍼', `${fmt(r.c.doubleBuffer ? r.d.routedGB : 0, 3)} GB`],
     ['상주 KV', `${fmt(last.kvResidentGB, 3)} GB`],
     ['스왑 할당 / 처리 중', `${fmt(last.swapGB, 3)} GB`],
-    ['추정 전체 20B NAND', `${fmt(r.d.totalNandGB, 3)} GB`]
+    [`추정 전체 ${fmt(r.c.totalB, 3)}B NAND (용량 메타데이터)`, `${fmt(r.d.totalNandGB, 3)} GB`]
   ]);
-  $('modelStatus').innerHTML = `<b>추정 모델 · AFM 3 V1.5 이벤트/자원 모델</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>공유 Expert와 현재 Routed Expert 집합은 고정 상주합니다. 동시성 &gt; 1에서는 공유 이벤트 기반 자원과 배치 연산을 사용합니다.<br><br><span class="afmMark">Constant Table 없음:</span> 실제 Expert ID와 레이어 마스크를 복원하지 않고, 중복률 기반 델타 로딩을 사용합니다.`;
+  $('modelStatus').innerHTML = `<b>추정 모델 · AFM 3 V1.6.2 이벤트/자원 모델</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>공유 Expert와 현재 Routed Expert 집합은 고정 상주합니다. 동시성 &gt; 1에서는 공유 이벤트 기반 자원과 배치 연산을 사용합니다.<br><br><span class="afmMark">Constant Table 없음:</span> 실제 Expert ID와 레이어 마스크를 복원하지 않고, 중복률 기반 델타 로딩을 사용합니다.`;
 }
 function clearRenderedResult() {
   if (typeof stop === 'function') stop();

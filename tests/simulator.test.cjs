@@ -17,6 +17,8 @@ const source = ['core.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js']
     .join('') + `
 globalThis.__simulator = {
   StorageResource,
+  createMemoryState,
+  touchMemoryAtTokenStart,
   SharedServingResource,
   rng: typeof rng === 'function' ? rng : null,
   simulateColibri,
@@ -28,6 +30,8 @@ globalThis.__simulator = {
   simulateAFM,
   afmDerived,
   validateSimulationConfig: typeof validateSimulationConfig === 'function' ? validateSimulationConfig : null,
+  simulationLimits: typeof SIMULATION_LIMITS === 'undefined' ? null : SIMULATION_LIMITS,
+  applySimulationInputLimits: typeof applySimulationInputLimits === 'function' ? applySimulationInputLimits : null,
   applyColibriPlacement: typeof applyColibriPlacement === 'function' ? applyColibriPlacement : null,
   EventQueue: typeof EventQueue === 'function' ? EventQueue : null,
   simulateServing: typeof simulateServing === 'function' ? simulateServing : null,
@@ -216,6 +220,105 @@ test('P0: simulators fail closed on invalid configuration', () => {
   assert.match(result.error, /Invalid configuration/);
   assert.ok(result.validationErrors.some(error => error.path === 'active'));
   assert.ok(result.validationErrors.some(error => error.path === 'mem.thresholds'));
+});
+
+test('F-01: compressed KV partial touch decompresses newly swapped-in bytes exactly once', () => {
+  const residentCases = [
+    { label: 'resident-only', residentOriginalGB: 1, swappedOriginalGB: 0 },
+    { label: 'swap-only', residentOriginalGB: 0, swappedOriginalGB: 1 },
+    { label: 'mixed', residentOriginalGB: 0.5, swappedOriginalGB: 0.5 }
+  ];
+
+  for (const compressionRatio of [1, 2, 4]) {
+    for (const touchFraction of [0, 0.25, 0.5, 1]) {
+      for (const sample of residentCases) {
+        const config = colibriConfig({
+          mem: memoryPolicy({ compressionRatio, compressionBW: 10, kvTouchFraction: touchFraction })
+        });
+        const state = simulator.createMemoryState(config, 'colibri', 0);
+        state.kvCompressedOriginalGB = sample.residentOriginalGB;
+        state.kvSwapCompressedOriginalGB = sample.swappedOriginalGB;
+        state.swapStoredGB = sample.swappedOriginalGB / compressionRatio;
+        const storage = new simulator.StorageResource(config);
+
+        const touched = simulator.touchMemoryAtTokenStart(config, state, storage, 0);
+        const swappedInOriginalGB = sample.swappedOriginalGB * touchFraction;
+        const decompressedOriginalGB = sample.residentOriginalGB * touchFraction + swappedInOriginalGB;
+        const expectedTrafficGB = decompressedOriginalGB * (1 + 1 / compressionRatio);
+        const expectedSwapInGB = swappedInOriginalGB / compressionRatio;
+        const label = `${sample.label}, ratio=${compressionRatio}, touch=${touchFraction}`;
+
+        assert.ok(Math.abs(touched.compressionTrafficGB - expectedTrafficGB) < 1e-12,
+          `${label}: decompression traffic ${touched.compressionTrafficGB}GB != ${expectedTrafficGB}GB`);
+        assert.ok(Math.abs(touched.swapInGB - expectedSwapInGB) < 1e-12,
+          `${label}: swap-in ${touched.swapInGB}GB != ${expectedSwapInGB}GB`);
+        assert.ok(Math.abs(state.kvCompressedOriginalGB + state.kvSwapCompressedOriginalGB - 1) < 1e-12,
+          `${label}: compressed original bytes were not conserved`);
+        assert.ok(Math.abs(state.kvCompressedOriginalGB / compressionRatio + state.swapStoredGB - 1 / compressionRatio) < 1e-12,
+          `${label}: compressed resident + swap bytes were not conserved`);
+      }
+    }
+  }
+});
+
+test('F-02: AFM totalB is capacity metadata and is not a performance sweep variable', () => {
+  const small = simulator.runSimulationConfig(afmConfig({ totalB: 10, output: 4, context: 128, host: 64 }));
+  const large = simulator.runSimulationConfig(afmConfig({ totalB: 40, output: 4, context: 128, host: 64 }));
+  const catalog = simulator.sweepCatalogForConfig(small.c);
+
+  assert.equal(catalog.some(descriptor => descriptor.path === 'totalB'), false,
+    'capacity-only totalB must not be offered as a performance sweep');
+  assert.equal(large.d.totalNandGB, small.d.totalNandGB * 4);
+  for (const path of ['ttft', 'avg', 'tps', 'agg', 'ssdPt', 'state.peakPhysicalGB', 'state.totalSwapInGB', 'state.totalSwapOutGB']) {
+    const read = (object, dotted) => dotted.split('.').reduce((value, key) => value[key], object);
+    assert.equal(read(large, path), read(small, path), `${path} changed with capacity-only totalB`);
+  }
+
+  const renderSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  assert.equal(renderSource.includes('추정 전체 20B NAND'), false, 'rendering must use the configured metadata value');
+  assert.match(renderSource, /r\.c\.totalB/);
+  assert.match(html, /NAND 저장 용량 산정용 메타데이터/);
+});
+
+test('F-11: workload and swap-write limits share one validation sweep and UI contract', () => {
+  const limits = simulator.simulationLimits;
+  assert.ok(limits, 'shared simulation limits are required');
+  assert.equal(typeof simulator.applySimulationInputLimits, 'function');
+
+  const config = colibriConfig();
+  const descriptors = new Map(simulator.sweepCatalogForConfig(config).map(descriptor => [descriptor.path, descriptor]));
+  const cases = [
+    { key: 'prompt', path: 'prompt', limit: limits.prompt },
+    { key: 'output', path: 'output', limit: limits.output },
+    { key: 'swapWriteRatio', path: 'mem.swapWriteRatio', limit: limits.swapWriteRatio }
+  ];
+
+  for (const sample of cases) {
+    const descriptor = descriptors.get(sample.path);
+    assert.equal(descriptor.min, sample.limit.min, `${sample.path} sweep minimum drifted`);
+    assert.equal(descriptor.max, sample.limit.max, `${sample.path} sweep maximum drifted`);
+  }
+
+  const controls = Object.fromEntries(cases.map(sample => [sample.key, {}]));
+  simulator.applySimulationInputLimits({ getElementById: id => controls[id] || null });
+  for (const sample of cases) {
+    assert.equal(controls[sample.key].min, String(sample.limit.min), `${sample.key} UI minimum drifted`);
+    assert.equal(controls[sample.key].max, String(sample.limit.max), `${sample.key} UI maximum drifted`);
+  }
+
+  for (const value of [limits.prompt.min, limits.prompt.max]) {
+    assert.equal(simulator.validateSimulationConfig(colibriConfig({ prompt: value })).valid, true);
+  }
+  for (const value of [limits.output.min, limits.output.max]) {
+    assert.equal(simulator.validateSimulationConfig(colibriConfig({ output: value })).valid, true);
+  }
+  for (const value of [limits.swapWriteRatio.min, limits.swapWriteRatio.max]) {
+    assert.equal(simulator.validateSimulationConfig(colibriConfig({ mem: memoryPolicy({ swapWriteRatio: value }) })).valid, true);
+  }
+  assert.equal(simulator.validateSimulationConfig(colibriConfig({ prompt: limits.prompt.min - 1 })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(colibriConfig({ output: limits.output.max + 1 })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(colibriConfig({ mem: memoryPolicy({ swapWriteRatio: limits.swapWriteRatio.max + 0.001 }) })).valid, false);
 });
 
 test('P0: simulator entry points return structured errors for non-object configs', () => {
@@ -2246,8 +2349,8 @@ test('P0: Run ID is fenced by schema model package commit and build identity', (
   const requests = [{ id: 'single', arrivalMs: 0, output: 1 }];
   const base = {
     schemaVersion: 'moe-ssd-sim/v4',
-    modelVersion: '1.6.1',
-    packageVersion: '1.6.1',
+    modelVersion: '1.6.2',
+    packageVersion: '1.6.2',
     commit: 'commit-a',
     buildVersion: 'web-static/v1'
   };
@@ -2257,7 +2360,7 @@ test('P0: Run ID is fenced by schema model package commit and build identity', (
     const changed = simulator.servingRunId(c, requests, { ...base, [key]: `${base[key]}-changed` });
     assert.notEqual(changed, baseline, `${key} was not fenced into the Run ID`);
   }
-  assert.match(baseline, /^sim-1\.6\.1-[0-9a-f]{16}$/);
+  assert.match(baseline, /^sim-1\.6\.2-[0-9a-f]{16}$/);
 });
 
 test('P0: release bundle derives exact clean HEAD identity from a tracked runtime allowlist', () => {
@@ -2282,8 +2385,8 @@ test('P0: release bundle derives exact clean HEAD identity from a tracked runtim
     const buildInfo = fs.readFileSync(path.join(output, 'build-info.js'), 'utf8');
     const html = fs.readFileSync(path.join(output, 'index.html'), 'utf8');
     assert.match(buildInfo, new RegExp(commit));
-    assert.match(buildInfo, /modelVersion: "1\.6\.1"/);
-    assert.match(buildInfo, /packageVersion: "1\.6\.1"/);
+    assert.match(buildInfo, /modelVersion: "1\.6\.2"/);
+    assert.match(buildInfo, /packageVersion: "1\.6\.2"/);
     assert.ok(html.indexOf('build-info.js') < html.indexOf('core.js'), 'provenance must load before simulator code');
     assert.equal(fs.existsSync(path.join(output, '.env')), false, 'ignored or tracked secrets must not enter the runtime manifest');
     assert.equal(fs.existsSync(path.join(output, 'tests')), false, 'tests must not enter the runtime manifest');
@@ -2438,7 +2541,7 @@ test('P0: AFM steady DRAM floor respects zero KV touch fraction', () => {
 });
 
 test('P0: MB KB and GB inputs use one documented decimal SI contract', () => {
-  const contract = fs.readFileSync(path.join(root, 'docs/v1.6.1-correctness-contract.md'), 'utf8');
+  const contract = fs.readFileSync(path.join(root, 'docs/v1.6.2-correctness-contract.md'), 'utf8');
   assert.match(contract, /1 GB = 1000 MB/);
   assert.match(contract, /1 MB = 1000 KB/);
   const placement = simulator.applyColibriPlacement(colibriConfig({
