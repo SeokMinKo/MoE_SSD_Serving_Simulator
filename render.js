@@ -11,7 +11,7 @@ function renderBottleneckAdvisor(insight) {
   if (!target) return;
   const heading = '<div class="advisorHead"><h2 id="advisorTitle">병목 분석 가이드</h2><span class="note">상대 압력 · 시뮬레이터 추적 전용</span></div>';
   if (!insight || insight.status === 'unavailable') {
-    target.innerHTML = `${heading}<div class="advisor사용할 수 없음"><b>${advisorEscape(insight?.reason || '사용할 수 없음')}</b><br><span class="note">${advisorEscape(insight?.disclaimer || '')}</span></div>`;
+    target.innerHTML = `${heading}<div class="advisorUnavailable"><b>${advisorEscape(insight?.reason || '사용할 수 없음')}</b><br><span class="note">${advisorEscape(insight?.disclaimer || '')}</span></div>`;
     return;
   }
   const cards = insight.phases.map(phase => {
@@ -22,11 +22,11 @@ function renderBottleneckAdvisor(insight) {
     }).join('');
     return `<article class="phaseCard"><h3>${advisorEscape(phase.label)}</h3><div class="phaseNote">${advisorEscape(phase.note)}</div>${resources}</article>`;
   }).join('');
-  const statusNote = insight.reason ? `<div class="advisor사용할 수 없음"><b>${advisorEscape(insight.reason)}</b></div>` : '';
+  const statusNote = insight.reason ? `<div class="advisorUnavailable"><b>${advisorEscape(insight.reason)}</b></div>` : '';
   target.innerHTML = `${heading}${statusNote}<div class="note">${advisorEscape(insight.disclaimer)}</div><div class="advisorGrid">${cards}</div>`;
 }
 
-function render압력(r) {
+function renderPressure(r) {
   const s = r.state;
   const thrash = s.totalSwapOutGB > EPS ? Math.min(1, s.totalSwapInGB / s.totalSwapOutGB) : 0;
   $('pressureSummary').innerHTML = rows([
@@ -168,12 +168,12 @@ function render(r) {
   $('tps').textContent = fmt(r.serving?.throughputTPS ?? r.agg ?? r.tps, 2);
   $('ssdpt').textContent = r.mode === 'afm3' ? mb(r.ssdPt) : `${fmt(r.ssdPt, 2)} GB`;
   $('hit').textContent = pct(r.hit);
-  $('mem').textContent = `${fmt(r.state.peakPhysicalGB, 1)} GB peak`;
+  $('mem').textContent = `${fmt(r.state.peakPhysicalGB, 1)} GB 최대`;
   const insight = createBottleneckInsight(r);
   renderBottleneckAdvisor(insight);
   if (typeof renderGuidedAnalysis === 'function') renderGuidedAnalysis(insight, r);
   r.mode === 'afm3' ? renderAFM(r) : renderColibri(r);
-  render압력(r);
+  renderPressure(r);
   renderTraceTable(r);
   drawPerformance(r);
   renderStorageIO(r);
@@ -181,12 +181,12 @@ function render(r) {
 }
 
 function renderTraceTable(r) {
-  const rows = r.tokens.map((token, index) => `<tr><th scope="row">Token ${index + 1}</th><td>${fmt(token.tpot, 3)} ms</td><td>${fmt(token.ssdGB || 0, 6)} GB</td><td>${fmt(token.memory.physicalUsedGB, 3)} GB</td><td>${fmt(token.memory.swapGB, 3)} GB</td><td>${token.memory.pressureState}</td></tr>`).join('');
-  $('traceSummary').innerHTML = `<caption>토큰 성능 및 메모리 추적</caption><thead><tr><th scope="col">Token</th><th scope="col">TPOT</th><th scope="col">SSD</th><th scope="col">물리 메모리</th><th scope="col">스왑 할당 / 처리 중</th><th scope="col">압력</th></tr></thead><tbody>${rows}</tbody>`;
+  const rows = r.tokens.map((token, index) => `<tr><th scope="row">토큰 ${index + 1}</th><td>${fmt(token.tpot, 3)} ms</td><td>${fmt(token.ssdGB || 0, 6)} GB</td><td>${fmt(token.memory.physicalUsedGB, 3)} GB</td><td>${fmt(token.memory.swapGB, 3)} GB</td><td>${token.memory.pressureState}</td></tr>`).join('');
+  $('traceSummary').innerHTML = `<caption>토큰 성능 및 메모리 추적</caption><thead><tr><th scope="col">토큰</th><th scope="col">TPOT</th><th scope="col">SSD</th><th scope="col">물리 메모리</th><th scope="col">스왑 할당 / 처리 중</th><th scope="col">압력</th></tr></thead><tbody>${rows}</tbody>`;
 }
 
 function storageIOUnit(yMode) {
-  return ({ gb: 'GB', gbps: 'GB/s', 'service-ms': 'ms service', 'queue-ms': 'ms queue' })[yMode] || 'GB';
+  return ({ gb: 'GB', gbps: 'GB/s', 'service-ms': '서비스 ms', 'queue-ms': '큐 대기 ms' })[yMode] || 'GB';
 }
 
 function chartAxisSpec(kind, options = {}) {
@@ -300,11 +300,11 @@ function drawCartesianAxes(context, options) {
 function renderStorageIO(r) {
   const xMode = $('storageXAxis')?.value || 'token-index';
   const yMode = $('storageYAxis')?.value || 'gb';
-  const buckets = buildStorageIO구간s(r, { xMode, yMode });
+  const buckets = buildStorageIOBuckets(r, { xMode, yMode });
   const table = $('storageTraceSummary');
   if (table) {
     const body = buckets.map(bucket => `<tr><th scope="row">${advisorEscape(bucket.label)}</th><td>${fmt(bucket.x, 4)}</td><td>${fmt(bucket.series.expertRead, 6)}</td><td>${fmt(bucket.series.prefetchRead, 6)}</td><td>${fmt(bucket.series.swapInRead, 6)}</td><td>${fmt(bucket.series.swapOutWrite, 6)}</td></tr>`).join('');
-    table.innerHTML = `<caption>Storage I/O by execution bucket · ${advisorEscape(storageIOUnit(yMode))}</caption><thead><tr><th scope="col">구간</th><th scope="col">X</th><th scope="col">Expert / 윈도 읽기</th><th scope="col">프리페치 읽기</th><th scope="col">스왑 인 읽기</th><th scope="col">스왑 아웃 쓰기</th></tr></thead><tbody>${body}</tbody>`;
+    table.innerHTML = `<caption>실행 구간별 스토리지 I/O · ${advisorEscape(storageIOUnit(yMode))}</caption><thead><tr><th scope="col">구간</th><th scope="col">X</th><th scope="col">Expert / 윈도 읽기</th><th scope="col">프리페치 읽기</th><th scope="col">스왑 인 읽기</th><th scope="col">스왑 아웃 쓰기</th></tr></thead><tbody>${body}</tbody>`;
   }
   const canvas = $('storageChart');
   if (!canvas || typeof canvas.getContext !== 'function') return;
@@ -343,7 +343,7 @@ function renderStorageIO(r) {
   });
   context.fillStyle = palette.text; context.font = '11px sans-serif';
   context.textAlign = 'left'; context.textBaseline = 'alphabetic';
-  if (viewMode !== 'overlay') context.fillText(`Read stacks + Write · ${storageIOUnit(yMode)}`, 8, 14);
+  if (viewMode !== 'overlay') context.fillText(`읽기 계층 + 쓰기 · ${storageIOUnit(yMode)}`, 8, 14);
 }
 
 function syncGraphView() {
@@ -386,7 +386,7 @@ function drawPerformance(r) {
   d.forEach((v, i) => { const xx = plotLeft + plotWidth * (overlay ? chartDomainPosition(i + 1, 0, d.length) : chartSeriesPosition(i, d.length)), yy = plotTop + plotHeight * (1 - v / mx); i ? x.lineTo(xx, yy) : x.moveTo(xx, yy); });
   x.stroke();
   if (d.length === 1) drawChartPoint(x, plotLeft + plotWidth * (overlay ? chartDomainPosition(1, 0, 1) : chartSeriesPosition(0, 1)), plotTop + plotHeight * (1 - d[0] / mx), '#1687b8');
-  x.fillStyle = palette.text; x.font = '11px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'alphabetic'; if (!overlay) x.fillText(r.mode === 'afm3' ? 'TPOT · violet = IFP boundary' : '토큰별 TPOT', 8, 14);
+  x.fillStyle = palette.text; x.font = '11px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'alphabetic'; if (!overlay) x.fillText(r.mode === 'afm3' ? 'TPOT · 보라색 = IFP 경계' : '토큰별 TPOT', 8, 14);
 }
 function drawMemory(r) {
   const cv = $('memoryChart'), x = cv.getContext('2d'), W = cv.width, H = cv.height;
