@@ -24,6 +24,8 @@ const releaseFiles = Object.freeze([
   'ui.js',
   'render.js',
   'playback.js',
+  'token-io.js',
+  'ui-shadcn.css',
   'sweep-ui.js',
   'export-ui.js',
   'tests-init.js',
