@@ -22,40 +22,42 @@
 .resultHero{padding:14px}.kpis{grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;padding:1px;background:var(--l);border-radius:9px;overflow:hidden}.kpi{border:0;border-radius:0;background:#0d0e10;padding:14px}.kpi b{font-size:21px;letter-spacing:-.04em}.kpi:nth-child(3){background:linear-gradient(145deg,rgba(113,112,255,.22),#14151a)}.kpi:nth-child(3) b{font-size:27px;color:#fff}.advisor{border-color:var(--l);background:#0d0e10;border-radius:8px}.advisorGrid{gap:1px;background:var(--l);padding:1px;border-radius:8px;overflow:hidden}.phaseCard{border:0;border-radius:0;background:#111214;padding:12px}.resourceInsight{border-color:var(--l)}.token{min-height:96px;background:#090a0b;border-color:var(--l);color:#d0d6e0}.guidedAnalysis{scroll-margin-top:82px}.guidedAnalysisHead{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.guidedAnalysisHead h2{margin:0;font-size:18px}.guidedAnalysisHead p{margin:5px 0 0;color:var(--m);font-size:11px;max-width:680px}.guidedAnalysisHead button{width:auto;min-width:190px;background:var(--a)}.guidedBottleneckGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.guidedBottleneck{display:grid;grid-template-columns:36px 1fr;gap:10px;padding:13px;border:1px solid var(--l);border-radius:8px;background:#0d0e10}.guidedBottleneck .rank{font:500 13px ui-monospace,monospace;color:var(--a)}.guidedBottleneck small{display:block;color:var(--m);margin-top:3px}.guidedBottleneck p{margin:8px 0 0;font-size:11px;line-height:1.45;color:#d0d6e0}.guidedBottleneck .tradeoff{color:var(--m)}.guidedSweepPlan{display:flex;justify-content:space-between;gap:12px;margin-top:10px;padding:10px 12px;border-radius:7px;background:rgba(113,112,255,.08);font-size:11px}.guidedSweepSummary{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:10px;background:var(--l);padding:1px;border-radius:8px;overflow:hidden}.guidedSweepSummary>div{display:grid;gap:5px;background:#0d0e10;padding:12px}.guidedSweepSummary span{color:var(--m);font-size:10px}.guidedEmpty{padding:24px 0;color:var(--m)}canvas{background:#0d0e10;border-color:var(--l)}.tbl td{border-color:var(--l)}.rows{gap:12px;margin-top:12px}.sweepLab{border-color:var(--l);background:var(--b)}.sweepHead,.parameterPicker,.sweepParameters,.sweepResultsPanel{border-color:var(--l);background:#101113}.sweepProgressTrack{background:#090a0b}.sweepProgressTrack div{background:var(--a)}
 @media(max-width:1150px){.controls{position:static;max-height:none}.grid{grid-template-columns:1fr}.guidedWorkflow{grid-template-columns:1fr 1fr 1fr}}
 @media(max-width:720px){.wrap{padding:14px 10px 40px}.appHeader{display:block}.trustBadge{display:inline-flex;margin-top:8px}.guidedWorkflow{grid-template-columns:1fr}.guideStep{min-height:52px}.actionToolbar{position:static}.toolbarGroup{width:100%}.actionToolbar button{flex:1}.compactButton{min-height:44px}.kpis{grid-template-columns:repeat(2,1fr)}.guidedBottleneckGrid,.guidedSweepSummary{grid-template-columns:1fr}.guidedAnalysisHead{display:block}.guidedAnalysisHead button{width:100%;margin-top:12px}.guidedSweepPlan{display:grid}.rows{grid-template-columns:1fr}}
+
+.copyToolbar{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin:0 0 8px}.copyToolbar .copyAction{width:auto;min-width:0;padding:6px 10px;background:#164b63;font-size:11px}.copyToolbar .copyAction:disabled{cursor:wait;opacity:.65}.copyStatus{position:fixed;right:18px;bottom:18px;z-index:100;max-width:min(420px,calc(100vw - 36px));padding:10px 12px;border:1px solid var(--l);border-radius:9px;background:#09243a;color:var(--t);box-shadow:0 8px 24px rgba(0,0,0,.35)}.copyStatus:empty{display:none}.copyStatus.copyError{border-color:var(--r);background:#37151c}.graphPanel{overflow:hidden}@media(min-width:1151px){.grid{align-items:start}.resultHero{position:relative}}@media(max-width:600px){.copyToolbar{justify-content:stretch}.copyToolbar .copyAction{flex:1;min-height:44px}.copyStatus{right:8px;bottom:8px;max-width:calc(100vw - 16px)}}
 </style>
 </head>
-<body><div class="wrap">
-<header class="appHeader"><div><div class="eyebrow">Serving systems analysis</div><h1>MoE SSD Serving Simulator <small>V1.6</small><span id="modeBadge" class="modeBadge">Colibri</span></h1>
-<div class="sub">HW·memory policy 변화가 serving throughput과 병목에 미치는 영향을 비교합니다.</div></div><div class="headerActions"><button id="themeToggle" class="themeToggle" type="button" aria-pressed="false" aria-label="Switch to light theme">Light</button><div class="trustBadge">Estimated sensitivity · Unvalidated Alpha</div></div></header>
+<body><div id="copyStatus" class="copyStatus" role="status" aria-live="polite"></div><div class="wrap">
+<header class="appHeader"><div><div class="eyebrow">MoE 서빙 시스템 분석</div><h1>MoE SSD Serving Simulator <small>V1.6</small><span id="modeBadge" class="modeBadge">Colibri</span></h1>
+<div class="sub">HW·memory policy 변화가 serving throughput과 병목에 미치는 영향을 비교합니다.</div></div><div class="headerActions"><button id="themeToggle" class="themeToggle" type="button" aria-pressed="false" aria-label="밝은 테마로 전환">밝게</button><div class="trustBadge">추정 민감도 · 미검증 알파</div></div></header>
 <div id="warn" class="warn" hidden></div>
-<nav id="guidedWorkflow" class="guidedWorkflow" aria-label="분석 단계"><button class="guideStep" data-guide-step="1" aria-current="step"><span class="stepNumber">1</span><span><b>시나리오 설정</b><small>Model · HW · Workload</small></span></button><button class="guideStep" data-guide-step="2"><span class="stepNumber">2</span><span><b>결과와 병목</b><small>Aggregate TPS · Pressure</small></span></button><button class="guideStep" data-guide-step="3"><span class="stepNumber">3</span><span><b>개선 검증</b><small>Executed synthetic OAT counterfactual</small></span></button></nav>
-<section id="actionToolbar" class="actionToolbar" aria-label="Simulation actions">
-  <div class="toolbarGroup"><button id="run" class="primaryAction">Simulation 실행</button><button id="pause">Playback 일시정지</button><button id="openSweep">전체 Sweep Lab</button></div>
-  <div class="toolbarGroup"><button id="test">App integrity test</button><button id="exportScenario">JSON 내보내기</button><button id="importScenario">JSON 불러오기</button><button id="setBaseline">Baseline 설정</button><input id="importScenarioFile" type="file" accept="application/json" hidden><input id="seed" type="hidden" value="260730"></div>
+<nav id="guidedWorkflow" class="guidedWorkflow" aria-label="분석 단계"><button class="guideStep" data-guide-step="1" aria-current="step"><span class="stepNumber">1</span><span><b>시나리오 설정</b><small>모델 · 하드웨어 · 워크로드</small></span></button><button class="guideStep" data-guide-step="2"><span class="stepNumber">2</span><span><b>결과와 병목</b><small>Aggregate TPS · Pressure</small></span></button><button class="guideStep" data-guide-step="3"><span class="stepNumber">3</span><span><b>개선 검증</b><small>Executed synthetic OAT counterfactual</small></span></button></nav>
+<section id="actionToolbar" class="actionToolbar" aria-label="시뮬레이션 작업">
+  <div class="toolbarGroup"><button id="run" class="primaryAction">시뮬레이션 실행</button><button id="pause">Playback 일시정지</button><button id="openSweep">전체 Sweep Lab</button></div>
+  <div class="toolbarGroup"><button id="test">앱 무결성 테스트</button><button id="exportScenario">JSON 내보내기</button><button id="importScenario">JSON 불러오기</button><button id="setBaseline">Baseline 설정</button><input id="importScenarioFile" type="file" accept="application/json" hidden><input id="seed" type="hidden" value="260730"></div>
 </section>
 <div class="grid">
-<aside id="guidedControls" class="panel controls"><div class="controlIntro"><div><h2>시나리오 설정</h2><p>핵심 입력만 표시합니다. 세부 calibration은 Expert mode에서 조정하세요.</p></div><button id="expertModeToggle" class="compactButton" type="button" aria-pressed="false">Expert mode 열기</button></div><div class="guidedHardware"><label for="hardwarePreset">HW target preset</label><select id="hardwarePreset"><option value="custom" selected>Custom / 현재 입력</option><option value="nvidia-dgx-spark-128">NVIDIA DGX Spark · 128 GB</option><option value="apple-macbook-pro-m5-max-128">Apple MacBook Pro · M5 Max · 128 GB</option><option value="apple-mac-studio-m3-ultra-512">Apple Mac Studio · M3 Ultra · 512 GB</option><option value="nvidia-rtx-5090-32">NVIDIA GeForce RTX 5090 · 32 GB</option><option value="amd-radeon-pro-w7900-48">AMD Radeon PRO W7900 · 48 GB</option></select><div id="hardwarePresetSummary" class="note" role="status" aria-live="polite"><b>Custom hardware inputs</b> · No product target is selected; all hardware and storage values are manual.</div></div>
-<div class="section" style="border-top:0;padding-top:0">Serving Architecture</div>
-<div class="f"><label>Model / execution engine</label><select id="mode"><option value="colibri">Colibri Token-Routed MoE</option><option value="afm3">AFM 3 Core Advanced IFP</option></select><small>AFM 3은 32-token window 동안 선택된 subnetwork를 유지합니다.</small></div>
+<aside id="guidedControls" class="panel controls"><div class="controlIntro"><div><h2>시나리오 설정</h2><p>핵심 입력만 표시합니다. 세부 calibration은 Expert mode에서 조정하세요.</p></div><button id="expertModeToggle" class="compactButton" type="button" aria-pressed="false">Expert mode 열기</button></div><div class="guidedHardware"><label for="hardwarePreset">하드웨어 대상 프리셋</label><select id="hardwarePreset"><option value="custom" selected>Custom / 현재 입력</option><option value="nvidia-dgx-spark-128">NVIDIA DGX Spark · 128 GB</option><option value="apple-macbook-pro-m5-max-128">Apple MacBook Pro · M5 Max · 128 GB</option><option value="apple-mac-studio-m3-ultra-512">Apple Mac Studio · M3 Ultra · 512 GB</option><option value="nvidia-rtx-5090-32">NVIDIA GeForce RTX 5090 · 32 GB</option><option value="amd-radeon-pro-w7900-48">AMD Radeon PRO W7900 · 48 GB</option></select><div id="hardwarePresetSummary" class="note" role="status" aria-live="polite"><b>사용자 지정 하드웨어 입력</b> · No product target is selected; all hardware and storage values are manual.</div></div>
+<div class="section" style="border-top:0;padding-top:0">서빙 구조</div>
+<div class="f"><label>모델 / 실행 엔진</label><select id="mode"><option value="colibri">Colibri Token-Routed MoE</option><option value="afm3">AFM 3 Core Advanced IFP</option></select><small>AFM 3은 32-token window 동안 선택된 subnetwork를 유지합니다.</small></div>
 
-<div class="section">Workload / Playback</div>
-<div class="f"><label>Prompt tokens</label><input id="prompt" type="number" value="128" min="1"></div>
-<div class="f"><label>Output tokens</label><input id="output" type="number" value="64" min="1" max="512"></div>
-<div class="f"><label>Context tokens</label><input id="context" type="number" value="4096" min="1"></div>
-<div class="f"><label>Concurrent sequences</label><input id="conc" type="number" value="1" min="1"></div>
-<div class="f colibriOnly"><label>Cold expert cache</label><input id="cold" type="checkbox" checked></div>
-<div class="f"><label>Playback speed</label><select id="speed"><option value="1" selected>1× 실시간</option><option value="2">2×</option><option value="10">10×</option><option value="100">100×</option></select></div>
+<div class="section">워크로드 / 재생</div>
+<div class="f"><label>프롬프트 토큰 수</label><input id="prompt" type="number" value="128" min="1"></div>
+<div class="f"><label>출력 토큰 수</label><input id="output" type="number" value="64" min="1" max="512"></div>
+<div class="f"><label>컨텍스트 토큰 수</label><input id="context" type="number" value="4096" min="1"></div>
+<div class="f"><label>동시 시퀀스 수</label><input id="conc" type="number" value="1" min="1"></div>
+<div class="f colibriOnly"><label>콜드 Expert 캐시</label><input id="cold" type="checkbox" checked></div>
+<div class="f"><label>재생 속도</label><select id="speed"><option value="1" selected>1× 실시간</option><option value="2">2×</option><option value="10">10×</option><option value="100">100×</option></select></div>
 
 <div class="colibriOnly">
-<div class="section">Colibri MoE Model</div>
-<div class="f presetControl"><label>Published topology preset</label><select id="modelPreset"><option value="custom">Custom / manual topology</option></select></div>
-<div id="presetSummary" class="note" role="status" aria-live="polite">Custom / manual topology. Timing and memory calibration remain manual.</div>
-<div class="f"><label>MoE layers</label><input id="layers" type="number" value="75" min="1"></div>
-<div class="f"><label>Experts / layer</label><input id="experts" type="number" value="256" min="1"></div>
-<div class="f"><label>Active experts / token</label><input id="active" type="number" value="8" min="1"></div>
-<div class="f"><label>Expert size (MB)</label><input id="esize" type="number" value="19" min="0.01" step="0.1"></div>
-<div class="f"><label>Host/Unified resident weights (GB)</label><input id="resident" type="number" value="9.9" min="0" step="0.1"><small>Discrete VRAM의 고정 runtime 사용량은 별도 0.8GB workspace calibration으로 처리합니다.</small></div>
-<div class="f"><label>KV KB / token</label><input id="kv" type="number" value="182" min="0"></div>
+<div class="section">Colibri MoE 모델</div>
+<div class="f presetControl"><label>공개 토폴로지 프리셋</label><select id="modelPreset"><option value="custom">Custom / manual topology</option></select></div>
+<div id="presetSummary" class="note" role="status" aria-live="polite">사용자 지정 / 수동 토폴로지입니다. 시간·메모리 보정값도 직접 입력해야 합니다.</div>
+<div class="f"><label>MoE 레이어 수</label><input id="layers" type="number" value="75" min="1"></div>
+<div class="f"><label>레이어당 Expert 수</label><input id="experts" type="number" value="256" min="1"></div>
+<div class="f"><label>토큰당 활성 Expert 수</label><input id="active" type="number" value="8" min="1"></div>
+<div class="f"><label>Expert 크기 (MB)</label><input id="esize" type="number" value="19" min="0.01" step="0.1"></div>
+<div class="f"><label>Host/통합 메모리 상주 가중치 (GB)</label><input id="resident" type="number" value="9.9" min="0" step="0.1"><small>Discrete VRAM의 고정 runtime 사용량은 별도 0.8GB workspace calibration으로 처리합니다.</small></div>
+<div class="f"><label>토큰당 KV (KB)</label><input id="kv" type="number" value="182" min="0"></div>
 </div>
 
 <div class="afmOnly hidden">
@@ -74,74 +76,74 @@
 <div class="f"><label>Common resident weights (GB)</label><input id="afmCommonGB" type="number" value="1.4" min="0" step="0.1"><small>공개 설정에 없는 calibration 입력입니다.</small></div>
 </div>
 
-<div class="section">System / Storage</div>
-<div class="f"><label>Architecture</label><select id="arch"><option value="discrete">Discrete GPU</option><option value="unified">Unified Memory</option></select></div>
-<div class="f"><label>Host / Unified memory (GB)</label><input id="host" type="number" value="128" min="1"></div>
+<div class="section">시스템 / 스토리지</div>
+<div class="f"><label>구조</label><select id="arch"><option value="discrete">Discrete GPU</option><option value="unified">Unified Memory</option></select></div>
+<div class="f"><label>Host / 통합 메모리 (GB)</label><input id="host" type="number" value="128" min="1"></div>
 <div class="f colibriOnly"><label>GPU VRAM (GB)</label><input id="vram" type="number" value="8" min="0"></div>
-<div class="f colibriOnly"><label>Expert cache placement</label><select id="placement"><option value="auto" selected>Auto from HW capacity</option><option value="manual">Manual cache budgets</option></select><small>Auto는 RAM에서 resident/pinned/KV/OS/headroom을, VRAM에서 KV와 0.8GB workspace를 먼저 예약합니다.</small></div>
-<div class="f"><label>DRAM bandwidth (GB/s)</label><input id="dramBW" type="number" value="273" min="0.1"></div>
-<div class="f colibriOnly"><label>PCIe bandwidth (GB/s)</label><input id="pcieBW" type="number" value="24" min="0.1"></div>
-<div class="f"><label>Effective SSD / NAND BW (GB/s)</label><input id="ssdBW" type="number" value="9.2" min="0.05" step="0.1"></div>
-<div class="f"><label>Storage base latency (µs)</label><input id="lat" type="number" value="120" min="0"></div>
-<div class="f colibriOnly"><label>Queue depth / workers</label><input id="qd" type="number" value="8" min="1"></div>
+<div class="f colibriOnly"><label>Expert 캐시 배치</label><select id="placement"><option value="auto" selected>하드웨어 용량에서 자동 계산</option><option value="manual">캐시 용량 수동 설정</option></select><small>Auto는 RAM에서 resident/pinned/KV/OS/headroom을, VRAM에서 KV와 0.8GB workspace를 먼저 예약합니다.</small></div>
+<div class="f"><label>DRAM 대역폭 (GB/s)</label><input id="dramBW" type="number" value="273" min="0.1"></div>
+<div class="f colibriOnly"><label>PCIe 대역폭 (GB/s)</label><input id="pcieBW" type="number" value="24" min="0.1"></div>
+<div class="f"><label>유효 SSD / NAND 대역폭 (GB/s)</label><input id="ssdBW" type="number" value="9.2" min="0.05" step="0.1"></div>
+<div class="f"><label>스토리지 기본 지연시간 (µs)</label><input id="lat" type="number" value="120" min="0"></div>
+<div class="f colibriOnly"><label>큐 깊이 / 워커 수</label><input id="qd" type="number" value="8" min="1"></div>
 
-<div class="section">Memory Pressure / Swap</div>
-<div class="f"><label>Memory policy</label><select id="memPolicy"><option value="strict">Strict budget</option><option value="reclaim">Reclaim only</option><option value="swap" selected>Compression + Swap</option></select></div>
-<div class="f"><label>Background apps (GB)</label><input id="backgroundGB" type="number" value="8" min="0" step="0.5"></div>
-<div class="f"><label>OS reserved (GB)</label><input id="osReservedGB" type="number" value="8" min="0" step="0.5"></div>
-<div class="f"><label>Minimum free headroom (GB)</label><input id="minHeadroomGB" type="number" value="8" min="0" step="0.5"></div>
-<div class="f"><label>Soft pressure trigger (%)</label><input id="softPct" type="number" value="80" min="1" max="100" step="1"></div>
-<div class="f"><label>Compression trigger (%)</label><input id="compressPct" type="number" value="85" min="1" max="100" step="1"></div>
-<div class="f"><label>Swap trigger (%)</label><input id="swapPct" type="number" value="90" min="1" max="100" step="1"></div>
-<div class="f"><label>Hard pressure trigger (%)</label><input id="hardPct" type="number" value="97" min="1" max="100" step="1"></div>
-<div class="f"><label>Compression enabled</label><input id="compressionEnabled" type="checkbox" checked></div>
-<div class="f"><label>Compression ratio</label><input id="compressionRatio" type="number" value="1.6" min="1" step="0.1"></div>
-<div class="f"><label>Compression BW (GB/s)</label><input id="compressionBW" type="number" value="25" min="0.1" step="1"></div>
-<div class="f"><label>Swap enabled</label><input id="swapEnabled" type="checkbox" checked></div>
-<div class="f"><label>Swap capacity (GB)</label><input id="swapCapacityGB" type="number" value="32" min="0" step="1"></div>
-<div class="f"><label>Swap write BW ratio</label><input id="swapWriteRatio" type="number" value="0.7" min="0.05" max="2" step="0.05"></div>
-<div class="f"><label>KV touch fraction</label><input id="kvTouchFraction" type="number" value="1" min="0" max="1" step="0.05"><small>Swap된 KV 중 매 token에서 다시 접근하는 비율입니다.</small></div>
+<div class="section">메모리 압력 / 스왑</div>
+<div class="f"><label>메모리 정책</label><select id="memPolicy"><option value="strict">엄격한 용량 제한</option><option value="reclaim">회수만 사용</option><option value="swap" selected>압축 + 스왑</option></select></div>
+<div class="f"><label>백그라운드 앱 (GB)</label><input id="backgroundGB" type="number" value="8" min="0" step="0.5"></div>
+<div class="f"><label>OS 예약 메모리 (GB)</label><input id="osReservedGB" type="number" value="8" min="0" step="0.5"></div>
+<div class="f"><label>최소 여유 메모리 (GB)</label><input id="minHeadroomGB" type="number" value="8" min="0" step="0.5"></div>
+<div class="f"><label>소프트 압력 시작점 (%)</label><input id="softPct" type="number" value="80" min="1" max="100" step="1"></div>
+<div class="f"><label>압축 시작점 (%)</label><input id="compressPct" type="number" value="85" min="1" max="100" step="1"></div>
+<div class="f"><label>스왑 시작점 (%)</label><input id="swapPct" type="number" value="90" min="1" max="100" step="1"></div>
+<div class="f"><label>하드 압력 시작점 (%)</label><input id="hardPct" type="number" value="97" min="1" max="100" step="1"></div>
+<div class="f"><label>압축 사용</label><input id="compressionEnabled" type="checkbox" checked></div>
+<div class="f"><label>압축률</label><input id="compressionRatio" type="number" value="1.6" min="1" step="0.1"></div>
+<div class="f"><label>압축 대역폭 (GB/s)</label><input id="compressionBW" type="number" value="25" min="0.1" step="1"></div>
+<div class="f"><label>스왑 사용</label><input id="swapEnabled" type="checkbox" checked></div>
+<div class="f"><label>스왑 용량 (GB)</label><input id="swapCapacityGB" type="number" value="32" min="0" step="1"></div>
+<div class="f"><label>스왑 쓰기 대역폭 비율</label><input id="swapWriteRatio" type="number" value="0.7" min="0.05" max="2" step="0.05"></div>
+<div class="f"><label>KV 재접근 비율</label><input id="kvTouchFraction" type="number" value="1" min="0" max="1" step="0.05"><small>Swap된 KV 중 매 token에서 다시 접근하는 비율입니다.</small></div>
 
 <div class="colibriOnly">
-<div class="section">Colibri Cache / Compute / Prefetch</div>
-<div class="f"><label>Manual VRAM expert cache (GB)</label><input id="vcache" type="number" value="4" min="0"></div>
-<div class="f"><label>Manual DRAM expert cache (GB)</label><input id="dcache" type="number" value="30" min="0"></div>
-<div class="f"><label>DRAM Expert backing</label><select id="expertBacking"><option value="file" selected>File-backed / discardable</option><option value="anonymous">Anonymous / swappable</option></select></div>
-<div class="f"><label>Minimum DRAM Expert Cache (GB)</label><input id="minDCache" type="number" value="4" min="0" step="1"></div>
-<div class="f"><label>Pinned hot store (GB)</label><input id="pinned" type="number" value="6" min="0"></div>
-<div class="f"><label>OS page cache (GB)</label><input id="page" type="number" value="5" min="0"></div>
+<div class="section">Colibri 캐시 / 연산 / 프리페치</div>
+<div class="f"><label>수동 VRAM Expert 캐시 (GB)</label><input id="vcache" type="number" value="4" min="0"></div>
+<div class="f"><label>수동 DRAM Expert 캐시 (GB)</label><input id="dcache" type="number" value="30" min="0"></div>
+<div class="f"><label>DRAM Expert 백킹 방식</label><select id="expertBacking"><option value="file" selected>파일 기반 / 폐기 가능</option><option value="anonymous">익명 메모리 / 스왑 가능</option></select></div>
+<div class="f"><label>최소 DRAM Expert 캐시 (GB)</label><input id="minDCache" type="number" value="4" min="0" step="1"></div>
+<div class="f"><label>고정 Hot 저장소 (GB)</label><input id="pinned" type="number" value="6" min="0"></div>
+<div class="f"><label>OS 페이지 캐시 (GB)</label><input id="page" type="number" value="5" min="0"></div>
 <div class="f"><label>O_DIRECT</label><input id="odirect" type="checkbox" checked></div>
-<div class="f"><label>Token routing correlation</label><input id="corr" type="number" value="0.52" min="0" max="1" step="0.01"></div>
-<div class="f"><label>Attention (ms/token)</label><input id="attn" type="number" value="28" min="0" step="0.1"></div>
-<div class="f"><label>Expert compute (ms)</label><input id="ems" type="number" value="0.7" min="0" step="0.01"></div>
-<div class="f"><label>Parallel experts</label><input id="par" type="number" value="4" min="1"></div>
-<div class="f"><label>Prefill compute speedup</label><input id="prefillSpeedup" type="number" value="4.5" min="0.1" step="0.1"><small>Decode-equivalent compute 대비 prompt 병렬화 보정값입니다. 실측값이 있으면 calibration하십시오.</small></div>
-<div class="f"><label>Prefetch enabled</label><input id="pf" type="checkbox" checked></div>
-<div class="f"><label>Prefetch policy</label><select id="prefetchPolicy"><option value="previous-token" selected>Previous-token route (causal)</option><option value="popularity">Static popularity</option><option value="none">None</option></select></div>
-<div class="f"><label>Prefetch recall</label><input id="recall" type="number" value="0.716" min="0" max="1" step="0.01"></div>
-<div class="f"><label>Prefetch precision</label><input id="precision" type="number" value="0.78" min="0.01" max="1" step="0.01"></div>
-<div class="f"><label>Prefetch budget (MB/layer)</label><input id="budget" type="number" value="160" min="0"></div>
+<div class="f"><label>토큰 라우팅 상관도</label><input id="corr" type="number" value="0.52" min="0" max="1" step="0.01"></div>
+<div class="f"><label>Attention (ms/토큰)</label><input id="attn" type="number" value="28" min="0" step="0.1"></div>
+<div class="f"><label>Expert 연산 (ms)</label><input id="ems" type="number" value="0.7" min="0" step="0.01"></div>
+<div class="f"><label>병렬 Expert 수</label><input id="par" type="number" value="4" min="1"></div>
+<div class="f"><label>프리필 연산 가속 배율</label><input id="prefillSpeedup" type="number" value="4.5" min="0.1" step="0.1"><small>Decode-equivalent compute 대비 prompt 병렬화 보정값입니다. 실측값이 있으면 calibration하십시오.</small></div>
+<div class="f"><label>프리페치 사용</label><input id="pf" type="checkbox" checked></div>
+<div class="f"><label>프리페치 정책</label><select id="prefetchPolicy"><option value="previous-token" selected>이전 토큰 경로 (인과적)</option><option value="popularity">고정 인기도</option><option value="none">사용 안 함</option></select></div>
+<div class="f"><label>프리페치 재현율</label><input id="recall" type="number" value="0.716" min="0" max="1" step="0.01"></div>
+<div class="f"><label>프리페치 정밀도</label><input id="precision" type="number" value="0.78" min="0.01" max="1" step="0.01"></div>
+<div class="f"><label>레이어당 프리페치 예산 (MB)</label><input id="budget" type="number" value="160" min="0"></div>
 </div>
 
 <div class="afmOnly hidden">
-<div class="section">IFP Window / Compute</div>
-<div class="f"><label>Selection frequency (tokens)</label><input id="afmFreq" type="number" value="32" min="1"></div>
-<div class="f"><label>Expert-set profile</label><select id="afmProfile"><option value="0.8">Stable task · 80%</option><option value="0.65" selected>Normal generation · 65%</option><option value="0.3">Topic transition · 30%</option><option value="0">Full replacement · 0%</option><option value="custom">Custom</option></select></div>
-<div class="f"><label>Expert-set overlap</label><input id="afmOverlap" type="number" value="0.65" min="0" max="1" step="0.01"></div>
-<div class="f"><label>Initial selector latency (ms)</label><input id="afmInitSel" type="number" value="10" min="0" step="0.1"></div>
-<div class="f"><label>Periodic selector latency (ms)</label><input id="afmPeriodicSel" type="number" value="3" min="0" step="0.1"></div>
-<div class="f"><label>Patch base latency (ms)</label><input id="afmPatchBase" type="number" value="2" min="0" step="0.1"></div>
-<div class="f"><label>Patch bandwidth (GB/s)</label><input id="afmPatchBW" type="number" value="60" min="0.1" step="1"></div>
-<div class="f"><label>Attention (ms/token)</label><input id="afmAttn" type="number" value="18" min="0" step="0.1"></div>
+<div class="section">IFP 윈도 / 연산</div>
+<div class="f"><label>선택 주기 (토큰)</label><input id="afmFreq" type="number" value="32" min="1"></div>
+<div class="f"><label>Expert 집합 프로필</label><select id="afmProfile"><option value="0.8">Stable task · 80%</option><option value="0.65" selected>Normal generation · 65%</option><option value="0.3">Topic transition · 30%</option><option value="0">Full replacement · 0%</option><option value="custom">Custom</option></select></div>
+<div class="f"><label>Expert 집합 중복률</label><input id="afmOverlap" type="number" value="0.65" min="0" max="1" step="0.01"></div>
+<div class="f"><label>초기 선택기 지연시간 (ms)</label><input id="afmInitSel" type="number" value="10" min="0" step="0.1"></div>
+<div class="f"><label>주기 선택기 지연시간 (ms)</label><input id="afmPeriodicSel" type="number" value="3" min="0" step="0.1"></div>
+<div class="f"><label>패치 기본 지연시간 (ms)</label><input id="afmPatchBase" type="number" value="2" min="0" step="0.1"></div>
+<div class="f"><label>패치 대역폭 (GB/s)</label><input id="afmPatchBW" type="number" value="60" min="0.1" step="1"></div>
+<div class="f"><label>Attention (ms/토큰)</label><input id="afmAttn" type="number" value="18" min="0" step="0.1"></div>
 <div class="f"><label>Active FFN compute (ms/token)</label><input id="afmFFN" type="number" value="22" min="0" step="0.1"></div>
-<div class="f"><label>Merge / runtime (ms/token)</label><input id="afmRuntime" type="number" value="2" min="0" step="0.1"></div>
-<div class="f"><label>Prefill throughput (tok/s)</label><input id="afmPrefillTPS" type="number" value="80" min="0.1" step="1"></div>
-<div class="f"><label>Chunk execution</label><select id="afmChunkMode"><option value="sequential" selected>Sequential 2-Chunk</option><option value="pipelined">Experimental overlap</option></select></div>
-<div class="f"><label>Double buffer next set</label><input id="afmDoubleBuffer" type="checkbox"></div>
+<div class="f"><label>병합 / 런타임 (ms/토큰)</label><input id="afmRuntime" type="number" value="2" min="0" step="0.1"></div>
+<div class="f"><label>프리필 처리량 (토큰/s)</label><input id="afmPrefillTPS" type="number" value="80" min="0.1" step="1"></div>
+<div class="f"><label>청크 실행 방식</label><select id="afmChunkMode"><option value="sequential" selected>순차 2-청크</option><option value="pipelined">실험적 중첩</option></select></div>
+<div class="f"><label>다음 집합 이중 버퍼</label><input id="afmDoubleBuffer" type="checkbox"></div>
 <small class="note">Constant Table이 없어 실제 Expert ID와 Layer별 mask 대신 overlap 기반 집계 모델을 사용합니다. Chunk는 동일 FFN dimension으로 분할합니다.</small>
 </div>
 
-<div id="tests" class="tests">App integrity test not run.</div>
+<div id="tests" class="tests">앱 무결성 테스트를 아직 실행하지 않았습니다.</div>
 </aside>
 
 <main>
@@ -153,16 +155,16 @@
 <div class="kpi"><span id="hitLabel">Cache hit</span><b id="hit">—</b></div>
 <div class="kpi"><span>Memory</span><b id="mem">—</b></div>
 </div>
-<section id="advisor" class="advisor" aria-labelledby="advisorTitle" aria-live="polite"><div class="advisorHead"><h2 id="advisorTitle">Bottleneck Advisor</h2><span class="note">Relative pressure · simulator trace only</span></div><div class="advisorUnavailable">Run a valid simulation to generate phase-level insight.</div></section>
+<section id="advisor" class="advisor" aria-labelledby="advisorTitle" aria-live="polite"><div class="advisorHead"><h2 id="advisorTitle">병목 분석 가이드</h2><span class="note">상대 압력 · 시뮬레이터 추적 전용</span></div><div class="advisorUnavailable">유효한 시뮬레이션을 실행하면 단계별 분석이 표시됩니다.</div></section>
 <div id="token" class="token">Simulation을 실행하세요.<span class="cursor"></span></div><div class="bar"><div id="progress"></div></div><div id="status" class="status">대기 중</div></section>
 <section id="guidedAnalysis" class="panel guidedAnalysis"><div class="guidedAnalysisHead"><div><h2>상위 병목 개선 검증</h2><p>Advisor의 상대 압력 점수는 개선률이 아닙니다. 상위 2개 병목을 각 7점 OAT(현재값의 0.25×–4×, 유효 범위 내)로 실제 재실행해 aggregate TPS 변화와 trade-off를 측정합니다.</p></div><button id="runGuidedSweep" type="button" disabled>상위 병목 자동 분석</button></div><div id="guidedAnalysisContent"><div class="guidedEmpty">유효한 simulation을 실행하면 분석 계획을 생성합니다.</div></div><div id="guidedSweepSummary" class="guidedSweepSummary" aria-live="polite"><span>아직 완료된 counterfactual 결과가 없습니다.</span></div></section>
-<section class="panel"><div class="graphControls"><label>보기 방식<select id="graphViewMode"><option value="tabs">Tabs</option><option value="stacked">Stacked sections</option><option value="overlay">Overlay</option></select></label><label>표시 그래프<select id="graphTab"><option value="performance">Performance</option><option value="storage">Storage I/O</option><option value="memory">Memory / Swap</option></select></label><label>Storage X-axis<select id="storageXAxis"><option value="token-index">Token index</option><option value="completion-time">Completion time</option><option value="cumulative-io">Cumulative I/O</option></select></label><label>Storage Y-axis<select id="storageYAxis"><option value="gb">GB</option><option value="gbps">Effective GB/s</option><option value="service-ms">Service ms</option><option value="queue-ms">Queue ms</option></select></label></div><p id="overlayDisclosure" class="note" hidden>Normalized overlay: 각 panel은 독립적인 0–100% scale을 사용합니다. 겹친 형태는 시간 비교용이며 단위 간 크기 비교용이 아닙니다.</p><div id="graphPanels" class="graphPanels tabs"><section class="graphPanel" data-graph="performance"><h3>Performance trace</h3><canvas id="chart" width="930" height="250"></canvas></section><section class="graphPanel" data-graph="storage" hidden><h3>Storage I/O trace</h3><p id="storageTraceBoundary" class="note">Request별 analytic simulator trace입니다. Concurrency &gt; 1에서는 shared serving SSD scheduling이 demand와 swap work를 결합할 수 있으므로, 이 chart는 shared queue의 kind별 정확한 attribution을 주장하지 않습니다.</p><div class="storageLegend"><span><i style="background:var(--chart-cyan)"></i>Expert/window read</span><span><i style="background:var(--chart-green)"></i>Prefetch read</span><span><i style="background:var(--chart-violet)"></i>Swap-in read</span><span><i style="background:var(--chart-red)"></i>Swap-out write</span></div><canvas id="storageChart" width="930" height="250" role="img" aria-label="Storage read and write trace"></canvas><details><summary>접근 가능한 Storage I/O data</summary><div style="overflow:auto;max-height:420px"><table class="tbl" id="storageTraceSummary"><caption>Simulation 실행 후 Storage I/O data가 표시됩니다.</caption></table></div></details></section><section class="graphPanel" data-graph="memory" hidden><h3>Memory / Swap trace</h3><canvas id="memoryChart" width="930" height="250"></canvas></section></div></section>
-<div class="rows"><section class="panel"><h3>Resource 요약</h3><table class="tbl" id="summary"></table></section><section class="panel"><h3>Memory pressure 요약</h3><table class="tbl" id="pressureSummary"></table></section></div>
-<div class="rows"><section class="panel"><h3>Memory budget</h3><table class="tbl" id="memory"></table></section><section class="panel"><h3>Model 상태</h3><div id="modelStatus" class="note"></div></section></div>
-<div class="rows"><section class="panel"><h3>Scenario 비교</h3><table class="tbl" id="comparisonSummary"><tr><td colspan="2">Baseline이 선택되지 않았습니다.</td></tr></table></section></div>
-<div class="rows"><section class="panel"><details><summary><b>Accessible token trace data</b></summary><div style="overflow:auto;max-height:420px"><table class="tbl" id="traceSummary"><caption>Run a simulation to populate token trace data.</caption></table></div></details></section></div>
+<section class="panel"><div class="graphControls"><label>보기 방식<select id="graphViewMode"><option value="tabs">탭</option><option value="stacked">세로로 모두 보기</option><option value="overlay">겹쳐 보기</option></select></label><label>표시 그래프<select id="graphTab"><option value="performance">성능</option><option value="storage">스토리지 I/O</option><option value="memory">메모리 / 스왑</option></select></label><label>Storage X-axis<select id="storageXAxis"><option value="token-index">토큰 인덱스</option><option value="completion-time">완료 시간</option><option value="cumulative-io">누적 I/O</option></select></label><label>Storage Y-axis<select id="storageYAxis"><option value="gb">GB</option><option value="gbps">유효 GB/s</option><option value="service-ms">서비스 시간(ms)</option><option value="queue-ms">큐 대기시간(ms)</option></select></label></div><p id="overlayDisclosure" class="note" hidden>Normalized overlay: 각 panel은 독립적인 0–100% scale을 사용합니다. 겹친 형태는 시간 비교용이며 단위 간 크기 비교용이 아닙니다.</p><div id="graphPanels" class="graphPanels tabs"><section class="graphPanel" data-graph="performance"><h3>성능 추적 그래프</h3><canvas id="chart" width="930" height="250"></canvas></section><section class="graphPanel" data-graph="storage" hidden><h3>스토리지 I/O 추적 그래프</h3><p id="storageTraceBoundary" class="note">Request별 analytic simulator trace입니다. Concurrency &gt; 1에서는 shared serving SSD scheduling이 demand와 swap work를 결합할 수 있으므로, 이 chart는 shared queue의 kind별 정확한 attribution을 주장하지 않습니다.</p><div class="storageLegend"><span><i style="background:var(--chart-cyan)"></i>Expert/window read</span><span><i style="background:var(--chart-green)"></i>Prefetch read</span><span><i style="background:var(--chart-violet)"></i>Swap-in read</span><span><i style="background:var(--chart-red)"></i>Swap-out write</span></div><canvas id="storageChart" width="930" height="250" role="img" aria-label="Storage read and write trace"></canvas><details><summary>접근 가능한 스토리지 I/O data</summary><div style="overflow:auto;max-height:420px"><table class="tbl" id="storageTraceSummary"><caption>시뮬레이션 실행 후 스토리지 I/O data가 표시됩니다.</caption></table></div></details></section><section class="graphPanel" data-graph="memory" hidden><h3>메모리 / 스왑 추적 그래프</h3><canvas id="memoryChart" width="930" height="250"></canvas></section></div></section>
+<div class="rows"><section class="panel"><h3>자원 요약</h3><table class="tbl" id="summary"></table></section><section class="panel"><h3>메모리 압력 요약</h3><table class="tbl" id="pressureSummary"></table></section></div>
+<div class="rows"><section class="panel"><h3>메모리 예산</h3><table class="tbl" id="memory"></table></section><section class="panel"><h3>모델 상태</h3><div id="modelStatus" class="note"></div></section></div>
+<div class="rows"><section class="panel"><h3>시나리오 비교</h3><table class="tbl" id="comparisonSummary"><tr><td colspan="2">Baseline이 선택되지 않았습니다.</td></tr></table></section></div>
+<div class="rows"><section class="panel"><details><summary><b>접근 가능한 토큰 추적 데이터</b></summary><div style="overflow:auto;max-height:420px"><table class="tbl" id="traceSummary"><caption>시뮬레이션을 실행하면 토큰 추적 데이터가 표시됩니다.</caption></table></div></details></section></div>
 </main></div></div>
-<dialog id="sweepLab" class="sweepLab" aria-labelledby="sweepTitle" aria-describedby="sweepBoundary"><div class="sweepShell"><header class="sweepHead"><div><h2 id="sweepTitle">Parameter Sweep Lab</h2><div id="sweepBoundary" class="note"><b>Estimated sensitivity simulator / Unvalidated Alpha</b> · 명시적 synthetic counterfactual 실행</div></div><button id="closeSweep" type="button" style="width:auto">닫기</button></header><div class="sweepBody"><section class="sweepPrimer" aria-label="Sweep concepts"><div><b>데이터 경로</b><span>SSD/NAND <strong>ssdBW</strong> → Host DRAM <strong>dramBW</strong> → discrete GPU link <strong>pcieBW</strong></span><small>각 단계는 다른 물리 자원입니다. 실제 임계 경로는 해당 단계 시간과 compute·latency·queueing 중 지배적인 값으로 결정됩니다.</small></div><div id="sweepBaselineSummary" class="sweepBaselineSummary" aria-live="polite"></div></section><div class="sweepSetup"><section class="parameterPicker"><label>Sweep 방식<select id="sweepMode"><option value="oat">한 번에 하나 (One-at-a-time)</option><option value="grid">Grid</option></select></label><h3>Parameter 선택</h3><div class="pickerFilters"><input id="parameterSearch" type="search" placeholder="Parameter 검색" aria-label="Parameter 검색"><select id="parameterCategory" aria-label="Parameter category"><option value="all">전체 category</option></select></div><div class="sweepPickerActions"><button id="selectAllSweep" type="button">전체 선택</button><button id="clearSweep" type="button">초기화</button></div><p class="note"><span id="sweepSelectedCount">0 selected</span> · <span id="sweepProjectedCount">0 projected scenarios</span></p><div id="parameterChecklist" class="parameterChecklist"></div></section><section class="sweepParameters"><h3>Sweep 값</h3><p class="note">Numeric parameter는 Auto, linear min/max/step, logarithmic min/max/points, custom list를 지원합니다. Categorical parameter는 유효한 값을 직접 선택합니다.</p><div id="sweepParameters">하나 이상의 parameter를 선택하세요.</div></section></div><div class="sweepActions"><button id="runSweep">Sweep 실행</button><button id="pauseSweep" disabled>Scenario 사이 일시정지</button><button id="resumeSweep" disabled>계속</button><button id="cancelSweep" disabled>취소</button><button id="exportSweepCsv" disabled>CSV 내보내기</button></div><div id="sweepTruncation" class="warn" hidden></div><div id="sweepProgressTrack" class="sweepProgressTrack" role="progressbar" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-describedby="sweepProgressText"><div id="sweepProgress"></div></div><div id="sweepProgressText" class="status" role="status" aria-live="polite">Sweep을 시작하지 않았습니다.</div><aside id="sweepInterpretation" class="sweepInterpretation" aria-live="polite">Sweep을 실행하면 선택한 parameter가 현재 critical path에 영향을 주는지 해석합니다.</aside><div id="sweepCharts" class="sweepCharts"><section><h3>TTFT mean / p50 / p95</h3><canvas id="sweepTTFTChart" width="680" height="250" role="img" aria-label="TTFT sweep chart"></canvas></section><section><h3>Single-sequence TPS / aggregate TPS</h3><canvas id="sweepTPSChart" width="680" height="250" role="img" aria-label="TPS sweep chart"></canvas></section></div><section class="sweepResultsPanel"><h3>Raw sweep 결과</h3><div style="overflow:auto;max-height:380px"><table id="sweepResults" class="tbl"><caption>Sweep 결과가 없습니다.</caption></table></div></section></div></div></dialog>
+<dialog id="sweepLab" class="sweepLab" aria-labelledby="sweepTitle" aria-describedby="sweepBoundary"><div class="sweepShell"><header class="sweepHead"><div><h2 id="sweepTitle">매개변수 스윕 실험실</h2><div id="sweepBoundary" class="note"><b>추정 민감도 시뮬레이터 / 미검증 알파</b> · 명시적 synthetic counterfactual 실행</div></div><button id="closeSweep" type="button" style="width:auto">닫기</button></header><div class="sweepBody"><section class="sweepPrimer" aria-label="스윕 개념"><div><b>데이터 경로</b><span>SSD/NAND <strong>ssdBW</strong> → Host DRAM <strong>dramBW</strong> → discrete GPU link <strong>pcieBW</strong></span><small>각 단계는 다른 물리 자원입니다. 실제 임계 경로는 해당 단계 시간과 compute·latency·queueing 중 지배적인 값으로 결정됩니다.</small></div><div id="sweepBaselineSummary" class="sweepBaselineSummary" aria-live="polite"></div></section><div class="sweepSetup"><section class="parameterPicker"><label>Sweep 방식<select id="sweepMode"><option value="oat">한 번에 하나 (One-at-a-time)</option><option value="grid">Grid</option></select></label><h3>매개변수 선택</h3><div class="pickerFilters"><input id="parameterSearch" type="search" placeholder="매개변수 검색" aria-label="매개변수 검색"><select id="parameterCategory" aria-label="매개변수 범주"><option value="all">전체 범주</option></select></div><div class="sweepPickerActions"><button id="selectAllSweep" type="button">전체 선택</button><button id="clearSweep" type="button">초기화</button></div><p class="note"><span id="sweepSelectedCount">0개 선택</span> · <span id="sweepProjectedCount">예상 시나리오 0개</span></p><div id="parameterChecklist" class="parameterChecklist"></div></section><section class="sweepParameters"><h3>스윕 값</h3><p class="note">수치 매개변수는 자동, 선형 최소/최대/간격, 로그 최소/최대/개수, 사용자 목록을 지원합니다. 범주형 매개변수는 유효한 값을 직접 선택합니다.</p><div id="sweepParameters">하나 이상의 parameter를 선택하세요.</div></section></div><div class="sweepActions"><button id="runSweep">Sweep 실행</button><button id="pauseSweep" disabled>Scenario 사이 일시정지</button><button id="resumeSweep" disabled>계속</button><button id="cancelSweep" disabled>취소</button><button id="exportSweepCsv" disabled>CSV 내보내기</button></div><div id="sweepTruncation" class="warn" hidden></div><div id="sweepProgressTrack" class="sweepProgressTrack" role="progressbar" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-describedby="sweepProgressText"><div id="sweepProgress"></div></div><div id="sweepProgressText" class="status" role="status" aria-live="polite">Sweep을 시작하지 않았습니다.</div><aside id="sweepInterpretation" class="sweepInterpretation" aria-live="polite">Sweep을 실행하면 선택한 parameter가 현재 critical path에 영향을 주는지 해석합니다.</aside><div id="sweepCharts" class="sweepCharts"><section><h3>TTFT 평균 / p50 / p95</h3><canvas id="sweepTTFTChart" width="680" height="250" role="img" aria-label="TTFT sweep chart"></canvas></section><section><h3>단일 시퀀스 TPS / 전체 TPS</h3><canvas id="sweepTPSChart" width="680" height="250" role="img" aria-label="TPS sweep chart"></canvas></section></div><section class="sweepResultsPanel"><h3>원시 스윕 결과</h3><div style="overflow:auto;max-height:380px"><table id="sweepResults" class="tbl"><caption>Sweep 결과가 없습니다.</caption></table></div></section></div></div></dialog>
 <script src="build-info.js"></script>
 <script src="core.js"></script>
 <script src="help.js"></script>
@@ -180,4 +182,5 @@
 <script src="render.js"></script>
 <script src="sweep-ui.js"></script>
 <script src="ui.js"></script>
+<script src="export-ui.js"></script>
 <script src="tests-init.js"></script></body></html>
