@@ -12,7 +12,7 @@ function applyTheme(theme, options = {}) {
   const button = options.button || (typeof $ === 'function' ? $('themeToggle') : null);
   const storage = Object.prototype.hasOwnProperty.call(options, 'storage')
     ? options.storage
-    : typeof local스토리지 === 'undefined' ? null : local스토리지;
+    : typeof localStorage === 'undefined' ? null : localStorage;
   root?.setAttribute('data-theme', selected);
   if (button) {
     const light = selected === 'light';
@@ -29,7 +29,7 @@ function applyTheme(theme, options = {}) {
   }
   if (options.redraw !== false) {
     if (typeof lastResult === 'object' && lastResult && !lastResult.error) {
-      drawPerformance(lastResult); render스토리지IO(lastResult); drawMemory(lastResult);
+      drawPerformance(lastResult); renderStorageIO(lastResult); drawMemory(lastResult);
     }
     if (typeof activeSweepExecution === 'object' && activeSweepExecution && typeof renderSweepResults === 'function') renderSweepResults(activeSweepExecution);
   }
@@ -41,7 +41,7 @@ function initializeTheme(options = {}) {
   const button = options.button || (typeof $ === 'function' ? $('themeToggle') : null);
   const storage = Object.prototype.hasOwnProperty.call(options, 'storage')
     ? options.storage
-    : typeof local스토리지 === 'undefined' ? null : local스토리지;
+    : typeof localStorage === 'undefined' ? null : localStorage;
   const media = options.media || (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null);
   let stored = null;
   if (storage) {
@@ -223,7 +223,7 @@ function renderGuidedHardwarePresetSummary(preset) {
   const target = typeof $ === 'function' ? $('hardwarePresetSummary') : null;
   if (!target) return;
   if (!preset) {
-    target.innerHTML = '<b>사용자 지정 하드웨어 입력</b> · No product target is selected; all hardware and storage values are manual.';
+    target.innerHTML = '<b>사용자 지정 하드웨어 입력</b> · 하드웨어 제품 대상을 선택하지 않았습니다. 모든 하드웨어 및 스토리지 값을 직접 입력합니다.';
     return;
   }
   const sourceUrls = Array.isArray(preset.sourceUrls) ? preset.sourceUrls : [preset.sourceUrl];
@@ -234,8 +234,8 @@ function renderGuidedHardwarePresetSummary(preset) {
     return [`<a href="${presetHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${presetHtml(label)}</a>`];
   });
   const source = sourceLinks.length ? sourceLinks.join(' · ') : '출처를 사용할 수 없음';
-  target.innerHTML = `<b>${presetHtml(preset.label)}</b><br>Applied from source: ${presetHtml(preset.sourced)} · ${source}<br>` +
-    `System- and workload-dependent fields remain unchanged: ${presetHtml(preset.manual)}.`;
+  target.innerHTML = `<b>${presetHtml(preset.label)}</b><br>공식 출처에서 적용: ${presetHtml(preset.sourced)} · ${source}<br>` +
+    `시스템 및 워크로드 의존 항목은 현재 입력을 유지합니다: ${presetHtml(preset.manual)}.`;
 }
 
 function applyGuidedHardwarePreset(id) {
@@ -274,17 +274,17 @@ function renderGuidedAnalysis(insight, result = null) {
   const summary = $('guidedSweepSummary');
   const execution = typeof activeSweepExecution === 'undefined' ? null : activeSweepExecution;
   if (summary && !guidedSweepMatchesResult(execution, result)) {
-    summary.innerHTML = '<span>현재 scenario에 대한 counterfactual 결과가 없습니다.</span>';
+    summary.innerHTML = '<span>현재 시나리오에 대한 비교 결과가 없습니다.</span>';
   }
   const config = result?.c || (typeof readCurrentSweepConfig === 'function' ? readCurrentSweepConfig() : null);
   const ranked = guidedRankBottlenecks(insight, config);
   const selections = config ? guidedSweepSelections(insight, config) : [];
   if (!ranked.length || !result || result.error) {
-    target.innerHTML = '<div class="guidedEmpty">유효한 simulation을 실행하면 상위 병목 2개와 검증할 parameter를 제안합니다.</div>';
+    target.innerHTML = '<div class="guidedEmpty">유효한 시뮬레이션을 실행하면 상위 병목 2개와 검증할 매개변수를 제안합니다.</div>';
     $('runGuidedSweep').disabled = true;
     return;
   }
-  target.innerHTML = `<div class="guidedBottleneckGrid">${ranked.map((item, index) => `<article class="guidedBottleneck"><span class="rank">0${index + 1}</span><div><b>${advisorEscape(item.resourceLabel)}</b><small>${advisorEscape(item.phaseLabel)} · 상대 압력 ${item.score}/100</small><p>${advisorEscape(item.direction)}</p><p class="tradeoff"><b>부작용</b> ${advisorEscape(item.tradeoff)}</p></div></article>`).join('')}</div><div class="guidedSweepPlan"><b>검증 계획</b><span>${selections.map(selection => `${advisorEscape(selection.path)} · OAT ${selection.values.length}점`).join(' + ') || '현재 config에서 자동 sweep 가능한 parameter가 없습니다.'}</span></div>`;
+  target.innerHTML = `<div class="guidedBottleneckGrid">${ranked.map((item, index) => `<article class="guidedBottleneck"><span class="rank">0${index + 1}</span><div><b>${advisorEscape(item.resourceLabel)}</b><small>${advisorEscape(item.phaseLabel)} · 상대 압력 ${item.score}/100</small><p>${advisorEscape(item.direction)}</p><p class="tradeoff"><b>부작용</b> ${advisorEscape(item.tradeoff)}</p></div></article>`).join('')}</div><div class="guidedSweepPlan"><b>검증 계획</b><span>${selections.map(selection => `${advisorEscape(selection.path)} · OAT ${selection.values.length}점`).join(' + ') || '현재 설정에서 자동 스윕 가능한 매개변수가 없습니다.'}</span></div>`;
   $('runGuidedSweep').disabled = selections.length === 0;
 }
 
@@ -299,11 +299,11 @@ function renderGuidedSweepSummary(execution) {
   }
   const summary = guidedThroughputSummary(execution);
   if (!summary.measured) {
-    target.innerHTML = '<span>아직 완료된 counterfactual 결과가 없습니다.</span>';
+    target.innerHTML = '<span>아직 완료된 비교 결과가 없습니다.</span>';
     return;
   }
   const sign = value => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-  target.innerHTML = `<div><span>기준 전체 TPS</span><b>${fmt(summary.baselineAggregateTPS, 2)}</b></div><div><span>최고 measured 개선</span><b class="${summary.bestImprovementPct >= 0 ? 'good' : 'bad'}">${sign(summary.bestImprovementPct)}</b></div><div><span>실측 범위</span><b>${sign(summary.worstImprovementPct)} → ${sign(summary.bestImprovementPct)}</b></div><div><span>최적 변경</span><b>${advisorEscape(Object.entries(summary.bestChanges).map(([key, value]) => `${key}=${value}`).join(', '))}</b></div>`;
+  target.innerHTML = `<div><span>기준 전체 TPS</span><b>${fmt(summary.baselineAggregateTPS, 2)}</b></div><div><span>최고 측정 개선</span><b class="${summary.bestImprovementPct >= 0 ? 'good' : 'bad'}">${sign(summary.bestImprovementPct)}</b></div><div><span>측정 범위</span><b>${sign(summary.worstImprovementPct)} → ${sign(summary.bestImprovementPct)}</b></div><div><span>최적 변경</span><b>${advisorEscape(Object.entries(summary.bestChanges).map(([key, value]) => `${key}=${value}`).join(', '))}</b></div>`;
   if (execution?.status === 'completed') setGuidedStep(3);
 }
 
@@ -337,7 +337,7 @@ function initializeGuidedUI() {
   expert.onclick = () => {
     const enabled = controls.classList.toggle('expert-enabled');
     expert.setAttribute('aria-pressed', String(enabled));
-    expert.textContent = enabled ? 'Expert mode 닫기' : 'Expert mode 열기';
+    expert.textContent = enabled ? '전문가 모드 닫기' : '전문가 모드 열기';
   };
   $('hardwarePreset').onchange = event => {
     if (applyGuidedHardwarePreset(event.target.value) && event.target.value !== 'custom') render(simulate());
