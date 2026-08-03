@@ -140,4 +140,4 @@ function loadTokenIOEnhancement() {
   document.head.appendChild(script);
 }
 
-if (typeof document === 'object') queueMicrotask(loadTokenIOEnhancement);
+if (typeof document === 'object') loadTokenIOEnhancement();
