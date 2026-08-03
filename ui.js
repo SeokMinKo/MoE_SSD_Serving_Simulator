@@ -12,24 +12,24 @@ function applyTheme(theme, options = {}) {
   const button = options.button || (typeof $ === 'function' ? $('themeToggle') : null);
   const storage = Object.prototype.hasOwnProperty.call(options, 'storage')
     ? options.storage
-    : typeof localStorage === 'undefined' ? null : localStorage;
+    : typeof local스토리지 === 'undefined' ? null : local스토리지;
   root?.setAttribute('data-theme', selected);
   if (button) {
     const light = selected === 'light';
-    button.textContent = light ? 'Dark' : 'Light';
-    button.setAttribute('aria-label', light ? 'Switch to dark theme' : 'Switch to light theme');
+    button.textContent = light ? '어둡게' : '밝게';
+    button.setAttribute('aria-label', light ? '어두운 테마로 전환' : '밝은 테마로 전환');
     button.setAttribute('aria-pressed', String(light));
   }
   if (options.persist !== false && storage) {
     try {
       storage.setItem(THEME_STORAGE_KEY, selected);
     } catch (error) {
-      console.warn('Theme preference persistence failed', { message: error.message });
+      console.warn('테마 설정 저장 실패', { message: error.message });
     }
   }
   if (options.redraw !== false) {
     if (typeof lastResult === 'object' && lastResult && !lastResult.error) {
-      drawPerformance(lastResult); renderStorageIO(lastResult); drawMemory(lastResult);
+      drawPerformance(lastResult); render스토리지IO(lastResult); drawMemory(lastResult);
     }
     if (typeof activeSweepExecution === 'object' && activeSweepExecution && typeof renderSweepResults === 'function') renderSweepResults(activeSweepExecution);
   }
@@ -41,14 +41,14 @@ function initializeTheme(options = {}) {
   const button = options.button || (typeof $ === 'function' ? $('themeToggle') : null);
   const storage = Object.prototype.hasOwnProperty.call(options, 'storage')
     ? options.storage
-    : typeof localStorage === 'undefined' ? null : localStorage;
+    : typeof local스토리지 === 'undefined' ? null : local스토리지;
   const media = options.media || (typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null);
   let stored = null;
   if (storage) {
     try {
       stored = storage.getItem(THEME_STORAGE_KEY);
     } catch (error) {
-      console.warn('Theme preference read failed', { message: error.message });
+      console.warn('테마 설정 읽기 실패', { message: error.message });
     }
   }
   let current = stored === 'light' || stored === 'dark' ? stored : media?.matches ? 'light' : 'dark';
@@ -102,10 +102,10 @@ const GUIDED_HW_PRESETS = Object.freeze({
 });
 
 const GUIDED_RESOURCE_LABELS = Object.freeze({
-  storage: 'Storage',
-  'data-movement': 'Data movement',
-  compute: 'Compute',
-  'capacity-policy': 'Capacity / policy'
+  storage: '스토리지',
+  'data-movement': '데이터 이동',
+  compute: '연산',
+  'capacity-policy': '용량 / 정책'
 });
 
 function guidedSweepParameterFor(resourceId, config) {
@@ -223,17 +223,17 @@ function renderGuidedHardwarePresetSummary(preset) {
   const target = typeof $ === 'function' ? $('hardwarePresetSummary') : null;
   if (!target) return;
   if (!preset) {
-    target.innerHTML = '<b>Custom hardware inputs</b> · No product target is selected; all hardware and storage values are manual.';
+    target.innerHTML = '<b>사용자 지정 하드웨어 입력</b> · No product target is selected; all hardware and storage values are manual.';
     return;
   }
   const sourceUrls = Array.isArray(preset.sourceUrls) ? preset.sourceUrls : [preset.sourceUrl];
   const sourceLinks = sourceUrls.flatMap((url, index) => {
     const safeUrl = typeof url === 'string' && /^https:\/\/[^\s"'<>]+$/.test(url) ? url : null;
     if (!safeUrl) return [];
-    const label = Array.isArray(preset.sourceLabels) && preset.sourceLabels[index] ? preset.sourceLabels[index] : 'official specifications';
+    const label = Array.isArray(preset.sourceLabels) && preset.sourceLabels[index] ? preset.sourceLabels[index] : '공식 사양';
     return [`<a href="${presetHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${presetHtml(label)}</a>`];
   });
-  const source = sourceLinks.length ? sourceLinks.join(' · ') : 'source unavailable';
+  const source = sourceLinks.length ? sourceLinks.join(' · ') : '출처를 사용할 수 없음';
   target.innerHTML = `<b>${presetHtml(preset.label)}</b><br>Applied from source: ${presetHtml(preset.sourced)} · ${source}<br>` +
     `System- and workload-dependent fields remain unchanged: ${presetHtml(preset.manual)}.`;
 }
@@ -284,7 +284,7 @@ function renderGuidedAnalysis(insight, result = null) {
     $('runGuidedSweep').disabled = true;
     return;
   }
-  target.innerHTML = `<div class="guidedBottleneckGrid">${ranked.map((item, index) => `<article class="guidedBottleneck"><span class="rank">0${index + 1}</span><div><b>${advisorEscape(item.resourceLabel)}</b><small>${advisorEscape(item.phaseLabel)} · 상대 압력 ${item.score}/100</small><p>${advisorEscape(item.direction)}</p><p class="tradeoff"><b>Trade-off</b> ${advisorEscape(item.tradeoff)}</p></div></article>`).join('')}</div><div class="guidedSweepPlan"><b>검증 계획</b><span>${selections.map(selection => `${advisorEscape(selection.path)} · OAT ${selection.values.length}점`).join(' + ') || '현재 config에서 자동 sweep 가능한 parameter가 없습니다.'}</span></div>`;
+  target.innerHTML = `<div class="guidedBottleneckGrid">${ranked.map((item, index) => `<article class="guidedBottleneck"><span class="rank">0${index + 1}</span><div><b>${advisorEscape(item.resourceLabel)}</b><small>${advisorEscape(item.phaseLabel)} · 상대 압력 ${item.score}/100</small><p>${advisorEscape(item.direction)}</p><p class="tradeoff"><b>부작용</b> ${advisorEscape(item.tradeoff)}</p></div></article>`).join('')}</div><div class="guidedSweepPlan"><b>검증 계획</b><span>${selections.map(selection => `${advisorEscape(selection.path)} · OAT ${selection.values.length}점`).join(' + ') || '현재 config에서 자동 sweep 가능한 parameter가 없습니다.'}</span></div>`;
   $('runGuidedSweep').disabled = selections.length === 0;
 }
 
@@ -303,7 +303,7 @@ function renderGuidedSweepSummary(execution) {
     return;
   }
   const sign = value => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-  target.innerHTML = `<div><span>Baseline aggregate TPS</span><b>${fmt(summary.baselineAggregateTPS, 2)}</b></div><div><span>최고 measured 개선</span><b class="${summary.bestImprovementPct >= 0 ? 'good' : 'bad'}">${sign(summary.bestImprovementPct)}</b></div><div><span>Measured 범위</span><b>${sign(summary.worstImprovementPct)} → ${sign(summary.bestImprovementPct)}</b></div><div><span>최적 변경</span><b>${advisorEscape(Object.entries(summary.bestChanges).map(([key, value]) => `${key}=${value}`).join(', '))}</b></div>`;
+  target.innerHTML = `<div><span>기준 전체 TPS</span><b>${fmt(summary.baselineAggregateTPS, 2)}</b></div><div><span>최고 measured 개선</span><b class="${summary.bestImprovementPct >= 0 ? 'good' : 'bad'}">${sign(summary.bestImprovementPct)}</b></div><div><span>실측 범위</span><b>${sign(summary.worstImprovementPct)} → ${sign(summary.bestImprovementPct)}</b></div><div><span>최적 변경</span><b>${advisorEscape(Object.entries(summary.bestChanges).map(([key, value]) => `${key}=${value}`).join(', '))}</b></div>`;
   if (execution?.status === 'completed') setGuidedStep(3);
 }
 
