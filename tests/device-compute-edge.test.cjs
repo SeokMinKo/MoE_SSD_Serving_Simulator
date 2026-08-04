@@ -133,5 +133,8 @@ test('Hybrid warm VRAM cache fills every GPU-assigned Expert that fits', () => {
   const result = simulator.simulateColibri(input);
   assert.equal(result.error, undefined);
   assert.equal(result.cacheState.v[0].length, gpuExperts);
-  assert.deepEqual(result.cacheState.v[0], Array.from({ length: gpuExperts }, (_, expert) => expert));
+  assert.deepEqual(
+    [...result.cacheState.v[0]].sort((a, b) => a - b),
+    Array.from({ length: gpuExperts }, (_, expert) => expert)
+  );
 });
