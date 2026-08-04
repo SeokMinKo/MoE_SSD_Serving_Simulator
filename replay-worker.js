@@ -35,12 +35,14 @@ importScripts(
   'colibri.js',
   'afm.js',
   'serving.js',
+  'serving-device.js',
   'advisor.js',
   'sweep.js',
   'repro.js'
 );
 
 installDevicePlacementModel();
+installDeviceServingScheduler();
 installDeviceArtifactModel();
 
 self.onmessage = event => {
