@@ -105,6 +105,20 @@ function colibriProfileForRun(c) {
   };
 }
 
+function colibriDynamic(c, state, V, D, P, unitGB) {
+  const expertEntries = c.arch === 'unified' ? unionEntries(V, D) : totalEntries(D);
+  const expertGB = expertEntries * unitGB;
+  const pageGB = totalEntries(P) * unitGB;
+  const fixedGB = c.resident + c.pinned + c.mem.osReservedGB + c.mem.backgroundGB + 3 + (c.arch === 'unified' ? 0.8 : 0);
+  const physicalGB = fixedGB + expertGB + pageGB + kvPhysicalGB(state, c) + state.pendingSwapOutGB;
+  const profile = colibriProfileForRun(c);
+  const deviceReserveGB = typeof colibriDeviceReserveGB === 'function'
+    ? colibriDeviceReserveGB(c, profile)
+    : c.arch === 'discrete' ? 0.8 : 0;
+  const deviceGB = c.arch === 'discrete' ? totalEntries(V) * unitGB + state.deviceKVGB + deviceReserveGB : 0;
+  return { fixedGB, expertGB, pageGB, kvGB: kvPhysicalGB(state, c), physicalGB, deviceGB };
+}
+
 function colibriExpertDeviceForRun(profile, layer, expert, seed) {
   return typeof colibriExpertDevice === 'function' ? colibriExpertDevice(profile, layer, expert, seed) : 'gpu';
 }
@@ -396,7 +410,7 @@ function simulateColibri(input = readColibri(), options = {}) {
     const ts = now;
     const storageEventStart = storage.events.length;
     let tokenSSDGB = 0, tokenDemandGB = 0, tokenPrefetchGB = 0, tokenPcieGB = 0, tokenComputeMs = 0, tokenStorageRequests = 0, tokenDemandRequests = 0, tokenPrefetchRequests = 0, hits = 0, tokenSwapInGB = 0;
-    let tokenCompressionTrafficGB = 0, tokenCompressionCpuMs = 0;
+    let tokenCompressionTrafficGB = 0, tokenCompressionCpuMs = 0, tokenPressureCompressionCpuMs = 0;
     let tokenStorageServiceMs = 0, tokenStorageQueueMs = 0, tokenSwapServiceMs = 0, tokenSwapQueueMs = 0;
     let tokenLayerDramTrafficGB = 0, tokenLayerDramStallMs = 0, tokenCpuActive = 0, tokenGpuActive = 0, tokenCpuExpertMs = 0, tokenGpuExpertMs = 0;
 
@@ -603,6 +617,7 @@ function simulateColibri(input = readColibri(), options = {}) {
     now = Math.max(now, swapSchedule.blockedUntil);
     tokenCompressionTrafficGB += pressure.compressionTrafficGB;
     tokenCompressionCpuMs += pressure.compressionCpuMs;
+    tokenPressureCompressionCpuMs += pressure.compressionCpuMs;
 
     const dyn = pressure.dyn;
     if (c.arch === 'discrete' && dyn.deviceGB > c.vram + EPS) {
@@ -630,7 +645,7 @@ function simulateColibri(input = readColibri(), options = {}) {
 
     const swapTrafficGB = tokenSwapInGB + pressure.swapOutGB;
     let dramTrafficGB;
-    let baseElapsed = now - ts + tokenCompressionCpuMs;
+    let baseElapsed = now - ts + tokenPressureCompressionCpuMs;
     let dramStallMs;
     if (profile.mode === 'legacy') {
       const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
