@@ -7,5 +7,5 @@ globalThis.__MOE_SSD_BUILD__ = Object.freeze({
   buildVersion: 'source-tree'
 });
 if (typeof document === 'object' && typeof document.write === 'function') {
-  document.write('<script src="compute.js"></script><script src="compute-placement.js"></script><script src="serving-device.js"></script><script src="device-experience.js"></script>');
+  document.write('<script src="compute.js"></script><script src="compute-placement.js"></script><script src="serving-device.js"></script><script src="device-experience.js"></script><script src="artifact-v5.js"></script>');
 }
