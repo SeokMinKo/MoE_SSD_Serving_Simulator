@@ -83,29 +83,31 @@ Derived mode uses decimal SI units:
 Expert MB = expertParamsM × weightBits / 8 × packing
 ```
 
-The existing Colibri 1.03 cache-packing overhead is applied after the payload calculation. Bit width does not infer kernel speed. CPU and GPU kernel behavior remains an explicit calibration through the corresponding multiplier.
+The existing Colibri 1.03 cache-packing overhead is applied after the payload calculation. Bit width does not infer kernel speed. CPU and GPU Expert-kernel behavior remains an explicit calibration through the corresponding multiplier. Expert multipliers do not modify Attention timing.
 
-## Persistent Hybrid placement
+## Popularity-aware persistent Hybrid placement
 
-Hybrid mode no longer scales all bytes by an aggregate fraction. Each `(layer, Expert ID)` receives a deterministic CPU or GPU assignment derived from the scenario seed and target CPU fraction.
+Hybrid mode no longer scales all bytes by an aggregate fraction. Expert IDs already follow the simulator's Zipf popularity order, so the configured GPU share is assigned to the lowest, hottest Expert IDs and the remaining colder IDs are assigned to CPU.
 
 Consequences:
 
-- The same Expert keeps the same device assignment across tokens and replay.
+- The same Expert keeps the same device assignment across layers, tokens, serving replay, and artifact replay.
+- Hot Experts are preferentially GPU-resident; cold Experts are CPU-resident.
 - Only GPU-assigned Experts can enter the VRAM Expert cache.
 - Only GPU-assigned Host sources produce PCIe Expert traffic.
 - CPU-assigned active Experts produce Host DRAM traffic.
-- The physical `vcache` budget is preserved instead of being multiplied by the Hybrid fraction.
+- Manual `vcache` remains the explicit physical VRAM budget.
+- Auto Placement caps `vcache` at the total GPU-assigned Expert pool, avoiding unused reservation that would unnecessarily reduce GPU KV capacity.
 
-The requested CPU fraction is a placement target. The observed activation fraction can differ because routing popularity is non-uniform; the result reports both target and actual fractions.
+The requested CPU fraction is an Expert-count placement target. The observed activation fraction can differ because routing popularity is non-uniform; the result reports both target and actual fractions.
 
 ## Compute equations
 
 For each device:
 
 ```text
-effective Attention time = attentionMs × kernelMultiplier / speedScale
-effective Expert time    = expertMs × kernelMultiplier / speedScale
+effective Attention time = attentionMs / speedScale
+effective Expert time    = expertMs × Expert kernel multiplier / speedScale
 Expert phase             = ceil(active Experts on device / parallelExperts)
                            × effective Expert time
 ```
@@ -144,6 +146,8 @@ GPU Expert: SSD/Host cache → PCIe → VRAM → GPU compute
 CPU Expert: SSD/Host cache → Host DRAM → CPU compute
 ```
 
+A discrete CPU-only configuration reserves no GPU workspace and can use `vram = 0`. Profiles that use GPU compute retain the simulator's existing simplified 0.8 GB runtime reserve.
+
 ### Unified memory
 
 CPU and GPU phases share the existing unified DRAM roofline and have no PCIe stage.
@@ -162,7 +166,7 @@ Layer start
 → next layer
 ```
 
-This means additional CPU DRAM time advances subsequent layers and tokens and therefore affects prefetch timeliness, queue timing, swap completion, and observed bandwidth consistently.
+This means additional CPU DRAM time advances subsequent layers and tokens and therefore affects prefetch timeliness, queue timing, swap completion, and observed bandwidth consistently. KV compression/decompression CPU time is charged once at the point where it occurs; reporting totals do not add that elapsed time a second time.
 
 Prefill independently calculates:
 
@@ -189,14 +193,18 @@ The dedicated tests use non-zero Prompt, KV, resident weights, DRAM traffic, PCI
 
 - Legacy equivalence;
 - linear 8-bit/4-bit payload and I/O scaling without inferred kernel speed;
+- Expert multiplier isolation from Attention timing;
 - CPU Attention KV placement and Host DRAM traffic;
-- CPU-only Expert PCIe traffic equal to zero;
+- CPU-only Expert PCIe traffic equal to zero and zero-VRAM execution;
 - compute-bound sensitivity to GPU speed scale;
-- deterministic persistent Hybrid assignment;
+- deterministic popularity-aware Hybrid assignment;
 - VRAM cache containing GPU-assigned Experts only;
-- full physical VRAM cache budget and Hybrid PCIe bounded by CPU/GPU endpoints;
+- warm VRAM cache filling every GPU Expert that fits;
+- Auto Placement VRAM cache capped by the GPU Expert pool;
+- full physical Manual VRAM cache budget and Hybrid PCIe bounded by CPU/GPU endpoints;
 - independent CPU Attention Prefill calibration;
 - CPU Expert DRAM pressure inside the token timeline;
+- compression CPU cost charged once;
 - parallel/sequential Hybrid ordering;
 - calibrated artifact Export → Import → Replay;
 - fail-closed invalid input handling.
@@ -204,8 +212,7 @@ The dedicated tests use non-zero Prompt, KV, resident weights, DRAM traffic, PCI
 ## Remaining limitations
 
 - CPU and GPU are composed inside each analytic layer phase but do not yet use independent multi-request scheduler resources. Cross-request CPU/GPU contention is deferred to PR3.
-- Hybrid placement is deterministic and identity-aware but is not dynamically optimized from measured Expert popularity.
+- Popularity-aware placement is static and is not dynamically retrained from measured traces.
 - GPU-resident dense Attention weights and explicit dense-weight PCIe loading remain part of the existing `resident` calibration rather than a separate cache.
-- The discrete runtime reserve remains the simulator's existing simplified workspace calibration.
-- Dequantization is represented through calibrated kernel multipliers; a separate dequant resource is deferred.
+- Dequantization is represented through calibrated Expert-kernel multipliers; a separate dequant resource is deferred.
 - UI controls, Sweep descriptors, Advisor CPU/GPU sub-scores, and a future V5 artifact redesign remain later phases.
