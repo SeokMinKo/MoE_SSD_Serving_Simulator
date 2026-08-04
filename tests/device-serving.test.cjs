@@ -51,8 +51,8 @@ function config(overrides = {}) {
   };
 }
 
-function requests(count, output = 6) {
-  return Array.from({ length: count }, (_, index) => ({ id: `r${index}`, arrivalMs: 0, output }));
+function requests(count, output = 6, spacingMs = 0) {
+  return Array.from({ length: count }, (_, index) => ({ id: `r${index}`, arrivalMs: index * spacingMs, output }));
 }
 
 test('PR3: calibrated concurrency one preserves analytic TTFT', () => {
@@ -65,7 +65,7 @@ test('PR3: calibrated concurrency one preserves analytic TTFT', () => {
 
 test('PR3: CPU-only execution uses no GPU compute service', () => {
   const c = config({ conc: 4, compute: compute({ attentionDevice: 'cpu', expertDevice: 'cpu' }) });
-  const serving = sim.simulateServing(c, requests(4));
+  const serving = sim.simulateServing(c, requests(4, 6, 1), { batchWindowMs: 0 });
   assert.equal(serving.resources.gpuCompute.jobs, 0);
   assert.ok(serving.resources.cpuCompute.busyMs > 0);
   assert.ok(serving.resources.cpuCompute.queueMs > 0);
@@ -73,7 +73,7 @@ test('PR3: CPU-only execution uses no GPU compute service', () => {
 
 test('PR3: GPU-only execution uses no CPU compute service without memory CPU work', () => {
   const c = config({ conc: 4 });
-  const serving = sim.simulateServing(c, requests(4));
+  const serving = sim.simulateServing(c, requests(4, 6, 1), { batchWindowMs: 0 });
   assert.equal(serving.resources.cpuCompute.jobs, 0);
   assert.ok(serving.resources.gpuCompute.busyMs > 0);
   assert.ok(serving.resources.gpuCompute.queueMs > 0);
@@ -104,8 +104,9 @@ test('PR3: slower CPU increases queueing and reduces throughput in CPU-bound ser
       cpu: { speedScale: 0.5, attentionMs: 40, expertMs: 20, parallelExperts: 2, prefillSpeedup: 2 }
     })
   };
-  const fast = sim.simulateServing(fastConfig, requests(6));
-  const slow = sim.simulateServing(slowConfig, requests(6));
+  const staggered = requests(6, 6, 1);
+  const fast = sim.simulateServing(fastConfig, staggered, { batchWindowMs: 0 });
+  const slow = sim.simulateServing(slowConfig, staggered, { batchWindowMs: 0 });
   assert.ok(slow.resources.cpuCompute.queueMs > fast.resources.cpuCompute.queueMs);
   assert.ok(slow.throughputTPS < fast.throughputTPS);
   assert.ok(slow.resources.cpuCompute.utilization >= 0 && slow.resources.cpuCompute.utilization <= 1);
