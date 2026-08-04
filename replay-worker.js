@@ -39,13 +39,15 @@ importScripts(
   'advisor.js',
   'sweep.js',
   'device-experience.js',
-  'repro.js'
+  'repro.js',
+  'artifact-v5.js'
 );
 
 installDevicePlacementModel();
 installDeviceServingScheduler();
 installDeviceExperienceModel();
 installDeviceArtifactModel();
+installArtifactV5();
 
 self.onmessage = event => {
   try {
