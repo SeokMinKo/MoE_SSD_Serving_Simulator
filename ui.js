@@ -59,6 +59,36 @@ function initializeTheme(options = {}) {
   return current;
 }
 
+function initializeResponsiveChartRedraw(options = {}) {
+  const target = options.target || (typeof window === 'object' ? window : null);
+  const schedule = options.requestAnimationFrame || (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : callback => setTimeout(callback, 0));
+  if (!target?.addEventListener) return false;
+  let redrawPending = false;
+  target.addEventListener('resize', () => {
+    if (redrawPending) return;
+    redrawPending = true;
+    schedule(() => {
+      redrawPending = false;
+      if (typeof lastResult === 'object' && lastResult && !lastResult.error) {
+        drawPerformance(lastResult);
+        renderStorageIO(lastResult);
+        drawMemory(lastResult);
+      }
+    });
+  });
+  return true;
+}
+
+function initializeResponsiveGraphFilters(options = {}) {
+  const disclosure = options.disclosure || $('graphFilterDisclosure');
+  const media = options.media || (typeof matchMedia === 'function' ? matchMedia('(max-width: 720px)') : null);
+  if (!disclosure) return false;
+  const sync = () => { disclosure.open = !media?.matches; };
+  sync();
+  media?.addEventListener?.('change', sync);
+  return true;
+}
+
 const GUIDED_HW_PRESETS = Object.freeze({
   'nvidia-dgx-spark-128': Object.freeze({
     label: 'NVIDIA DGX Spark · 128 GB',
@@ -107,6 +137,12 @@ const GUIDED_RESOURCE_LABELS = Object.freeze({
   compute: '연산',
   'capacity-policy': '용량 / 정책'
 });
+const GUIDED_PHASE_LABELS = Object.freeze({
+  prefill: '프리필 (Prefill)',
+  'first-token': '첫 토큰 (First token)',
+  decode: '디코드 (Decode)',
+  'memory-pressure': '메모리 압력 (Memory pressure)'
+});
 
 function guidedSweepParameterFor(resourceId, config) {
   if (resourceId === 'storage') return 'ssdBW';
@@ -131,7 +167,7 @@ function guidedRankBottlenecks(insight, config = null) {
           resourceLabel: GUIDED_RESOURCE_LABELS[resource.id] || resource.label,
           score: resource.score,
           phaseId: phase.id,
-          phaseLabel: phase.label,
+          phaseLabel: GUIDED_PHASE_LABELS[phase.id] || phase.label,
           tradeoff: resource.recommendation?.tradeoff || '',
           direction: resource.recommendation?.direction || '',
           parameterPath: config ? guidedSweepParameterFor(resource.id, config) : null
@@ -144,7 +180,7 @@ function guidedRankBottlenecks(insight, config = null) {
 
 function guidedSweepValues(descriptor, baseline) {
   if (descriptor?.type !== 'number' || !Number.isFinite(baseline)) return autoSweepValues(descriptor, baseline);
-  const ratios = [0.25, 0.5, 0.75, 1, 1.5, 2, 4];
+  const ratios = [0.25, 0.5, 1, 2, 4];
   const values = ratios.map(ratio => clamp(baseline * ratio, descriptor.min, descriptor.max)).map(value => descriptor.integer ? Math.round(value) : Number(value.toPrecision(12)));
   return [...new Set(values)].sort((a, b) => a - b);
 }

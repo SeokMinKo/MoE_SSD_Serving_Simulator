@@ -509,7 +509,7 @@ function presetNumber(value, suffix = '') {
 function renderModelPresetSummary(preset) {
   const summary = $('presetSummary');
   if (!preset) {
-    summary.innerHTML = '<b>Custom / manual topology</b><br>Topology inputs are not linked to a published model.';
+    summary.innerHTML = '<b>사용자 지정 / 수동 토폴로지</b><br>토폴로지 입력이 공개 모델에 연결되지 않았습니다.';
     return;
   }
   const safeSourceUrl = typeof preset.sourceUrl === 'string' && /^https:\/\/[^\s"'<>]+$/.test(preset.sourceUrl)
