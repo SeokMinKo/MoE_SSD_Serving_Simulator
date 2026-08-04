@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, '..');
 function loadSimulator(includeRepro = false) {
   const files = ['core.js', 'compute.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js'];
   if (includeRepro) files.push('serving.js', 'advisor.js', 'sweep.js', 'repro.js');
-  const source = `globalThis.__MOE_SSD_BUILD__ = Object.freeze({ schemaVersion: 'moe-ssd-sim/v4', modelVersion: '1.7.0-pr2', packageVersion: '1.6.2', commit: 'test', buildVersion: 'test' });\n` +
+  const source = `globalThis.__MOE_SSD_BUILD__ = Object.freeze({ schemaVersion: 'moe-ssd-sim/v4', modelVersion: '1.6.2', packageVersion: '1.6.2', commit: 'test', buildVersion: 'test' });\n` +
     files.map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n') +
     `\nif (typeof installDeviceArtifactModel === 'function') installDeviceArtifactModel();\n` +
     `globalThis.__simulator = {
@@ -25,7 +25,8 @@ function loadSimulator(includeRepro = false) {
       simulatorProvenance: typeof simulatorProvenance === 'function' ? simulatorProvenance : null,
       runSimulationConfig: typeof runSimulationConfig === 'function' ? runSimulationConfig : null,
       createScenarioArtifact: typeof createScenarioArtifact === 'function' ? createScenarioArtifact : null,
-      parseScenarioArtifact: typeof parseScenarioArtifact === 'function' ? parseScenarioArtifact : null
+      parseScenarioArtifact: typeof parseScenarioArtifact === 'function' ? parseScenarioArtifact : null,
+      parseScenarioArtifactReplay: typeof parseScenarioArtifactReplay === 'function' ? parseScenarioArtifactReplay : null
     };`;
   const sandbox = {
     console,
@@ -264,7 +265,7 @@ test('PR2: calibrated artifact exports imports and replays with only external co
   assert.equal(artifact.config.compute.mode, 'calibrated');
   assert.equal(artifact.config.quantization.payloadMode, 'manual');
   assert.equal(Object.keys(artifact.config).some(key => key.startsWith('__')), false);
-  const parsed = simulator.parseScenarioArtifact(JSON.stringify(artifact));
+  const parsed = simulator.parseScenarioArtifactReplay(JSON.stringify(artifact));
   assert.equal(parsed.artifact.runId, artifact.runId);
   assert.equal(parsed.replayResult.runId, artifact.runId);
 });
@@ -280,8 +281,12 @@ test('PR1: invalid calibrated settings fail closed', () => {
   assert.ok(result.validationErrors.some(error => error.path === 'compute.gpu.speedScale'));
 });
 
-test('PR2: provenance distinguishes the calibrated model from V1.6.2', () => {
+test('PR2: device-compute schema distinguishes the calibrated model contract', () => {
   const simulator = loadSimulator(true);
-  assert.equal(simulator.simulatorProvenance().modelVersion, '1.7.0-pr2');
-  assert.equal(simulator.simulatorProvenance().packageVersion, '1.6.2');
+  const profile = simulator.deriveColibriDeviceProfile(colibriConfig({
+    compute: calibratedCompute(),
+    quantization: manualQuantization()
+  }));
+  assert.equal(profile.schema, 'device-compute/v2');
+  assert.equal(simulator.simulatorProvenance().modelVersion, '1.6.2');
 });
