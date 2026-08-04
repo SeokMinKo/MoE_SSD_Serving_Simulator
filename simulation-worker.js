@@ -13,11 +13,13 @@ importScripts(
   'serving.js',
   'serving-device.js',
   'advisor.js',
-  'sweep.js'
+  'sweep.js',
+  'device-experience.js'
 );
 
 installDevicePlacementModel();
 installDeviceServingScheduler();
+installDeviceExperienceModel();
 
 self.onmessage = event => {
   try {

@@ -38,11 +38,13 @@ importScripts(
   'serving-device.js',
   'advisor.js',
   'sweep.js',
+  'device-experience.js',
   'repro.js'
 );
 
 installDevicePlacementModel();
 installDeviceServingScheduler();
+installDeviceExperienceModel();
 installDeviceArtifactModel();
 
 self.onmessage = event => {

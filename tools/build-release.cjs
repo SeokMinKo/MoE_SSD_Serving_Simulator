@@ -21,6 +21,7 @@ const releaseFiles = Object.freeze([
   'storage-io.js',
   'serving.js',
   'serving-device.js',
+  'device-experience.js',
   'advisor.js',
   'sweep.js',
   'repro.js',
@@ -58,7 +59,7 @@ for (const relative of releaseFiles) {
 }
 
 const buildVersion = `release/v${pkg.version}+${commit.slice(0, 12)}`;
-const buildInfo = `'use strict';\nglobalThis.__MOE_SSD_BUILD__ = Object.freeze({\n  schemaVersion: 'moe-ssd-sim/v4',\n  modelVersion: ${JSON.stringify(pkg.version)},\n  packageVersion: ${JSON.stringify(pkg.version)},\n  commit: ${JSON.stringify(commit)},\n  buildVersion: ${JSON.stringify(buildVersion)}\n});\nif (typeof document === 'object' && typeof document.write === 'function') {\n  document.write('<script src="compute.js"></script><script src="compute-placement.js"></script><script src="serving-device.js"></script>');\n}\n`;
+const buildInfo = `'use strict';\nglobalThis.__MOE_SSD_BUILD__ = Object.freeze({\n  schemaVersion: 'moe-ssd-sim/v4',\n  modelVersion: ${JSON.stringify(pkg.version)},\n  packageVersion: ${JSON.stringify(pkg.version)},\n  commit: ${JSON.stringify(commit)},\n  buildVersion: ${JSON.stringify(buildVersion)}\n});\nif (typeof document === 'object' && typeof document.write === 'function') {\n  document.write('<script src="compute.js"></script><script src="compute-placement.js"></script><script src="serving-device.js"></script><script src="device-experience.js"></script>');\n}\n`;
 fs.writeFileSync(path.join(output, 'build-info.js'), buildInfo);
 
 const html = fs.readFileSync(path.join(output, 'index.html'), 'utf8');
