@@ -6,6 +6,7 @@ importScripts(
   'compute.js',
   'presets.js',
   'config.js',
+  'compute-placement.js',
   'memory.js',
   'colibri.js',
   'afm.js',
@@ -13,6 +14,8 @@ importScripts(
   'advisor.js',
   'sweep.js'
 );
+
+installDevicePlacementModel();
 
 self.onmessage = event => {
   try {
