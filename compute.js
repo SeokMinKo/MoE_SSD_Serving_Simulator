@@ -349,17 +349,22 @@ function installDeviceComputeModel() {
   };
 
   applyColibriPlacement = function deviceAwareColibriPlacement(input) {
-    if (input?.__devicePlacementApplied === DEVICE_COMPUTE_SCHEMA) return { ...input };
     const { config, profile } = normalizeColibriDeviceConfig(input);
-    const placed = legacyApplyColibriPlacement(config);
+    const requestedVcacheGB = config?.__devicePlacementApplied === DEVICE_COMPUTE_SCHEMA
+      ? deviceComputeNumber(config.placementInfo?.requestedVcacheGB, profile?.legacy?.vcache)
+      : config?.vcache;
+    const placementInput = config?.__devicePlacementApplied === DEVICE_COMPUTE_SCHEMA
+      ? { ...config, vcache: requestedVcacheGB, __devicePlacementApplied: undefined }
+      : config;
+    const placed = legacyApplyColibriPlacement(placementInput);
     if (profile?.mode !== 'calibrated' || placed.arch !== 'discrete') return placed;
-    const requestedVcacheGB = placed.vcache;
-    placed.vcache = requestedVcacheGB * profile.gpuExpertFraction;
+    const physicalVcacheGB = placed.vcache;
+    placed.vcache = physicalVcacheGB * profile.gpuExpertFraction;
     placed.__deviceCompute = profile;
     placed.__devicePlacementApplied = DEVICE_COMPUTE_SCHEMA;
     placed.placementInfo = {
       ...(placed.placementInfo || {}),
-      requestedVcacheGB,
+      requestedVcacheGB: physicalVcacheGB,
       effectiveVcacheGB: placed.vcache,
       gpuExpertFraction: profile.gpuExpertFraction,
       cpuExpertFraction: profile.cpuExpertFraction
