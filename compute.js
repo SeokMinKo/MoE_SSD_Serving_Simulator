@@ -31,12 +31,12 @@ function deviceComputeDeviceProfile(input, legacy, kernelMultiplier) {
   };
 }
 
-function deriveQuantizedExpertPayload(config) {
+function deriveQuantizedExpertPayload(config, legacyExpertMB = config?.esize) {
   const source = config?.quantization && typeof config.quantization === 'object' ? config.quantization : {};
   const payloadMode = source.payloadMode === 'derived' ? 'derived' : 'manual';
   const weightBits = deviceComputeNumber(source.weightBits, 4);
   const packing = deviceComputeNumber(source.packing, 1);
-  const manualExpertMB = deviceComputeNumber(source.manualExpertMB, config?.esize);
+  const manualExpertMB = deviceComputeNumber(source.manualExpertMB, legacyExpertMB);
   const expertParamsM = Number.isFinite(source.expertParamsM) ? source.expertParamsM : null;
   const effectiveExpertMB = payloadMode === 'derived'
     ? expertParamsM * weightBits / 8 * packing
@@ -66,7 +66,18 @@ function splitColibriActiveExperts(active, expertDevice, cpuExpertFraction) {
 function deriveColibriDeviceProfile(config) {
   const compute = config?.compute && typeof config.compute === 'object' ? config.compute : null;
   const mode = compute?.mode === 'calibrated' ? 'calibrated' : 'legacy';
-  const quantization = deriveQuantizedExpertPayload(config);
+  const previousLegacy = config?.__deviceCompute?.legacy && typeof config.__deviceCompute.legacy === 'object'
+    ? config.__deviceCompute.legacy
+    : null;
+  const legacyValues = {
+    attn: deviceComputeNumber(previousLegacy?.attn, config.attn),
+    ems: deviceComputeNumber(previousLegacy?.ems, config.ems),
+    par: deviceComputeInteger(previousLegacy?.par, config.par),
+    prefillSpeedup: deviceComputeNumber(previousLegacy?.prefillSpeedup, config.prefillSpeedup),
+    esize: deviceComputeNumber(previousLegacy?.esize, config.esize),
+    vcache: deviceComputeNumber(previousLegacy?.vcache, config.vcache)
+  };
+  const quantization = deriveQuantizedExpertPayload(config, legacyValues.esize);
   if (mode === 'legacy') {
     return {
       schema: DEVICE_COMPUTE_SCHEMA,
@@ -78,10 +89,10 @@ function deriveColibriDeviceProfile(config) {
       gpuActive: config.active,
       cpuExpertFraction: 0,
       gpuExpertFraction: 1,
-      effectiveAttentionMs: config.attn,
-      effectiveExpertPhaseMs: Math.ceil(config.active / config.par) * config.ems,
-      effectivePrefillSpeedup: config.prefillSpeedup,
-      legacy: { attn: config.attn, ems: config.ems, par: config.par, prefillSpeedup: config.prefillSpeedup, esize: config.esize, vcache: config.vcache }
+      effectiveAttentionMs: legacyValues.attn,
+      effectiveExpertPhaseMs: Math.ceil(config.active / legacyValues.par) * legacyValues.ems,
+      effectivePrefillSpeedup: legacyValues.prefillSpeedup,
+      legacy: legacyValues
     };
   }
 
@@ -96,10 +107,10 @@ function deriveColibriDeviceProfile(config) {
   const execution = hybrid.execution === 'sequential' ? 'sequential' : 'parallel';
   const overlapEfficiency = deviceComputeNumber(hybrid.overlapEfficiency, 1);
   const legacy = {
-    attentionMs: config.attn,
-    expertMs: config.ems,
-    parallelExperts: config.par,
-    prefillSpeedup: config.prefillSpeedup
+    attentionMs: legacyValues.attn,
+    expertMs: legacyValues.ems,
+    parallelExperts: legacyValues.par,
+    prefillSpeedup: legacyValues.prefillSpeedup
   };
   const cpu = deviceComputeDeviceProfile(compute.cpu, legacy, quantization.cpuKernelMultiplier);
   const gpu = deviceComputeDeviceProfile(compute.gpu, legacy, quantization.gpuKernelMultiplier);
@@ -137,15 +148,12 @@ function deriveColibriDeviceProfile(config) {
     effectiveAttentionMs,
     effectiveExpertPhaseMs,
     effectivePrefillSpeedup,
-    legacy: { attn: config.attn, ems: config.ems, par: config.par, prefillSpeedup: config.prefillSpeedup, esize: config.esize, vcache: config.vcache }
+    legacy: legacyValues
   };
 }
 
 function normalizeColibriDeviceConfig(input) {
   if (!input || input.mode !== 'colibri') return { config: input, profile: null };
-  if (input.__deviceCompute?.schema === DEVICE_COMPUTE_SCHEMA) {
-    return { config: input, profile: input.__deviceCompute };
-  }
   const profile = deriveColibriDeviceProfile(input);
   if (profile.mode === 'legacy' && !input.quantization) return { config: input, profile };
   const effectiveExpertMB = profile.quantization.effectiveExpertMB;
