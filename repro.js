@@ -251,7 +251,7 @@ function parseScenarioArtifactReplay(text, replayOptions = {}) {
   if (artifact.sweep && stableValue(artifact.sweep.baselineConfig) !== stableValue(artifact.config)) throw new Error('Imported sweep baseline does not match the top-level scenario config.');
   assertScenarioReplayBudget(artifact.config, artifact.sweep);
   validateAndReplaySweep(artifact.sweep);
-  const replayResult = runSimulationConfig(sweepClone(artifact.config), replayOptions);
+  const replayResult = runSimulationConfig(sweepClone(artifact.config), replayOptions, sweepClone(artifact.requests));
   if (replayResult.error) throw new Error(`Imported scenario replay failed: ${replayResult.error}`);
   const canonicalRunId = servingRunId(artifact.config, artifact.requests, artifact.provenance);
   if (canonicalRunId !== artifact.runId) throw new Error('Imported scenario replay produced a noncanonical run ID.');

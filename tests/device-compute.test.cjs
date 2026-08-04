@@ -333,6 +333,17 @@ test('PR4: Artifact V5 rejects noncanonical requests and incomplete calibrated c
     /request.*unknown fields/i
   );
 
+  const customRequest = structuredClone(artifact);
+  customRequest.requests[0].id = 'release-worker-custom';
+  customRequest.runId = simulator.servingRunId(
+    customRequest.config,
+    customRequest.requests,
+    customRequest.provenance,
+    customRequest.executionIdentity
+  );
+  const customReplay = simulator.parseScenarioArtifactReplay(JSON.stringify(customRequest));
+  assert.equal(customReplay.replayResult.serving.requests[0].id, 'release-worker-custom');
+
   const incomplete = structuredClone(config);
   delete incomplete.compute.cpu.speedScale;
   const incompleteResult = simulator.runSimulationConfig(incomplete);
@@ -395,6 +406,19 @@ test('PR4: Replay Worker preserves calibrated Artifact V5 schema and Run ID', ()
   assert.equal(posted.error, undefined);
   assert.equal(posted.artifact.schemaVersion, 'moe-ssd-sim/v5');
   assert.equal(posted.replayResult.runId, artifact.runId);
+
+  const customRequest = structuredClone(artifact);
+  customRequest.requests[0].id = 'release-worker-custom';
+  customRequest.runId = simulator.servingRunId(
+    customRequest.config,
+    customRequest.requests,
+    customRequest.provenance,
+    customRequest.executionIdentity
+  );
+  posted = null;
+  workerSandbox.self.onmessage({ data: JSON.stringify(customRequest) });
+  assert.equal(posted.error, undefined);
+  assert.equal(posted.replayResult.serving.requests[0].id, 'release-worker-custom');
 
   const tampered = structuredClone(artifact);
   tampered.executionIdentity.schedulerSchema = 'serving/v1';

@@ -134,16 +134,17 @@ function defaultServingRequests(config) {
   return Array.from({ length: config.conc }, (_, index) => ({ id: `request-${index + 1}`, arrivalMs: 0, output: config.output }));
 }
 
-function runSimulationConfig(config, servingOptions = {}) {
+function runSimulationConfig(config, servingOptions = {}, requestSpecs = undefined) {
   const engine = config.mode === 'afm3' ? simulateAFM : simulateColibri;
   const placedConfig = config.mode === 'colibri' ? applyColibriPlacement(config) : config;
+  const requests = requestSpecs === undefined ? defaultServingRequests(config) : requestSpecs;
   const aggregateMemoryResult = engine(placedConfig);
   if (aggregateMemoryResult.error) {
-    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, defaultServingRequests(config));
+    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, requests);
     return aggregateMemoryResult;
   }
   if (aggregateMemoryResult.oom) {
-    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, defaultServingRequests(config));
+    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, requests);
     return aggregateMemoryResult;
   }
   const singleRequestConfig = {
@@ -153,7 +154,6 @@ function runSimulationConfig(config, servingOptions = {}) {
   };
   const result = engine(singleRequestConfig);
   if (result.error) return result;
-  const requests = defaultServingRequests(config);
   const serving = simulateServing(placedConfig, requests, servingOptions);
   if (serving.error) return { ...result, error: serving.error };
   result.serving = serving;

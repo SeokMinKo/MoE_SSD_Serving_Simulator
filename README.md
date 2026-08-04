@@ -72,7 +72,7 @@ HW selector는 Synthetic 이름 대신 NVIDIA DGX Spark, Apple MacBook Pro/Studi
 - Stable min-heap event queue, 공유 SSD/DRAM/PCIe/compute timeline, request arrival과 admission-window batching
 - 단일 요청에서는 analytic token timeline을 보존하고, 다중 요청에서는 그 baseline에 공유 자원의 queue contention을 추가
 - Swap read/write를 shared SSD contention에 포함하고 AFM selector/initial patch/prefill을 TTFT event chain에 포함
-- `moe-ssd-sim/v5` JSON export/import, deterministic Run ID, baseline diff, result·Advisor insight·completed parameter sweep replay 검증. V5는 request를 `id`·`arrivalMs`·`output`의 exact shape로 제한하고 calibrated device config의 canonical 필드를 모두 요구합니다. Run ID는 이 canonical 입력과 envelope schema, engine contracts, scheduler schema, batch window에 결속되며 실제 replay identity와 대조됩니다. V4는 동일 build provenance일 때만 replay할 수 있으며 V3 이하는 호환하지 않습니다.
+- `moe-ssd-sim/v5` JSON export/import, deterministic Run ID, baseline diff, result·Advisor insight·completed parameter sweep replay 검증. V5는 request를 `id`·`arrivalMs`·`output`의 exact shape로 제한하고 calibrated device config의 canonical 필드를 모두 요구합니다. Replay는 저장된 request population 자체를 실행하며, Run ID는 이 실제 실행 입력과 envelope schema, engine contracts, scheduler schema, batch window에 결속되어 관측 replay identity와 대조됩니다. V4는 동일 build provenance일 때만 replay할 수 있으며 V3 이하는 호환하지 않습니다.
 - Prefill/first-token/decode/memory-pressure별 0–100 상대 병목 압력, 근거, 조건부 설정 방향 및 부작용
 - 공개 구조가 완전한 29개 MoE 모델의 topology-only 프리셋과 원본 config provenance
 - Node 22 syntax/test CI, mobile 44px touch targets, reduced-motion, canvas와 동등한 token trace 표
