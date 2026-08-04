@@ -2,25 +2,31 @@
 
 ## Scope
 
-This implementation adds the first two stages of the CPU/GPU and quantization plan for the Colibri engine.
+This change adds calibrated CPU/GPU compute and quantized Expert payload modeling to the Colibri engine while preserving the existing V1.6.2 Legacy path.
 
-- **PR1 core:** calibrated CPU/GPU profiles, manual or derived Expert payload size, fail-closed validation, and Legacy compatibility.
-- **PR2 Colibri integration:** CPU-only, GPU-only, and Hybrid Expert execution; CPU/GPU compute-time composition; CPU-aware DRAM traffic; GPU-only PCIe traffic; and effective VRAM cache allocation.
+- **PR1:** CPU/GPU calibration profiles, manual or derived Expert payload size, fail-closed validation, and Legacy compatibility.
+- **PR2:** CPU Attention, GPU Attention, CPU-only/GPU-only/Hybrid Expert execution, persistent Expert placement, device-aware KV placement, and CPU/GPU data paths integrated into the Prefill and Decode timelines.
 
-The existing UI and Sweep catalog are intentionally unchanged. Those controls belong to the later UI/Sweep phase. Device-calibrated configurations can currently be supplied through programmatic simulation or reproducible scenario configuration.
+The browser form and Sweep catalog remain unchanged in this PR. Calibrated configurations are currently supplied through programmatic or scenario configuration.
 
-## Compatibility contract
+## Compatibility
 
-A configuration without `compute` and `quantization` uses the existing V1.6.2 path without transformed timing, payload, PCIe, DRAM, or cache values.
+A Colibri configuration without `compute` and `quantization` follows the existing V1.6.2 equations and trace behavior.
 
 ```js
 {
-  mode: 'colibri',
+  mode: 'colibri'
   // existing V1.6.2 fields
 }
 ```
 
-The device model is enabled only with `compute.mode = 'calibrated'`. Quantization payload derivation can be used independently by supplying `quantization`.
+The calibrated path is enabled only with:
+
+```js
+compute: { mode: 'calibrated', ... }
+```
+
+The device-specific contract is identified by `device-compute/v2`. The repository keeps the existing `moe-ssd-sim/v4` artifact envelope and V1.6.2 package/model identity during this incremental PR; build commit, Run ID, explicit `compute`/`quantization` configuration, and the device-compute schema preserve reproducibility.
 
 ## Configuration
 
@@ -28,7 +34,7 @@ The device model is enabled only with `compute.mode = 'calibrated'`. Quantizatio
 {
   compute: {
     mode: 'calibrated',
-    attentionDevice: 'gpu',       // cpu | gpu
+    attentionDevice: 'cpu',       // cpu | gpu
     expertDevice: 'hybrid',       // cpu | gpu | hybrid
     cpu: {
       speedScale: 1,
@@ -47,7 +53,7 @@ The device model is enabled only with `compute.mode = 'calibrated'`. Quantizatio
     hybrid: {
       cpuExpertFraction: 0.25,
       execution: 'parallel',      // parallel | sequential
-      overlapEfficiency: 1        // 0 = exposed sum, 1 = full overlap
+      overlapEfficiency: 1        // 0 = exposed sum, 1 = full compute overlap
     }
   },
   quantization: {
@@ -63,96 +69,143 @@ The device model is enabled only with `compute.mode = 'calibrated'`. Quantizatio
 }
 ```
 
-## Payload calculation
+## Quantized payload
 
-Manual mode preserves an explicitly calibrated Expert payload.
+Manual mode uses an explicitly calibrated Expert payload:
 
 ```text
 Expert MB = manualExpertMB
 ```
 
-Derived mode calculates decimal megabytes from one Expert's parameter count.
+Derived mode uses decimal SI units:
 
 ```text
 Expert MB = expertParamsM × weightBits / 8 × packing
 ```
 
-The existing Colibri 1.03 cache-packing overhead remains applied after this payload calculation. Quantization bit width does **not** automatically infer a faster CPU or GPU kernel. Kernel behavior is supplied independently through `cpuKernelMultiplier` and `gpuKernelMultiplier`.
+The existing Colibri 1.03 cache-packing overhead is applied after the payload calculation. Bit width does not infer kernel speed. CPU and GPU kernel behavior remains an explicit calibration through the corresponding multiplier.
 
-## Compute calculation
+## Persistent Hybrid placement
+
+Hybrid mode no longer scales all bytes by an aggregate fraction. Each `(layer, Expert ID)` receives a deterministic CPU or GPU assignment derived from the scenario seed and target CPU fraction.
+
+Consequences:
+
+- The same Expert keeps the same device assignment across tokens and replay.
+- Only GPU-assigned Experts can enter the VRAM Expert cache.
+- Only GPU-assigned Host sources produce PCIe Expert traffic.
+- CPU-assigned active Experts produce Host DRAM traffic.
+- The physical `vcache` budget is preserved instead of being multiplied by the Hybrid fraction.
+
+The requested CPU fraction is a placement target. The observed activation fraction can differ because routing popularity is non-uniform; the result reports both target and actual fractions.
+
+## Compute equations
 
 For each device:
 
 ```text
-effective attention time = calibrated attentionMs × kernel multiplier / speedScale
-effective Expert time    = calibrated expertMs × kernel multiplier / speedScale
-Expert phase             = ceil(active Experts / parallelExperts) × effective Expert time
+effective Attention time = attentionMs × kernelMultiplier / speedScale
+effective Expert time    = expertMs × kernelMultiplier / speedScale
+Expert phase             = ceil(active Experts on device / parallelExperts)
+                           × effective Expert time
 ```
 
-Hybrid active Experts are split deterministically by rounding `active × cpuExpertFraction`.
-
-Sequential Hybrid execution exposes the sum of CPU and GPU Expert phases.
+Sequential Hybrid:
 
 ```text
 Hybrid Expert phase = CPU phase + GPU phase
 ```
 
-Parallel Hybrid execution interpolates between the slower phase and the full sum.
+Parallel Hybrid:
 
 ```text
-Hybrid Expert phase = max(CPU, GPU) + (1 - overlapEfficiency) × min(CPU, GPU)
+Hybrid Expert phase = max(CPU, GPU)
+                    + (1 - overlapEfficiency) × min(CPU, GPU)
 ```
 
-The resulting phase is mapped into the existing Colibri analytic timeline, preserving the existing fixed per-layer calibration and prefill structure.
+Attention and Expert Prefill speedups are applied independently to their owning devices. CPU Attention no longer inherits GPU Expert Prefill speedup, and vice versa.
 
-## Data-path behavior
+## Data paths
 
-### Discrete GPU
+### Discrete GPU — GPU Attention
 
-- GPU-routed Expert bytes contribute to PCIe traffic.
-- CPU-routed Expert bytes do not contribute to PCIe traffic.
-- CPU-routed active weights contribute to Host DRAM traffic.
-- Effective VRAM Expert cache is scaled by the GPU-routed Expert fraction.
-- The requested physical VRAM cache and effective modeled cache are both retained in `placementInfo`.
+```text
+KV: VRAM first, Host overflow
+GPU Expert: SSD/Host cache → PCIe → VRAM → GPU compute
+CPU Expert: SSD/Host cache → Host DRAM → CPU compute
+```
+
+### Discrete GPU — CPU Attention
+
+```text
+KV: Host DRAM
+Dense/resident Attention weights: Host DRAM
+GPU Expert: SSD/Host cache → PCIe → VRAM → GPU compute
+CPU Expert: SSD/Host cache → Host DRAM → CPU compute
+```
 
 ### Unified memory
 
-- PCIe traffic remains zero.
-- CPU and GPU routes share the existing unified DRAM roofline.
+CPU and GPU phases share the existing unified DRAM roofline and have no PCIe stage.
 
-## Result provenance
+## Timeline integration
 
-Calibrated results expose:
+The calibrated path performs device accounting inside the Colibri timeline instead of modifying TPOT after simulation:
 
-- `result.computeProfile`
-- `result.quantizationProfile`
-- `token.computeBreakdown`
-- `result.c.__deviceCompute`
-- `result.c.placementInfo.requestedVcacheGB`
-- `result.c.placementInfo.effectiveVcacheGB`
+```text
+Layer start
+→ demand/prefetch storage readiness
+→ GPU-only PCIe transfer
+→ CPU/GPU compute composition
+→ per-layer DRAM roofline
+→ layer completion
+→ next layer
+```
 
-The profile is deterministically regenerated when relevant configuration values change. Internal normalized timing values are not treated as a cache of the user's previous settings.
+This means additional CPU DRAM time advances subsequent layers and tokens and therefore affects prefetch timeliness, queue timing, swap completion, and observed bandwidth consistently.
 
-## Validation
+Prefill independently calculates:
 
-The model rejects invalid enums, non-finite values, zero or negative speed scales, invalid parallelism, invalid bit width and packing, missing derived parameter counts, and Hybrid fractions outside `[0, 1]`.
+- device-specific Attention compute;
+- CPU/GPU Expert compute;
+- GPU Expert PCIe bytes;
+- CPU Expert active-weight DRAM bytes;
+- CPU Attention resident and KV DRAM bytes.
 
-Regression coverage includes:
+## Artifact and replay
 
-- unchanged Legacy Colibri summaries;
-- linear 8-bit to 4-bit payload and SSD-I/O scaling;
-- zero Expert PCIe traffic for CPU-only execution;
+Artifacts persist only external configuration fields. No internal normalized profile or placement cache is exported.
+
+Allowed calibrated fields:
+
+- `compute`
+- `quantization`
+
+The parser validates these fields, recalculates placement and timing, and verifies Run ID, result summary, Advisor insight, and replay result against the same build.
+
+## Validation coverage
+
+The dedicated tests use non-zero Prompt, KV, resident weights, DRAM traffic, PCIe traffic, and storage service. They cover:
+
+- Legacy equivalence;
+- linear 8-bit/4-bit payload and I/O scaling without inferred kernel speed;
+- CPU Attention KV placement and Host DRAM traffic;
+- CPU-only Expert PCIe traffic equal to zero;
 - compute-bound sensitivity to GPU speed scale;
-- Hybrid endpoint equivalence with CPU-only and GPU-only modes;
-- parallel versus sequential Hybrid ordering;
-- idempotent auto-placement;
+- deterministic persistent Hybrid assignment;
+- VRAM cache containing GPU-assigned Experts only;
+- full physical VRAM cache budget and Hybrid PCIe bounded by CPU/GPU endpoints;
+- independent CPU Attention Prefill calibration;
+- CPU Expert DRAM pressure inside the token timeline;
+- parallel/sequential Hybrid ordering;
+- calibrated artifact Export → Import → Replay;
 - fail-closed invalid input handling.
 
-## Current limitations
+## Remaining limitations
 
-- CPU and GPU use an aggregate per-token phase, not separate scheduler resources. Independent CPU/GPU serving contention is deferred to PR3.
-- Hybrid routing uses an active-Expert fraction rather than a persistent per-Expert device-placement map.
-- The scaled VRAM cache is an aggregate sensitivity approximation, not a page-level or Expert-identity placement simulator.
-- Kernel multipliers and speed scales require measured or explicitly assumed calibration.
-- Dequantization is represented through kernel multipliers; a separate dequantization resource is deferred.
-- UI fields, Sweep descriptors, Advisor rendering, and V5 artifact migration are deferred to the later UI/artifact phase.
+- CPU and GPU are composed inside each analytic layer phase but do not yet use independent multi-request scheduler resources. Cross-request CPU/GPU contention is deferred to PR3.
+- Hybrid placement is deterministic and identity-aware but is not dynamically optimized from measured Expert popularity.
+- GPU-resident dense Attention weights and explicit dense-weight PCIe loading remain part of the existing `resident` calibration rather than a separate cache.
+- The discrete runtime reserve remains the simulator's existing simplified workspace calibration.
+- Dequantization is represented through calibrated kernel multipliers; a separate dequant resource is deferred.
+- UI controls, Sweep descriptors, Advisor CPU/GPU sub-scores, and a future V5 artifact redesign remain later phases.
