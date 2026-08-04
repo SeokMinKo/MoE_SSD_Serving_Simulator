@@ -50,6 +50,18 @@ test('P95 scale prevents one extreme token from flattening the full chart', () =
   assert.equal(tokenIO.tokenIOScaleMax(groups, 20, 'p95'), 10);
 });
 
+test('token I/O panel uses Korean-first lifecycle copy while retaining technical terms', () => {
+  assert.match(tokenIOSource, /실시간 스토리지 추적/);
+  assert.match(tokenIOSource, /디코드\(Decode\) 토큰마다/);
+  assert.match(tokenIOSource, /0 \/ 0 토큰/);
+  assert.doesNotMatch(tokenIOSource, /LIVE STORAGE TRACE|0 \/ 0 tokens/);
+});
+
+test('token I/O canvas backing follows the visible CSS box without a mobile width floor', () => {
+  assert.match(tokenIOSource, /Math\.max\(1, Math\.round\(canvas\.clientWidth/);
+  assert.doesNotMatch(tokenIOSource, /Math\.max\(320, Math\.round\(canvas\.clientWidth/);
+});
+
 test('accessible interaction and non-color encodings are present', () => {
   assert.match(tokenIOSource, /tabindex="0"/);
   assert.match(tokenIOSource, /접근 가능한 토큰별 I\/O 표/);

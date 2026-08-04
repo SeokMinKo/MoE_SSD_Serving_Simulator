@@ -185,7 +185,7 @@ function renderSweepParameterCards(baseline = readCurrentSweepConfig()) {
     const chosen = draft || { strategy: 'auto', min: auto[0], max: auto[auto.length - 1], step, custom: auto.join(', ') };
     const option = value => `<option value="${value}" ${chosen.strategy === value ? 'selected' : ''}>${({ auto: '자동', linear: '선형', log: '로그', custom: '사용자 목록' })[value]}</option>`;
     return `<div class="sweepParameterCard" data-sweep-card="${advisorEscape(item.path)}">${guideHeader}<label>생성 방식<select data-sweep-strategy>${['auto', 'linear', 'log', 'custom'].map(option).join('')}</select></label><label>최솟값 (${advisorEscape(guide.unit)})<input data-sweep-min type="number" value="${advisorEscape(String(chosen.min))}" min="${item.min}" max="${item.max}"></label><label>최댓값 (${advisorEscape(guide.unit)})<input data-sweep-max type="number" value="${advisorEscape(String(chosen.max))}" min="${item.min}" max="${item.max}"></label><label>간격 / 지점 수<input data-sweep-step type="number" value="${advisorEscape(String(chosen.step))}" min="${item.integer ? 1 : Number.EPSILON}"><input data-sweep-custom type="text" value="${advisorEscape(String(chosen.custom))}" aria-label="${advisorEscape(guide.label)} 사용자 지정 값(${advisorEscape(guide.unit)})"></label></div>`;
-  }).join('') : '하나 이상의 매개변수를 선택하세요.';
+  }).join('') : '<div class="sweepEmptyGuide"><strong>비교할 매개변수를 선택하세요</strong><span><b>1</b> 매개변수 목록에서 변수 선택</span><span><b>2</b> 값 범위와 예상 시나리오 확인</span><span><b>3</b> 스윕 실행 후 TPS·TTFT 비교</span></div>';
 }
 
 function parseSweepCardSelection(descriptor, card, baseline) {
@@ -221,6 +221,8 @@ function collectSweepSelections(baseline) {
 
 function updateSweepProjection() {
   $('sweepSelectedCount').textContent = `${sweepSelectedPaths.size}개 선택`;
+  $('sweepActionHint').textContent = sweepSelectedPaths.size ? '값 범위를 확인하고 스윕을 실행하세요.' : '매개변수를 선택하면 실행할 수 있습니다.';
+  $('runSweep').disabled = !sweepSelectedPaths.size || sweepPreparing || ['ready', 'running', 'paused'].includes(activeSweepExecution?.status);
   if (!sweepSelectedPaths.size) {
     $('sweepProjectedCount').textContent = '예상 시나리오 0개';
     return;
@@ -353,6 +355,7 @@ function renderSweepCharts(execution) {
 }
 
 function renderSweepResults(execution = activeSweepExecution) {
+  if (execution) $('sweepOutput').hidden = false;
   renderSweepTable(execution);
   const interpretation = $('sweepInterpretation');
   if (interpretation) {
@@ -441,6 +444,7 @@ async function runSweepFromUI(options = {}) {
     const validation = validateSimulationConfig(requestedBaseline);
     if (!validation.valid) throw new Error(`기준 설정이 잘못되었습니다: ${formatConfigErrors(validation)}`);
     resetSweepResults();
+    $('sweepOutput').hidden = false;
     sweepPreparing = true;
     $('runSweep').disabled = true;
     $('cancelSweep').disabled = false;
@@ -502,6 +506,8 @@ function initializeSweepLab() {
   $('openSweep').onclick = () => {
     sweepOpener = document.activeElement;
     renderSweepParameterPicker();
+    const catalog = $('parameterCatalog');
+    catalog.open = !(typeof matchMedia === 'function' && matchMedia('(max-width: 720px)').matches);
     dialog.showModal();
     $('parameterSearch').focus();
   };
@@ -513,8 +519,14 @@ function initializeSweepLab() {
     $('cancelSweep').focus();
   });
   dialog.addEventListener('close', () => sweepOpener?.focus());
-  $('parameterSearch').oninput = renderSweepParameterPicker;
-  $('parameterCategory').onchange = renderSweepParameterPicker;
+  $('parameterSearch').oninput = () => {
+    if ($('parameterSearch').value.trim()) $('parameterCatalog').open = true;
+    renderSweepParameterPicker();
+  };
+  $('parameterCategory').onchange = () => {
+    $('parameterCatalog').open = true;
+    renderSweepParameterPicker();
+  };
   $('selectAllSweep').onclick = () => {
     sweepSelectedPaths = new Set(currentSweepCatalog.map(descriptor => descriptor.path));
     renderSweepParameterPicker();

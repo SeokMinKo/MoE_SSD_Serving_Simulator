@@ -167,9 +167,9 @@
     return `
       <header class="tokenIOHeader">
         <div>
-          <div class="tokenIOEyebrow">LIVE STORAGE TRACE</div>
+          <div class="tokenIOEyebrow">실시간 스토리지 추적</div>
           <div class="tokenIOTitleRow"><h3 id="tokenIOPlaybackTitle">토큰별 Storage I/O</h3><span id="tokenIOStateBadge" class="tokenIOStateBadge" data-state="idle">대기</span></div>
-          <p id="tokenIOPlaybackDescription">Decode 토큰마다 발생한 요청 읽기, 프리페치, Swap-in, Swap-out을 표시합니다. 프리필과 초기 로딩 I/O는 기존 전체 Storage Trace에서 별도로 확인합니다.</p>
+          <p id="tokenIOPlaybackDescription">디코드(Decode) 토큰마다 발생한 요청 읽기, 프리페치, 스왑 인(Swap-in), 스왑 아웃(Swap-out)을 표시합니다. 프리필과 초기 로딩 I/O는 기존 전체 스토리지 추적에서 별도로 확인합니다.</p>
         </div>
         <div class="tokenIOCurrent">
           <span id="tokenIOCurrentLabel">선택 토큰 없음</span>
@@ -211,7 +211,7 @@
         <summary>접근 가능한 토큰별 I/O 표</summary>
         <div class="tokenIOTableScroller"><table class="tbl" id="tokenIOAccessibleTable"><caption>완료된 Decode 토큰의 Storage I/O와 TPOT</caption><thead><tr><th scope="col">Token</th><th scope="col">요청 읽기</th><th scope="col">프리페치</th><th scope="col">Swap-in</th><th scope="col">Swap-out</th><th scope="col">전체</th><th scope="col">TPOT</th><th scope="col">상태</th></tr></thead><tbody></tbody></table></div>
       </details>
-      <footer class="tokenIOFooter"><span id="tokenIOProgressLabel">0 / 0 tokens</span><span id="tokenIOAggregationLabel">최근 토큰을 개별 막대로 표시합니다.</span></footer>
+      <footer class="tokenIOFooter"><span id="tokenIOProgressLabel">0 / 0 토큰</span><span id="tokenIOAggregationLabel">최근 토큰을 개별 막대로 표시합니다.</span></footer>
       <div id="tokenIOLiveStatus" class="srOnly" role="status" aria-live="polite" aria-atomic="true"></div>`;
   }
 
@@ -271,7 +271,7 @@
 
   function ensureCanvasSize(canvas) {
     const ratio = Math.max(1, Math.min(2, typeof devicePixelRatio === 'number' ? devicePixelRatio : 1));
-    const cssWidth = Math.max(320, Math.round(canvas.clientWidth || 900));
+    const cssWidth = Math.max(1, Math.round(canvas.clientWidth || 900));
     const cssHeight = Math.max(190, Math.round(canvas.clientHeight || 240));
     const pixelWidth = Math.round(cssWidth * ratio);
     const pixelHeight = Math.round(cssHeight * ratio);
@@ -563,7 +563,7 @@
     if (state.completedCount > 0 && (state.selectedIndex < 0 || state.followLatest)) state.selectedIndex = state.completedCount - 1;
     if (typeof document === 'object') {
       const panel = ensurePanel(document);
-      panel.querySelector('#tokenIOProgressLabel').textContent = `${state.completedCount} / ${state.values.length} tokens`;
+      panel.querySelector('#tokenIOProgressLabel').textContent = `${state.completedCount} / ${state.values.length} 토큰`;
       renderSelectedToken();
       const details = panel.querySelector('#tokenIOTableDetails');
       if (details.open && (state.completedCount === state.values.length || state.completedCount % 8 === 0)) renderAccessibleTable();
@@ -585,7 +585,7 @@
     setStatus(status);
     if (typeof document === 'object') {
       const panel = ensurePanel(document);
-      panel.querySelector('#tokenIOProgressLabel').textContent = '0 / 0 tokens';
+      panel.querySelector('#tokenIOProgressLabel').textContent = '0 / 0 토큰';
       panel.querySelector('#tokenIOAccessibleTable tbody').innerHTML = '';
       renderSelectedToken();
       const canvas = panel.querySelector('#tokenIOPlaybackChart');

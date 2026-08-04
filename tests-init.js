@@ -100,10 +100,10 @@ function syncModeControls(applyPreset = false) {
   syncPlacement();
 }
 
-function syncMode(applyPreset = false) {
+function syncMode(applyPreset = false, renderResult = true) {
   syncModeControls(applyPreset);
   if (applyPreset && typeof markGuidedHardwareCustom === 'function') markGuidedHardwareCustom();
-  const r = simulate(); render(r);
+  if (renderResult) { const r = simulate(); render(r); }
 }
 
 function syncPlacement() {
@@ -121,9 +121,9 @@ function initializeAccessibility() {
   const chart = $('chart');
   const memoryChart = $('memoryChart');
   chart.setAttribute('role', 'img');
-  chart.setAttribute('aria-label', 'Token performance trace');
+  chart.setAttribute('aria-label', '토큰 성능 추적');
   memoryChart.setAttribute('role', 'img');
-  memoryChart.setAttribute('aria-label', 'Memory and swap trace');
+  memoryChart.setAttribute('aria-label', '메모리와 스왑 추적');
   $('warn').setAttribute('role', 'alert');
   $('status').setAttribute('aria-live', 'polite');
   $('tests').setAttribute('aria-live', 'polite');
@@ -144,9 +144,11 @@ $('graphTab').onchange = syncGraphView;
 $('storageXAxis').onchange = () => { if (lastResult && !lastResult.error) renderStorageIO(lastResult); };
 $('storageYAxis').onchange = () => { if (lastResult && !lastResult.error) renderStorageIO(lastResult); };
 initializeTheme();
+initializeResponsiveChartRedraw();
+initializeResponsiveGraphFilters();
 applySimulationInputLimits();
 initializeModelPresets();
-syncMode(false);
+syncMode(false, false);
 initializeReproControls();
 initializeAccessibility();
 initializeParameterHelp();

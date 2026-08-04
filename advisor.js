@@ -77,27 +77,27 @@ function advisorRecommendation(resourceId, score, mode, urgent = false) {
   const recommendations = {
     storage: {
       controls: afm ? 'ssdBW, lat, afmOverlap, afmFreq' : 'ssdBW, lat, qd, dcache, page, pinned, prefetch controls',
-      direction: afm ? 'ssdBW ↑; lat ↓; overlap/frequency를 조정해 window reads ↓' : 'ssdBW/qd/cache capacity ↑; lat/expert misses/wasted prefetch ↓',
-      condition: 'Storage service demand or modeled queue delay is a material fraction of this phase.',
-      tradeoff: 'Higher queue depth can add contention/tail latency; larger caches consume memory; effective SSD bandwidth requires device calibration.'
+      direction: afm ? 'ssdBW ↑; lat ↓; overlap/frequency를 조정해 window read ↓' : 'ssdBW/qd/cache 용량 ↑; lat/Expert miss/낭비된 prefetch ↓',
+      condition: '스토리지 서비스 요구량 또는 모델링된 큐 지연이 이 단계에서 유의미한 비중을 차지합니다.',
+      tradeoff: '높은 queue depth는 경합과 tail latency를 늘릴 수 있고, 큰 cache는 메모리를 사용합니다. 유효 SSD 대역폭에는 장치 보정이 필요합니다.'
     },
     'data-movement': {
       controls: afm ? 'dramBW, afmPatchBW, afmDoubleBuffer, afmChunkMode' : 'pcieBW, dramBW, vcache, pinned, placement',
-      direction: afm ? 'dramBW/patchBW ↑; validated pipelining과 double buffer 고려' : 'pcieBW/dramBW/VRAM residency ↑; host-to-device transfers ↓',
-      condition: 'PCIe transfer demand or exposed DRAM stall is material in this phase.',
-      tradeoff: 'More residency consumes VRAM/RAM; pipelining needs buffer capacity; configured bandwidth is not a measured service curve.'
+      direction: afm ? 'dramBW/patchBW ↑; 검증된 pipelining과 double buffer 고려' : 'pcieBW/dramBW/VRAM 상주량 ↑; Host→Device 전송 ↓',
+      condition: 'PCIe 전송 요구량 또는 노출된 DRAM 지연이 이 단계에서 유의미합니다.',
+      tradeoff: '상주량 증가는 VRAM/RAM을 사용하고 pipelining에는 buffer 용량이 필요합니다. 설정 대역폭은 실측 service curve가 아닙니다.'
     },
     compute: {
       controls: afm ? 'afmAttn, afmFFN, afmRuntime, afmPrefillTPS' : 'attn, ems, par, prefillSpeedup',
-      direction: afm ? 'modeled compute costs ↓ or calibrated prefillTPS ↑' : 'modeled attention/Expert cost ↓; feasible parallelism/prefill speedup ↑',
-      condition: 'Modeled compute demand is a material fraction of phase elapsed time.',
-      tradeoff: 'Kernel feasibility, numerical quality, batch effects, and real accelerator occupancy are outside this simulator.'
+      direction: afm ? '모델링된 연산 비용 ↓ 또는 보정된 prefillTPS ↑' : '모델링된 Attention/Expert 비용 ↓; 가능한 병렬성/prefill 가속 ↑',
+      condition: '모델링된 연산 요구량이 단계 경과시간에서 유의미한 비중을 차지합니다.',
+      tradeoff: 'Kernel 실행 가능성, 수치 품질, batch 효과, 실제 accelerator 점유율은 이 시뮬레이터의 범위 밖입니다.'
     },
     'capacity-policy': {
       controls: afm ? 'host, context, conc, memPolicy, compression/swap controls, afmDoubleBuffer' : 'host, vram, context, conc, placement/cache budgets, compression/swap controls',
-      direction: 'available capacity/residency ↑ or context/concurrency/cache pressure ↓; reclaim/compression/swap policy 검토',
-      condition: urgent ? 'The synthetic run reached OOM; only completed-token evidence is valid.' : 'Memory utilization or the modeled pressure-state severity is elevated.',
-      tradeoff: 'More capacity changes cost; compression consumes compute; swap adds SSD writes and latency; reducing workload changes the scenario.'
+      direction: '사용 가능 용량/상주량 ↑ 또는 context/concurrency/cache 압력 ↓; reclaim/compression/swap 정책 검토',
+      condition: urgent ? '합성 실행이 OOM에 도달했으므로 완료된 토큰의 근거만 유효합니다.' : '메모리 사용률 또는 모델링된 압력 상태의 심각도가 높습니다.',
+      tradeoff: '용량 증가는 비용을 바꾸고, compression은 연산을 사용하며, swap은 SSD 쓰기와 지연을 늘립니다. workload 축소는 시나리오 자체를 바꿉니다.'
     }
   };
   return { priority, ...recommendations[resourceId] };

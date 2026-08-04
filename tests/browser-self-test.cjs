@@ -10,6 +10,7 @@ const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const uiSource = fs.readFileSync(path.join(root, 'ui.js'), 'utf8');
+const shadcnSource = fs.readFileSync(path.join(root, 'ui-shadcn.css'), 'utf8');
 const elements = new Map();
 
 for (const match of html.matchAll(/<input\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
@@ -183,7 +184,7 @@ test('P1: editing mapped topology controls returns the preset selector to Custom
     return { selected: $('modelPreset').value, summary: $('presetSummary').innerHTML };
   })()`, sandbox);
   assert.equal(state.selected, 'custom');
-  assert.match(state.summary, /Custom \/ manual topology/);
+  assert.match(state.summary, /사용자 지정 \/ 수동 토폴로지/);
   for (const id of ['layers', 'experts', 'active']) elements.get(id).value = before[id];
 });
 
@@ -215,7 +216,7 @@ test('P1: scenario import clears stale published-model attribution', () => {
     return { selected: $('modelPreset').value, summary: $('presetSummary').innerHTML };
   })()`, sandbox);
   assert.equal(state.selected, 'custom');
-  assert.match(state.summary, /Custom \/ manual topology/);
+  assert.match(state.summary, /사용자 지정 \/ 수동 토폴로지/);
   for (const id of ['layers', 'experts', 'active']) elements.get(id).value = before[id];
 });
 
@@ -279,10 +280,10 @@ test('P0: browser input preserves invalid threshold order for fail-closed valida
 test('P0: rendering an error invalidates every stale KPI and result table', () => {
   for (const id of ['ttft', 'tpot', 'tps', 'ssdpt', 'hit', 'mem']) document.getElementById(id).textContent = 'stale';
   for (const id of ['summary', 'pressureSummary', 'memory', 'modelStatus']) document.getElementById(id).innerHTML = 'stale';
-  vm.runInContext("render({ error: 'Invalid configuration', validationErrors: [] })", sandbox);
+  vm.runInContext("render({ error: 'Invalid configuration: prompt: prompt must be between 0 and 1000000.', validationErrors: [] })", sandbox);
   for (const id of ['ttft', 'tpot', 'tps', 'ssdpt', 'hit', 'mem']) assert.equal(elements.get(id).textContent, '—');
   for (const id of ['summary', 'pressureSummary', 'memory', 'modelStatus']) assert.equal(elements.get(id).innerHTML, '');
-  assert.equal(elements.get('warn').textContent, 'Invalid configuration');
+  assert.equal(elements.get('warn').textContent, '구성 오류: prompt 값은 0~1000000 범위여야 합니다.');
 });
 
 test('P0: rendering an error clears both stale charts', () => {
@@ -567,6 +568,8 @@ test('P1: Sweep Lab exposes parameter selection, OAT/Grid execution controls, ch
   assert.match(html, /TTFT 평균 \/ p50 \/ p95/);
   assert.match(html, /단일 시퀀스 TPS \/ 전체 TPS/);
   assert.match(html, /추정 민감도 시뮬레이터 \/ 미검증 알파/);
+  assert.ok(html.indexOf('<div class="sweepActions">') < html.indexOf('<div class="sweepSetup">'), 'mobile execution controls must precede the long setup form');
+  assert.match(html, /\.sweepActions\{position:sticky;top:0/);
   assert.match(html, /<script src="sweep\.js"><\/script>/);
   assert.equal(vm.runInContext("typeof initializeSweepLab === 'function' && typeof renderSweepResults === 'function' && typeof exportSweepCsv === 'function'", sandbox), true);
 });
@@ -626,7 +629,7 @@ test('P1: model status labels results as uncalibrated sensitivity estimates', ()
   assert.match(elements.get('modelStatus').innerHTML, /아직 보정되지 않은 민감도 추정값/);
 });
 
-test('P1: Bottleneck Advisor is directly below KPIs and exposes phase scorecards', () => {
+test('P1: Bottleneck Advisor is directly below KPIs and exposes Korean-first phase scorecards', () => {
   const kpiIndex = html.indexOf('<div class="kpis">');
   const advisorIndex = html.indexOf('<section id="advisor"');
   const tokenIndex = html.indexOf('<div id="token"');
@@ -637,11 +640,15 @@ test('P1: Bottleneck Advisor is directly below KPIs and exposes phase scorecards
   vm.runInContext('renderBottleneckAdvisor(createBottleneckInsight(__advisorResult))', sandbox);
   delete sandbox.__advisorResult;
   const output = elements.get('advisor').innerHTML;
-  for (const label of ['Prefill', 'First token', 'Decode', 'Memory pressure']) assert.match(output, new RegExp(label));
-  for (const label of ['Storage', 'Data movement', 'Compute', 'Capacity / policy']) assert.match(output, new RegExp(label));
+  for (const label of ['프리필 (Prefill)', '첫 토큰 (First token)', '디코드 (Decode)', '메모리 압력 (Memory pressure)']) assert.match(output, new RegExp(label.replace(/[()]/g, '\\$&')));
+  for (const label of ['스토리지 (Storage)', '데이터 이동 (Data movement)', '연산 (Compute)', '용량 / 정책 (Capacity / policy)']) assert.match(output, new RegExp(label.replace(/[()]/g, '\\$&')));
   assert.match(output, /상대 압력/);
-  assert.match(output, /부작용/);
-  assert.match(output, /not measured|not a measured/i);
+  assert.match(output, /class="resourceScore score score(?:High|Medium)?" style="--score:\d+(?:\.\d+)?"/);
+  assert.match(output, /<details class="advisorDetails" open><summary>단계별 병목 상세<\/summary>/);
+  assert.match(output, /적용 조건:/);
+  assert.match(output, /부작용:/);
+  assert.match(output, /실측 하드웨어 진단이 아닙니다/);
+  assert.doesNotMatch(output, /Storage service demand or modeled queue delay|Higher queue depth can add contention/);
 });
 
 test('P1: invalid render replaces stale advisor scores with an unavailable reason', () => {
@@ -649,17 +656,17 @@ test('P1: invalid render replaces stale advisor scores with an unavailable reaso
   vm.runInContext("render({ error: 'Invalid configuration: prompt is required' })", sandbox);
   const output = elements.get('advisor').innerHTML;
   assert.doesNotMatch(output, /stale score/);
-  assert.match(output, /Unavailable/);
-  assert.match(output, /configuration validation failed/i);
+  assert.match(output, /사용할 수 없습니다/);
+  assert.match(output, /구성 검증 실패/);
 });
 
 test('P1: pre-decode OOM render provides capacity recovery without fabricated timing scores', () => {
   vm.runInContext("render({ error: 'Unified memory OOM before decode: 140 / 128 GB', mode: 'afm3', c: { host: 128, vram: 0 } })", sandbox);
   const output = elements.get('advisor').innerHTML;
-  assert.match(output, /OOM before decode/);
-  assert.match(output, /Capacity \/ policy/);
+  assert.match(output, /디코드 전 OOM/);
+  assert.match(output, /용량 \/ 정책/);
   assert.match(output, /host|context|concurrency/i);
-  assert.doesNotMatch(output, /Prefill[^<]*100|Decode[^<]*100/);
+  assert.doesNotMatch(output, /<h3>프리필|<h3>디코드/);
 });
 
 test('P1: swap UI distinguishes allocated or in-flight bytes from completed residency', () => {
@@ -673,10 +680,90 @@ test('P1: swap UI distinguishes allocated or in-flight bytes from completed resi
 });
 
 test('P1: mobile controls meet 44px targets, avoid sticky overlap, and respect reduced motion', () => {
-  assert.match(html, /min-height:\s*44px/);
+  assert.match(html, /\.f input,\.f select\{min-height:44px\}/);
+  assert.match(html, /\.guidedHardware select\{min-height:44px\}/);
+  assert.match(html, /\.helpTip\{width:44px;height:44px/);
+  assert.match(html, /details>summary\{min-height:44px/);
+  assert.match(shadcnSource, /\.toolbarOverflow > summary\s*\{[^}]*min-height:\s*44px/);
+  assert.match(shadcnSource, /\.tokenIOCheck input\s*\{\s*width:\s*44px;\s*height:\s*44px/);
+  assert.match(html, /\.parameterChoice input\{width:44px;height:44px/);
+  assert.match(html, /\.f:has\(#mode\)\{grid-template-columns:1fr\}/);
+  assert.match(html, /\.f:has\(#mode\) #mode\{grid-column:1\/-1\}/);
+  assert.ok(html.indexOf('.f:has(#mode){grid-template-columns:1fr}') < html.indexOf('@media(max-width:720px)'), 'engine selector must use the full field width on desktop too');
   assert.match(html, /prefers-reduced-motion/);
   assert.match(html, /\.cursor\s*\{[^}]*animation:\s*none/);
   assert.match(html, /\.buttons:has\(#run\)\{position:static/);
+});
+
+test('P1: design polish prioritizes mobile results and progressively discloses dense controls', () => {
+  assert.match(html, /<section id="resultVisuals" class="panel resultVisuals" hidden><div id="resultInsight" class="resultInsight" role="status" aria-live="polite"><\/div><details id="graphFilterDisclosure" class="graphFilterDisclosure" open><summary>그래프 보기 설정<\/summary><div class="graphControls">/);
+  assert.match(html, /<details id="parameterCatalog" class="parameterCatalog" open>/);
+  assert.match(html, /<summary>매개변수 목록 <span class="note">검색·범주로 좁혀보세요<\/span><\/summary>/);
+  assert.match(moduleSource, /catalog\.open = !\(typeof matchMedia === 'function' && matchMedia\('\(max-width: 720px\)'\)\.matches\)/);
+  assert.match(moduleSource, /if \(\$\('parameterSearch'\)\.value\.trim\(\)\) \$\('parameterCatalog'\)\.open = true/);
+  assert.match(shadcnSource, /\.guideStep small \{ display: none; \}/);
+  assert.match(shadcnSource, /main > \.resultVisuals \{ order: 1; \}/);
+  assert.match(shadcnSource, /\.resultHero \{ display: contents; \}/);
+  assert.match(shadcnSource, /\.resultHero > \.advisor \{ order: 2; \}/);
+  assert.match(shadcnSource, /\.resultHero > \.tokenIOPlayback \{ order: 4; \}/);
+  assert.match(uiSource, /function initializeResponsiveGraphFilters\(/);
+  assert.match(testsInitFull, /initializeResponsiveGraphFilters\(\)/);
+  assert.match(shadcnSource, /\.graphPanel \.copyToolbar \{[^}]*order: 4;/);
+  assert.match(shadcnSource, /\.copyToolbar \.copyAction \{ color: #f8fafc; \}/);
+  assert.match(shadcnSource, /\.actionToolbar \{\s*position: static;/);
+  assert.match(shadcnSource, /\.sweepParameters \{ order: 0; \}/);
+  assert.match(shadcnSource, /\.parameterPicker \{ order: 1; \}/);
+  assert.match(shadcnSource, /\.graphPanel > h3 \{ margin: 4px 0 10px; \}/);
+  assert.match(shadcnSource, /\.appHeader h1 small \{[^}]*white-space: nowrap/);
+  assert.match(moduleSource, /class="sweepEmptyGuide"/);
+  assert.match(shadcnSource, /\.advisorGrid \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
+  assert.match(shadcnSource, /\.toolbarGroup:first-child \.primaryAction \{ grid-column: 1 \/ -1; \}/);
+  assert.match(shadcnSource, /\.parameterRelation \{ display: none; \}/);
+  assert.match(shadcnSource, /:root\[data-theme="light"\] \.kpi:nth-child\(3\)[^}]*box-shadow:/);
+  assert.match(html, /<button id="runSweep" disabled>스윕 실행<\/button>/);
+  assert.match(html, /<div id="sweepOutput" class="sweepOutput" hidden>/);
+  assert.match(moduleSource, /\$\('runSweep'\)\.disabled = !sweepSelectedPaths\.size/);
+  assert.match(moduleSource, /\$\('sweepOutput'\)\.hidden = false/);
+  assert.match(shadcnSource, /\.kpi b \{[^}]*white-space: nowrap/);
+  assert.match(fs.readFileSync(path.join(root, 'render.js'), 'utf8'), /context\.font = '11px sans-serif'/);
+});
+
+test('P1: desktop web design makes the next action and decisive insight visually explicit', () => {
+  const renderSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+  assert.match(html, /<div class="sweepWorkflowBar">/);
+  assert.match(html, /id="sweepActionHint"/);
+  assert.match(moduleSource, /\$\('sweepActionHint'\)\.textContent = sweepSelectedPaths\.size/);
+  assert.match(html, /<section id="resultVisuals" class="panel resultVisuals" hidden>/);
+  assert.match(html, /id="resultInsight" class="resultInsight"/);
+  assert.match(renderSource, /\$\('resultVisuals'\)\.hidden = false/);
+  assert.match(renderSource, /document\.body\?\.classList\.add\('hasResults'\)/);
+  assert.match(renderSource, /document\.body\?\.classList\.remove\('hasResults'\)/);
+  assert.match(renderSource, /class="advisorScoreLegend"/);
+  assert.match(shadcnSource, /@media \(min-width: 721px\)[\s\S]*\.hasResults \.resultHero \{ display: contents; \}/);
+  assert.match(shadcnSource, /\.hasResults main > \.resultVisuals \{ order: 1; \}/);
+  assert.match(shadcnSource, /\.hasResults \.resultHero > \.tokenIOPlayback \{[^}]*order: 3;/);
+  assert.match(shadcnSource, /\.sweepSetup \{ align-items: start; \}/);
+  assert.match(shadcnSource, /\.sweepEmptyGuide \{[\s\S]*min-height: 150px;/);
+  assert.match(shadcnSource, /\.advisorScoreLegend/);
+  assert.match(shadcnSource, /\.resultInsight/);
+  assert.match(shadcnSource, /\.copyToolbar \.copyAction \{[\s\S]*background: hsl\(var\(--secondary\)\)/);
+  assert.match(shadcnSource, /\.note \{ font-size: 12px; line-height: 1\.6; \}/);
+});
+
+test('P2: final desktop polish keeps the disabled Sweep CTA visible and annotates chart evidence', () => {
+  const renderSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+  assert.match(shadcnSource, /\.sweepActions button:not\(#runSweep\):disabled \{ display: none; \}/);
+  assert.match(shadcnSource, /\.sweepActions #runSweep \{[^}]*display: inline-flex;[^}]*min-width: 160px;/);
+  assert.match(shadcnSource, /@media \(min-width: 1001px\)[\s\S]*\.parameterChecklist \{ max-height: none; overflow: visible; \}/);
+  assert.match(shadcnSource, /\.sweepBaselineSummary dt \{ font-size: 10px;/);
+  assert.match(shadcnSource, /\.sweepBaselineSummary dd \{[^}]*font-size: 12px;/);
+  assert.match(renderSource, /function advisorScoreBand\(score\)/);
+  assert.match(renderSource, /scoreBand\.glyph/);
+  assert.match(renderSource, /scoreBand\.label/);
+  assert.match(renderSource, /const peakTpotEntry =/);
+  assert.match(renderSource, /class="trendFacts"/);
+  assert.match(renderSource, /스왑 시작 없음/);
+  assert.match(shadcnSource, /\.trendFacts/);
 });
 
 test('P1: Light and Dark theme toggle applies, persists, and exposes its next action', () => {
@@ -725,25 +812,38 @@ test('P1: Light and Dark theme toggle applies, persists, and exposes its next ac
   for (const variable of ['--b', '--p', '--p2', '--l', '--t', '--m', '--chart-bg', '--chart-grid', '--chart-text', '--chart-cyan', '--chart-green', '--chart-violet', '--chart-red', '--chart-yellow']) assert.match(html, new RegExp(variable.replace('--', '--')));
 });
 
+test('P1: initial guided state does not render results before the first explicit run', () => {
+  assert.match(testsInitFull, /function syncMode\(applyPreset = false, renderResult = true\)/);
+  assert.match(testsInitFull, /if \(renderResult\) \{ const r = simulate\(\); render\(r\); \}/);
+  assert.match(testsInitFull, /syncMode\(false, false\)/);
+  for (const id of ['ttft', 'tpot', 'tps', 'ssdpt', 'hit', 'mem']) assert.match(html, new RegExp(`id="${id}">—<`));
+  assert.match(html, /id="status" class="status">대기 중</);
+});
+
 test('P1: guided workflow exposes three Korean steps, HW preset, Expert mode, and measured analysis landmarks', () => {
   for (const id of ['guidedWorkflow', 'expertModeToggle', 'hardwarePreset', 'guidedAnalysis', 'runGuidedSweep']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   for (const step of ['시나리오 설정', '결과와 병목', '개선 검증']) assert.match(html, new RegExp(step));
+  assert.match(html, /id="runGuidedSweep"[^>]*>상위 병목 검증 실행<\/button>/);
+  assert.match(html, /<link rel="icon" href="data:image\/svg\+xml,/);
   assert.match(html, /aria-current="step"/);
   assert.match(html, /하드웨어 대상 프리셋/);
   assert.match(uiSource, /공식 사양/);
   assert.match(html, /전문가 모드/);
+  assert.match(testsInitFull, /chart\.setAttribute\('aria-label', '토큰 성능 추적'\)/);
+  assert.match(testsInitFull, /memoryChart\.setAttribute\('aria-label', '메모리와 스왑 추적'\)/);
 });
 
 test('P1: production guided UI contains no console info debug statements', () => {
   assert.doesNotMatch(uiSource, /console\.info\s*\(/);
 });
 
-test('P1: guided bottleneck sweep spans quarter to four times baseline', () => {
+test('P1: guided bottleneck sweep spans quarter to four times baseline in at most five points', () => {
   assert.equal(vm.runInContext("typeof guidedSweepValues === 'function'", sandbox), true);
   const values = vm.runInContext(`guidedSweepValues({ path: 'pcieBW', type: 'number', min: 0.001, max: 1e12, integer: false }, 24)`, sandbox);
-  assert.deepEqual(JSON.parse(JSON.stringify(values)), [6, 12, 18, 24, 36, 48, 96]);
+  assert.deepEqual(JSON.parse(JSON.stringify(values)), [6, 12, 24, 48, 96]);
+  assert.match(html, /각 5점 OAT/);
 });
 
 test('P1: OAT charts separate each swept parameter instead of connecting unrelated rows', () => {
@@ -765,6 +865,23 @@ test('P1: OAT charts separate each swept parameter instead of connecting unrelat
     assert.equal(group.rows[0].index, -1);
     assert.ok(group.rows.slice(1).every(row => Object.hasOwn(row.changes, group.path)));
   }
+});
+
+test('P1: main charts size their backing stores from the visible CSS box', () => {
+  assert.equal(vm.runInContext("typeof sizeMainCanvas === 'function'", sandbox), true);
+  const sizing = vm.runInContext(`(() => {
+    const transforms = [];
+    const context = { setTransform(...values) { transforms.push(values); } };
+    const canvas = { clientWidth: 255, clientHeight: 220, width: 930, height: 250, getContext() { return context; } };
+    const result = sizeMainCanvas(canvas, 2);
+    return { width: canvas.width, height: canvas.height, cssWidth: result.width, cssHeight: result.height, transforms };
+  })()`, sandbox);
+  assert.deepEqual(JSON.parse(JSON.stringify(sizing)), { width: 510, height: 440, cssWidth: 255, cssHeight: 220, transforms: [[2, 0, 0, 2, 0, 0]] });
+  const renderSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+  assert.ok((renderSource.match(/sizeMainCanvas\(/g) || []).length >= 4, 'helper must be defined and wired into all three main charts');
+  assert.match(uiSource, /function initializeResponsiveChartRedraw\(/);
+  assert.match(testsInitFull, /initializeResponsiveChartRedraw\(\)/);
+  assert.match(html, /\.graphPanel canvas\{height:220px\}/);
 });
 
 test('P1: narrow Sweep Lab keeps controls inside the shell and preserves readable canvas text', () => {
@@ -821,10 +938,11 @@ test('P1: guided bottleneck analysis deduplicates resources and chooses at most 
   })()`, sandbox);
   assert.ok(result.ranked.length <= 2);
   assert.equal(new Set(result.ranked.map(item => item.resourceId)).size, result.ranked.length);
+  assert.ok(result.ranked.every(item => /[가-힣]/.test(item.phaseLabel)), JSON.stringify(result.ranked));
   assert.equal(result.selections.length, result.ranked.length);
   for (const selection of result.selections) {
     assert.ok(result.catalog.includes(selection.path), selection.path);
-    assert.ok(selection.values.length >= 2 && selection.values.length <= 7, JSON.stringify(selection));
+    assert.ok(selection.values.length >= 2 && selection.values.length <= 5, JSON.stringify(selection));
     assert.equal(new Set(selection.values).size, selection.values.length);
   }
 });
