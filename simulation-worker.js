@@ -24,6 +24,10 @@ installDeviceExperienceModel();
 self.onmessage = event => {
   try {
     const result = runSimulationConfig(sweepClone(event.data.config));
+    if (result.error) {
+      self.postMessage({ error: String(result.error) });
+      return;
+    }
     self.postMessage({
       config: sweepClone(result.c || event.data.config),
       metrics: summarizeSweepResult(result),

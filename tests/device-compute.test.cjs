@@ -328,6 +328,32 @@ test('PR4: Replay Worker preserves calibrated Artifact V5 schema and Run ID', ()
   assert.equal(posted.replayResult.runId, artifact.runId);
 });
 
+test('PR4: Simulation Worker fails closed on the same malformed calibrated config', () => {
+  const workerSandbox = {
+    console,
+    structuredClone,
+    setTimeout,
+    clearTimeout,
+    posted: null,
+    self: null,
+    importScripts: null
+  };
+  workerSandbox.self = workerSandbox;
+  const workerContext = vm.createContext(workerSandbox);
+  workerSandbox.importScripts = (...files) => {
+    for (const file of files) {
+      vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), workerContext, { filename: file });
+    }
+  };
+  workerSandbox.postMessage = message => { workerSandbox.posted = structuredClone(message); };
+  vm.runInContext(fs.readFileSync(path.join(root, 'simulation-worker.js'), 'utf8'), workerContext, { filename: 'simulation-worker.js' });
+
+  const invalid = colibriConfig({ compute: calibratedCompute({ mode: '' }) });
+  workerSandbox.onmessage({ data: { config: invalid } });
+
+  assert.match(workerSandbox.posted.error, /compute\.mode/);
+});
+
 test('PR1: invalid calibrated settings fail closed', () => {
   const simulator = loadSimulator();
   const invalid = colibriConfig({
