@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const files = ['core.js', 'compute.js', 'config.js', 'compute-placement.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'serving-device.js', 'advisor.js', 'sweep.js', 'device-experience.js'];
 const source = files.map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n') +
-  '\ninstallDevicePlacementModel(); installDeviceServingScheduler(); installDeviceExperienceModel(); globalThis.__sim={colibriLayerCompute,deriveColibriDeviceProfile,sweepCatalogForConfig,validateDeviceComputeConfig,simulateServing,simulateColibri,advisorPhaseResource};';
+  '\ninstallDevicePlacementModel(); installDeviceServingScheduler(); installDeviceExperienceModel(); globalThis.__sim={colibriLayerCompute,deriveColibriDeviceProfile,sweepCatalogForConfig,validateDeviceComputeConfig,simulateServing,simulateColibri,advisorPhaseResource,advisorQueueFraction,advisorTimedResources};';
 const sandbox = { console, structuredClone };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox, { filename: 'device-experience-bundle.js' });
@@ -107,4 +107,22 @@ test('device Advisor aggregates CPU and GPU compute resource-time consistently',
   assert.equal(aggregate.jobs, 5);
   assert.equal(aggregate.busyMs, 50);
   assert.equal(aggregate.queueMs, 15);
+  assert.equal(sim.advisorQueueFraction(serving, 'compute', 'decode'), 15 / 65);
+});
+
+test('device Advisor scores compute pressure from the same aggregate evidence', () => {
+  const serving = {
+    resources: {
+      cpuCompute: { phases: { decode: { jobs: 1, busyMs: 1, queueMs: 1 } } },
+      gpuCompute: { phases: { decode: { jobs: 1, busyMs: 98, queueMs: 0 } } }
+    }
+  };
+
+  const resources = sim.advisorTimedResources([], config(), 1000, 'colibri', {}, '', 'decode', serving);
+  const compute = resources.find(resource => resource.id === 'compute');
+
+  assert.equal(compute.score, 1);
+  assert.equal(compute.recommendation.priority, 'Monitor');
+  assert.equal(compute.evidence.find(item => item.label === 'Shared compute busy').value, 99);
+  assert.equal(compute.evidence.find(item => item.label === 'Shared compute queue fraction').value, 1);
 });

@@ -94,6 +94,12 @@ function artifactV5ValidateEnvelope(artifact) {
   if (!['device-serving/v1', 'serving/v1'].includes(artifact.executionIdentity.schedulerSchema)) {
     throw new Error('Artifact V5 executionIdentity schedulerSchema is unsupported.');
   }
+  const expectedSchedulerSchema = artifact.config?.mode === 'colibri' && artifact.config.compute?.mode === 'calibrated'
+    ? 'device-serving/v1'
+    : 'serving/v1';
+  if (artifact.executionIdentity.schedulerSchema !== expectedSchedulerSchema) {
+    throw new Error('Artifact V5 scheduler identity does not match its execution mode.');
+  }
   if (!Number.isFinite(artifact.executionIdentity.batchWindowMs) || artifact.executionIdentity.batchWindowMs < 0 || artifact.executionIdentity.batchWindowMs > 1000) {
     throw new Error('Artifact V5 executionIdentity batchWindowMs is invalid.');
   }
@@ -163,14 +169,17 @@ function installArtifactV5() {
     }
     if (artifact?.schemaVersion !== ARTIFACT_V5_SCHEMA) return parseV4(text);
     const legacy = artifactV5ToLegacyEnvelope(artifact);
-    const parsed = parseV4(JSON.stringify(legacy));
+    const parsed = parseV4(JSON.stringify(legacy), { batchWindowMs: artifact.executionIdentity.batchWindowMs });
+    const replaySchedulerSchema = parsed.replayResult?.serving?.schedulerSchema;
+    const replayBatchWindowMs = parsed.replayResult?.serving?.schedulerOptions?.batchWindowMs;
+    if (replaySchedulerSchema !== artifact.executionIdentity.schedulerSchema ||
+        replayBatchWindowMs !== artifact.executionIdentity.batchWindowMs) {
+      throw new Error('Artifact V5 replay scheduler identity does not match the declared execution identity.');
+    }
     return {
       ...parsed,
       replayResult: { ...parsed.replayResult, runId: artifact.runId },
-      artifact: {
-        ...artifact,
-        migration: { ...artifact.migration, replayedThrough: ARTIFACT_V4_SCHEMA }
-      }
+      artifact
     };
   };
 

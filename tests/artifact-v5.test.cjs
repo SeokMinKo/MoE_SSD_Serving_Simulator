@@ -28,10 +28,18 @@ function createScenarioArtifact(config) {
     insight: {}, sweep: null
   };
 }
-function parseScenarioArtifactReplay(text) {
+function parseScenarioArtifactReplay(text, options = {}) {
   const artifact = JSON.parse(text);
   if (artifact.schemaVersion !== 'moe-ssd-sim/v4') throw new Error('Unsupported scenario schema');
-  return { artifact, replayResult: { ok: true, runId: artifact.runId } };
+  const schedulerSchema = artifact.config.compute?.mode === 'calibrated' ? 'device-serving/v1' : 'serving/v1';
+  return {
+    artifact,
+    replayResult: {
+      ok: true,
+      runId: artifact.runId,
+      serving: { schedulerSchema, schedulerOptions: { batchWindowMs: options.batchWindowMs ?? 2 } }
+    }
+  };
 }
 ` + fs.readFileSync(path.resolve(__dirname, '..', 'artifact-v5.js'), 'utf8') +
   `\ninstallArtifactV5(); globalThis.__sim={createScenarioArtifact,parseScenarioArtifactReplay,ARTIFACT_V5_SCHEMA};`;
@@ -53,7 +61,8 @@ test('Artifact V5 replays through the validated V4 runtime contract', () => {
   const artifact = sim.createScenarioArtifact({ mode: 'colibri' });
   const parsed = sim.parseScenarioArtifactReplay(JSON.stringify(artifact));
   assert.equal(parsed.artifact.schemaVersion, 'moe-ssd-sim/v5');
-  assert.equal(parsed.artifact.migration.replayedThrough, 'moe-ssd-sim/v4');
+  const reparsed = sim.parseScenarioArtifactReplay(JSON.stringify(parsed.artifact));
+  assert.equal(reparsed.artifact.runId, artifact.runId);
   assert.equal(parsed.replayResult.ok, true);
 });
 

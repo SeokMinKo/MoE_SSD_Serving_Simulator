@@ -203,7 +203,7 @@ function validateArtifactConfigShape(config) {
   }
 }
 
-function parseScenarioArtifactReplay(text) {
+function parseScenarioArtifactReplay(text, replayOptions = {}) {
   if (typeof text !== 'string' || text.length > 1_000_000) throw new Error('Scenario artifact is too large; maximum size is 1MB.');
   let artifact;
   try {
@@ -225,7 +225,7 @@ function parseScenarioArtifactReplay(text) {
   for (const key of ['modelVersion', 'packageVersion', 'commit', 'buildVersion']) {
     if (artifact[key] !== expectedProvenance[key]) throw new Error(`Unsupported ${key}: ${artifact[key] || 'missing'}`);
   }
-  const requestError = validateServingRequests(artifact.config, artifact.requests, {});
+  const requestError = validateServingRequests(artifact.config, artifact.requests, replayOptions);
   if (requestError) throw new Error(`Invalid imported requests: ${requestError}`);
   if (artifact.requests.length !== artifact.config.conc) throw new Error('Imported request count must match config.conc.');
   const expectedRunId = servingRunId(artifact.config, artifact.requests, artifact.provenance);
@@ -251,7 +251,7 @@ function parseScenarioArtifactReplay(text) {
   if (artifact.sweep && stableValue(artifact.sweep.baselineConfig) !== stableValue(artifact.config)) throw new Error('Imported sweep baseline does not match the top-level scenario config.');
   assertScenarioReplayBudget(artifact.config, artifact.sweep);
   validateAndReplaySweep(artifact.sweep);
-  const replayResult = runSimulationConfig(sweepClone(artifact.config));
+  const replayResult = runSimulationConfig(sweepClone(artifact.config), replayOptions);
   if (replayResult.error) throw new Error(`Imported scenario replay failed: ${replayResult.error}`);
   const canonicalRunId = servingRunId(artifact.config, artifact.requests, artifact.provenance);
   if (canonicalRunId !== artifact.runId) throw new Error('Imported scenario replay produced a noncanonical run ID.');

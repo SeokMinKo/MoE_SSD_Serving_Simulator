@@ -169,10 +169,10 @@ function deviceInstallModelExtensions() {
     const originalQueueFraction = advisorQueueFraction;
     advisorQueueFraction = function deviceAdvisorQueueFraction(serving, resourceName, phase) {
       if (resourceName !== 'compute' || serving?.resources?.compute) return originalQueueFraction(serving, resourceName, phase);
-      return Math.max(
-        originalQueueFraction(serving, 'cpuCompute', phase),
-        originalQueueFraction(serving, 'gpuCompute', phase)
-      );
+      const aggregate = advisorPhaseResource(serving, 'compute', phase);
+      const queueMs = advisorFinite(aggregate?.queueMs);
+      const busyMs = advisorFinite(aggregate?.busyMs);
+      return queueMs / Math.max(1e-9, queueMs + busyMs);
     };
   }
 

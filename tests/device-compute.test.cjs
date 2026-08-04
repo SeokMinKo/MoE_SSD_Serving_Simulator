@@ -29,7 +29,8 @@ function loadSimulator(includeRepro = false) {
       runSimulationConfig: typeof runSimulationConfig === 'function' ? runSimulationConfig : null,
       createScenarioArtifact: typeof createScenarioArtifact === 'function' ? createScenarioArtifact : null,
       parseScenarioArtifact: typeof parseScenarioArtifact === 'function' ? parseScenarioArtifact : null,
-      parseScenarioArtifactReplay: typeof parseScenarioArtifactReplay === 'function' ? parseScenarioArtifactReplay : null
+      parseScenarioArtifactReplay: typeof parseScenarioArtifactReplay === 'function' ? parseScenarioArtifactReplay : null,
+      servingRunId: typeof servingRunId === 'function' ? servingRunId : null
     };`;
   const sandbox = {
     console,
@@ -274,6 +275,42 @@ test('PR2: calibrated artifact exports imports and replays with only external co
   assert.equal(parsed.replayResult.runId, artifact.runId);
 });
 
+test('PR4: Artifact V5 replay executes and verifies its declared scheduler identity', () => {
+  const simulator = loadSimulator(true);
+  const config = colibriConfig({
+    compute: calibratedCompute({ attentionDevice: 'cpu', expertDevice: 'hybrid' }),
+    quantization: manualQuantization()
+  });
+  const result = simulator.runSimulationConfig(config);
+  const artifact = simulator.createScenarioArtifact(result.c, result);
+
+  const wrongSchema = structuredClone(artifact);
+  wrongSchema.executionIdentity.schedulerSchema = 'serving/v1';
+  wrongSchema.runId = simulator.servingRunId(
+    wrongSchema.config,
+    wrongSchema.requests,
+    wrongSchema.provenance,
+    wrongSchema.executionIdentity
+  );
+  assert.throws(
+    () => simulator.parseScenarioArtifactReplay(JSON.stringify(wrongSchema)),
+    /scheduler identity/
+  );
+
+  const wrongWindow = structuredClone(artifact);
+  wrongWindow.executionIdentity.batchWindowMs = 777;
+  wrongWindow.runId = simulator.servingRunId(
+    wrongWindow.config,
+    wrongWindow.requests,
+    wrongWindow.provenance,
+    wrongWindow.executionIdentity
+  );
+  assert.throws(
+    () => simulator.parseScenarioArtifactReplay(JSON.stringify(wrongWindow)),
+    /replay result verification/
+  );
+});
+
 test('PR4: Artifact V5 Run ID is fenced from an equivalent V4 contract', () => {
   const simulator = loadSimulator(true);
   const config = colibriConfig({
@@ -326,6 +363,18 @@ test('PR4: Replay Worker preserves calibrated Artifact V5 schema and Run ID', ()
   assert.equal(posted.error, undefined);
   assert.equal(posted.artifact.schemaVersion, 'moe-ssd-sim/v5');
   assert.equal(posted.replayResult.runId, artifact.runId);
+
+  const tampered = structuredClone(artifact);
+  tampered.executionIdentity.schedulerSchema = 'serving/v1';
+  tampered.runId = simulator.servingRunId(
+    tampered.config,
+    tampered.requests,
+    tampered.provenance,
+    tampered.executionIdentity
+  );
+  posted = null;
+  workerSandbox.self.onmessage({ data: JSON.stringify(tampered) });
+  assert.match(posted.error, /scheduler identity/);
 });
 
 test('PR4: Simulation Worker fails closed on the same malformed calibrated config', () => {

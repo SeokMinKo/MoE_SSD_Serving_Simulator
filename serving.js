@@ -134,7 +134,7 @@ function defaultServingRequests(config) {
   return Array.from({ length: config.conc }, (_, index) => ({ id: `request-${index + 1}`, arrivalMs: 0, output: config.output }));
 }
 
-function runSimulationConfig(config) {
+function runSimulationConfig(config, servingOptions = {}) {
   const engine = config.mode === 'afm3' ? simulateAFM : simulateColibri;
   const placedConfig = config.mode === 'colibri' ? applyColibriPlacement(config) : config;
   const aggregateMemoryResult = engine(placedConfig);
@@ -154,7 +154,7 @@ function runSimulationConfig(config) {
   const result = engine(singleRequestConfig);
   if (result.error) return result;
   const requests = defaultServingRequests(config);
-  const serving = simulateServing(placedConfig, requests);
+  const serving = simulateServing(placedConfig, requests, servingOptions);
   if (serving.error) return { ...result, error: serving.error };
   result.serving = serving;
   result.agg = serving.throughputTPS;
