@@ -11,11 +11,13 @@ importScripts(
   'colibri.js',
   'afm.js',
   'serving.js',
+  'serving-device.js',
   'advisor.js',
   'sweep.js'
 );
 
 installDevicePlacementModel();
+installDeviceServingScheduler();
 
 self.onmessage = event => {
   try {
