@@ -6,3 +6,6 @@ globalThis.__MOE_SSD_BUILD__ = Object.freeze({
   commit: 'development',
   buildVersion: 'source-tree'
 });
+if (typeof document === 'object' && typeof document.write === 'function') {
+  document.write('<script src="compute.js"></script>');
+}
