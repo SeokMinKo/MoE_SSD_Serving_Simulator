@@ -3,18 +3,16 @@
 importScripts(
   'build-info.js',
   'core.js',
+  'compute.js',
   'presets.js',
   'config.js',
   'memory.js',
   'colibri.js',
-  'compute.js',
   'afm.js',
   'serving.js',
   'advisor.js',
   'sweep.js'
 );
-
-installDeviceComputeModel();
 
 self.onmessage = event => {
   try {
