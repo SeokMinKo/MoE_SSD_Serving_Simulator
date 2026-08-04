@@ -134,7 +134,8 @@ function colibriAssignedGpuExperts(profile) {
   const experts = Math.max(0, deviceComputeInteger(profile?.experts, 0));
   if (!experts || !profile || profile.mode === 'legacy' || profile.expertDevice === 'gpu') return experts;
   if (profile.expertDevice === 'cpu') return 0;
-  return Math.max(0, Math.min(experts, Math.round(experts * profile.targetGpuExpertFraction)));
+  const cpuExperts = Math.round(experts * profile.targetCpuExpertFraction);
+  return Math.max(0, Math.min(experts, experts - cpuExperts));
 }
 
 function colibriGpuExpertPoolFraction(profile) {
@@ -195,6 +196,8 @@ function colibriLayerCompute(c, profile, cpuActive, gpuActive, prefill = false) 
 function colibriExpectedDeviceCounts(c, profile) {
   if (!profile || profile.mode === 'legacy' || profile.expertDevice === 'gpu') return { cpuActive: 0, gpuActive: c.active };
   if (profile.expertDevice === 'cpu') return { cpuActive: c.active, gpuActive: 0 };
+  const gpuExperts = colibriAssignedGpuExperts(profile);
+  const cpuExperts = Math.max(0, c.experts - gpuExperts);
   let cpuMass = 0;
   let totalMass = 0;
   for (let expert = 0; expert < c.experts; expert++) {
@@ -202,7 +205,10 @@ function colibriExpectedDeviceCounts(c, profile) {
     totalMass += weight;
     if (colibriExpertDevice(profile, 0, expert, c.seed) === 'cpu') cpuMass += weight;
   }
-  const cpuActive = Math.max(0, Math.min(c.active, Math.round(c.active * cpuMass / Math.max(DEVICE_COMPUTE_EPSILON, totalMass))));
+  const popularityEstimate = Math.round(c.active * cpuMass / Math.max(DEVICE_COMPUTE_EPSILON, totalMass));
+  const minimumCpu = Math.max(0, c.active - gpuExperts);
+  const maximumCpu = Math.min(c.active, cpuExperts);
+  const cpuActive = Math.min(maximumCpu, Math.max(minimumCpu, popularityEstimate));
   return { cpuActive, gpuActive: c.active - cpuActive };
 }
 
@@ -230,6 +236,7 @@ function colibriDeviceReserveGB(c, profile = deriveColibriDeviceProfile(c)) {
 
 function validateDeviceComputeConfig(config) {
   const errors = [];
+  const defaultValue = (value, fallback) => value === undefined ? fallback : value;
   const add = (path, code, message) => errors.push({ path, code, message });
   const finite = (path, value, min, max = Infinity) => {
     if (!Number.isFinite(value) || value < min || value > max) add(path, 'OUT_OF_RANGE', `${path} must be between ${min} and ${max}.`);
@@ -241,6 +248,11 @@ function validateDeviceComputeConfig(config) {
   const enumValue = (path, value, allowed) => {
     if (!allowed.includes(value)) add(path, 'INVALID_ENUM', `${path} must be one of ${allowed.join(', ')}.`);
   };
+  const exactKeys = (path, value, allowed) => {
+    for (const key of Object.keys(value)) {
+      if (!allowed.includes(key)) add(`${path}.${key}`, 'UNKNOWN_FIELD', `${path}.${key} is not supported.`);
+    }
+  };
 
   if (!config || config.mode !== 'colibri') return { valid: true, errors };
   const quantization = config.quantization;
@@ -248,15 +260,20 @@ function validateDeviceComputeConfig(config) {
     if (!quantization || typeof quantization !== 'object' || Array.isArray(quantization)) {
       add('quantization', 'INVALID_OBJECT', 'quantization must be an object.');
     } else {
-      enumValue('quantization.payloadMode', quantization.payloadMode || 'manual', ['manual', 'derived']);
-      finite('quantization.weightBits', quantization.weightBits ?? 4, 1, 16);
-      finite('quantization.packing', quantization.packing ?? 1, 1, 10);
-      finite('quantization.cpuKernelMultiplier', quantization.cpuKernelMultiplier ?? 1, 0.001, 1000);
-      finite('quantization.gpuKernelMultiplier', quantization.gpuKernelMultiplier ?? 1, 0.001, 1000);
-      if ((quantization.payloadMode || 'manual') === 'derived') {
+      exactKeys('quantization', quantization, [
+        'payloadMode', 'format', 'weightBits', 'packing', 'manualExpertMB', 'expertParamsM',
+        'cpuKernelMultiplier', 'gpuKernelMultiplier', 'dequantMode', 'cpuDequantBW', 'gpuDequantBW'
+      ]);
+      enumValue('quantization.payloadMode', defaultValue(quantization.payloadMode, 'manual'), ['manual', 'derived']);
+      enumValue('quantization.format', defaultValue(quantization.format, 'custom'), ['fp16', 'bf16', 'int8', 'int4', 'int2', 'custom']);
+      finite('quantization.weightBits', defaultValue(quantization.weightBits, 4), 1, 16);
+      finite('quantization.packing', defaultValue(quantization.packing, 1), 1, 10);
+      finite('quantization.cpuKernelMultiplier', defaultValue(quantization.cpuKernelMultiplier, 1), 0.001, 1000);
+      finite('quantization.gpuKernelMultiplier', defaultValue(quantization.gpuKernelMultiplier, 1), 0.001, 1000);
+      if (defaultValue(quantization.payloadMode, 'manual') === 'derived') {
         finite('quantization.expertParamsM', quantization.expertParamsM, 0.001, 1_000_000);
       } else {
-        finite('quantization.manualExpertMB', quantization.manualExpertMB ?? config.esize, 0.001, 1_000_000);
+        finite('quantization.manualExpertMB', defaultValue(quantization.manualExpertMB, config.esize), 0.001, 1_000_000);
       }
     }
   }
@@ -267,26 +284,32 @@ function validateDeviceComputeConfig(config) {
     add('compute', 'INVALID_OBJECT', 'compute must be an object.');
     return { valid: false, errors };
   }
-  enumValue('compute.mode', compute.mode || 'legacy', ['legacy', 'calibrated']);
-  if ((compute.mode || 'legacy') !== 'calibrated') return { valid: errors.length === 0, errors };
-  enumValue('compute.attentionDevice', compute.attentionDevice || 'gpu', ['cpu', 'gpu']);
-  enumValue('compute.expertDevice', compute.expertDevice || 'gpu', ['cpu', 'gpu', 'hybrid']);
+  exactKeys('compute', compute, ['mode', 'attentionDevice', 'expertDevice', 'cpu', 'gpu', 'hybrid']);
+  enumValue('compute.mode', defaultValue(compute.mode, 'legacy'), ['legacy', 'calibrated']);
+  if (defaultValue(compute.mode, 'legacy') !== 'calibrated') return { valid: errors.length === 0, errors };
+  enumValue('compute.attentionDevice', defaultValue(compute.attentionDevice, 'gpu'), ['cpu', 'gpu']);
+  enumValue('compute.expertDevice', defaultValue(compute.expertDevice, 'gpu'), ['cpu', 'gpu', 'hybrid']);
   for (const deviceName of ['cpu', 'gpu']) {
     const device = compute[deviceName];
     if (!device || typeof device !== 'object' || Array.isArray(device)) {
       add(`compute.${deviceName}`, 'INVALID_OBJECT', `${deviceName} compute profile is required.`);
       continue;
     }
-    finite(`compute.${deviceName}.speedScale`, device.speedScale ?? 1, 0.001, 1000);
-    finite(`compute.${deviceName}.attentionMs`, device.attentionMs ?? config.attn, 0, 1_000_000);
-    finite(`compute.${deviceName}.expertMs`, device.expertMs ?? config.ems, 0, 1_000_000);
-    integer(`compute.${deviceName}.parallelExperts`, device.parallelExperts ?? config.par, 1, 4096);
-    finite(`compute.${deviceName}.prefillSpeedup`, device.prefillSpeedup ?? config.prefillSpeedup, 0.001, 1_000_000);
+    exactKeys(`compute.${deviceName}`, device, ['speedScale', 'attentionMs', 'expertMs', 'parallelExperts', 'prefillSpeedup']);
+    finite(`compute.${deviceName}.speedScale`, defaultValue(device.speedScale, 1), 0.001, 1_000_000);
+    finite(`compute.${deviceName}.attentionMs`, defaultValue(device.attentionMs, config.attn), 0, 1_000_000);
+    finite(`compute.${deviceName}.expertMs`, defaultValue(device.expertMs, config.ems), 0, 1_000_000);
+    integer(`compute.${deviceName}.parallelExperts`, defaultValue(device.parallelExperts, config.par), 1, 4096);
+    finite(`compute.${deviceName}.prefillSpeedup`, defaultValue(device.prefillSpeedup, config.prefillSpeedup), 0.001, 1_000_000);
   }
-  const hybrid = compute.hybrid && typeof compute.hybrid === 'object' ? compute.hybrid : {};
-  enumValue('compute.hybrid.execution', hybrid.execution || 'parallel', ['parallel', 'sequential']);
-  finite('compute.hybrid.cpuExpertFraction', hybrid.cpuExpertFraction ?? 0.5, 0, 1);
-  finite('compute.hybrid.overlapEfficiency', hybrid.overlapEfficiency ?? 1, 0, 1);
+  if (compute.hybrid !== undefined && (!compute.hybrid || typeof compute.hybrid !== 'object' || Array.isArray(compute.hybrid))) {
+    add('compute.hybrid', 'INVALID_OBJECT', 'compute.hybrid must be an object.');
+  }
+  const hybrid = compute.hybrid && typeof compute.hybrid === 'object' && !Array.isArray(compute.hybrid) ? compute.hybrid : {};
+  exactKeys('compute.hybrid', hybrid, ['cpuExpertFraction', 'execution', 'overlapEfficiency']);
+  enumValue('compute.hybrid.execution', defaultValue(hybrid.execution, 'parallel'), ['parallel', 'sequential']);
+  finite('compute.hybrid.cpuExpertFraction', defaultValue(hybrid.cpuExpertFraction, 0.5), 0, 1);
+  finite('compute.hybrid.overlapEfficiency', defaultValue(hybrid.overlapEfficiency, 1), 0, 1);
   return { valid: errors.length === 0, errors };
 }
 

@@ -118,8 +118,9 @@ function deviceInstallModelExtensions() {
       if (!q || config?.compute?.mode !== 'calibrated') return result;
       const errors = [...result.errors];
       const add = (path, message) => errors.push({ path, code: 'OUT_OF_RANGE', message });
-      if (!['fused', 'separate'].includes(q.dequantMode || 'fused')) add('quantization.dequantMode', 'quantization.dequantMode must be fused or separate.');
-      if ((q.dequantMode || 'fused') === 'separate') {
+      const dequantMode = q.dequantMode === undefined ? 'fused' : q.dequantMode;
+      if (!['fused', 'separate'].includes(dequantMode)) add('quantization.dequantMode', 'quantization.dequantMode must be fused or separate.');
+      if (dequantMode === 'separate') {
         if (!Number.isFinite(q.cpuDequantBW) || q.cpuDequantBW <= 0) add('quantization.cpuDequantBW', 'quantization.cpuDequantBW must be positive.');
         if (!Number.isFinite(q.gpuDequantBW) || q.gpuDequantBW <= 0) add('quantization.gpuDequantBW', 'quantization.gpuDequantBW must be positive.');
       }
@@ -168,10 +169,10 @@ function deviceInstallModelExtensions() {
     const originalQueueFraction = advisorQueueFraction;
     advisorQueueFraction = function deviceAdvisorQueueFraction(serving, resourceName, phase) {
       if (resourceName !== 'compute' || serving?.resources?.compute) return originalQueueFraction(serving, resourceName, phase);
-      return Math.max(
-        originalQueueFraction(serving, 'cpuCompute', phase),
-        originalQueueFraction(serving, 'gpuCompute', phase)
-      );
+      const aggregate = advisorPhaseResource(serving, 'compute', phase);
+      const queueMs = advisorFinite(aggregate?.queueMs);
+      const busyMs = advisorFinite(aggregate?.busyMs);
+      return queueMs / Math.max(1e-9, queueMs + busyMs);
     };
   }
 
@@ -185,8 +186,8 @@ function deviceInstallModelExtensions() {
       return {
         jobs: (cpu?.jobs || 0) + (gpu?.jobs || 0),
         workGB: 0,
-        busyMs: Math.max(cpu?.busyMs || 0, gpu?.busyMs || 0),
-        queueMs: Math.max(cpu?.queueMs || 0, gpu?.queueMs || 0)
+        busyMs: (cpu?.busyMs || 0) + (gpu?.busyMs || 0),
+        queueMs: (cpu?.queueMs || 0) + (gpu?.queueMs || 0)
       };
     };
   }

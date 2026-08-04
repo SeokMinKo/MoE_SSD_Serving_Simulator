@@ -40,6 +40,11 @@ function deviceServingTokenWork(token, profile) {
     pcieGB: Math.max(0, token.pcieGB || 0),
     criticalDramGB: Math.max(0, (token.memory?.dramTrafficGB || 0) - prefetchGB - swapOutGB),
     memoryCpuMs,
+    attentionMs,
+    runtimeMs,
+    cpuExpertMs,
+    gpuExpertMs,
+    attentionDevice,
     cpuComputeMs,
     gpuComputeMs,
     computeMs: exposedComputeMs,
@@ -53,6 +58,11 @@ function deviceServingPrefillWork(trace, config, profile) {
   if (!layer || !(config.prompt > 0)) {
     const computeMs = Math.max(0, breakdown.computeMs || 0);
     return {
+      attentionMs: computeMs,
+      runtimeMs: 0,
+      cpuExpertMs: 0,
+      gpuExpertMs: 0,
+      attentionDevice: profile?.attentionDevice || 'gpu',
       cpuComputeMs: profile?.attentionDevice === 'cpu' ? computeMs : 0,
       gpuComputeMs: profile?.attentionDevice === 'gpu' ? computeMs : 0
     };
@@ -62,25 +72,58 @@ function deviceServingPrefillWork(trace, config, profile) {
     (profile.attentionDevice === 'cpu' ? Math.max(0, layer.attentionMs || 0) + Math.max(0, layer.runtimeMs || 0) : 0);
   const gpuPerLayer = Math.max(0, layer.gpuExpertMs || 0) +
     (profile.attentionDevice === 'gpu' ? Math.max(0, layer.attentionMs || 0) + Math.max(0, layer.runtimeMs || 0) : 0);
-  return { cpuComputeMs: promptLayers * cpuPerLayer, gpuComputeMs: promptLayers * gpuPerLayer };
+  return {
+    attentionMs: promptLayers * Math.max(0, layer.attentionMs || 0),
+    runtimeMs: promptLayers * Math.max(0, layer.runtimeMs || 0),
+    cpuExpertMs: promptLayers * Math.max(0, layer.cpuExpertMs || 0),
+    gpuExpertMs: promptLayers * Math.max(0, layer.gpuExpertMs || 0),
+    attentionDevice: profile?.attentionDevice || 'gpu',
+    cpuComputeMs: promptLayers * cpuPerLayer,
+    gpuComputeMs: promptLayers * gpuPerLayer
+  };
+}
+
+function deviceServingReserveExperts(resources, work, arrivalMs, phase, profile) {
+  const cpuMs = Math.max(0, work.cpuExpertMs || 0);
+  const gpuMs = Math.max(0, work.gpuExpertMs || 0);
+  if (!(cpuMs > EPS) || !(gpuMs > EPS)) {
+    const resource = cpuMs > EPS ? resources.cpuCompute : resources.gpuCompute;
+    const reservation = resource.reserveMs(Math.max(cpuMs, gpuMs), arrivalMs, phase);
+    return { end: reservation.end, wait: reservation.wait };
+  }
+  const cpuDominant = cpuMs >= gpuMs;
+  const dominantResource = cpuDominant ? resources.cpuCompute : resources.gpuCompute;
+  const minorResource = cpuDominant ? resources.gpuCompute : resources.cpuCompute;
+  const dominantMs = cpuDominant ? cpuMs : gpuMs;
+  const minorMs = cpuDominant ? gpuMs : cpuMs;
+  const dominant = dominantResource.reserveMs(dominantMs, arrivalMs, phase);
+  const overlapEfficiency = profile?.execution === 'parallel'
+    ? Math.max(0, Math.min(1, profile.overlapEfficiency ?? 1))
+    : 0;
+  const minorArrival = dominant.start + dominantMs - overlapEfficiency * minorMs;
+  const minor = minorResource.reserveMs(minorMs, minorArrival, phase);
+  return {
+    end: Math.max(dominant.end, minor.end),
+    wait: overlapEfficiency > 0 ? Math.max(dominant.wait, minor.wait) : dominant.wait + minor.wait
+  };
 }
 
 function deviceServingReserveCompute(resources, work, arrivalMs, phase, profile) {
-  const cpuMs = Math.max(0, work.cpuComputeMs || 0);
-  const gpuMs = Math.max(0, work.gpuComputeMs || 0);
-  if (profile?.execution !== 'sequential' || !(cpuMs > EPS && gpuMs > EPS)) {
-    const cpu = resources.cpuCompute.reserveMs(cpuMs, arrivalMs, phase);
-    const gpu = resources.gpuCompute.reserveMs(gpuMs, arrivalMs, phase);
-    return { cpu, gpu, end: Math.max(cpu.end, gpu.end), wait: Math.max(cpu.wait, gpu.wait) };
-  }
-  if (profile.attentionDevice === 'cpu') {
-    const cpu = resources.cpuCompute.reserveMs(cpuMs, arrivalMs, phase);
-    const gpu = resources.gpuCompute.reserveMs(gpuMs, cpu.end, phase);
-    return { cpu, gpu, end: gpu.end, wait: cpu.wait + gpu.wait };
-  }
-  const gpu = resources.gpuCompute.reserveMs(gpuMs, arrivalMs, phase);
-  const cpu = resources.cpuCompute.reserveMs(cpuMs, gpu.end, phase);
-  return { cpu, gpu, end: cpu.end, wait: gpu.wait + cpu.wait };
+  const attentionRuntimeMs = Math.max(0, work.attentionMs || 0) + Math.max(0, work.runtimeMs || 0);
+  const attentionResource = work.attentionDevice === 'cpu' ? resources.cpuCompute : resources.gpuCompute;
+  const attention = attentionResource.reserveMs(attentionRuntimeMs, arrivalMs, phase);
+  const experts = deviceServingReserveExperts(resources, work, attention.end, phase, profile);
+  return { end: experts.end, wait: attention.wait + experts.wait };
+}
+
+function deviceServingComputeServiceMs(work, profile) {
+  const attentionRuntimeMs = Math.max(0, work.attentionMs || 0) + Math.max(0, work.runtimeMs || 0);
+  const cpuMs = Math.max(0, work.cpuExpertMs || 0);
+  const gpuMs = Math.max(0, work.gpuExpertMs || 0);
+  const expertMs = typeof combineColibriDevicePhases === 'function'
+    ? combineColibriDevicePhases(cpuMs, gpuMs, profile?.execution, profile?.overlapEfficiency)
+    : cpuMs + gpuMs;
+  return attentionRuntimeMs + expertMs;
 }
 
 function simulateDeviceServing(config, requestSpecs, options = {}) {
@@ -103,7 +146,7 @@ function simulateDeviceServing(config, requestSpecs, options = {}) {
     gpuCompute: new SharedServingResource('gpuCompute')
   };
   const queue = new EventQueue();
-  const batchWindowMs = options.batchWindowMs ?? 2;
+  const batchWindowMs = options.batchWindowMs === undefined ? 2 : options.batchWindowMs;
   const readyBatch = [];
   let dispatchScheduled = false;
   let sharedColibriCacheState = null;
@@ -115,6 +158,13 @@ function simulateDeviceServing(config, requestSpecs, options = {}) {
     if (event.type === 'arrival') {
       request.trace = traceForRequest(config, request, request.traceIndex, sharedColibriCacheState);
       if (request.trace.error) return { error: `Request ${request.id}: ${request.trace.error}` };
+      if (request.trace.oom || request.trace.tokens.length !== request.output) {
+        return {
+          error: `Request ${request.id}: OOM before completing ${request.output} output tokens.`,
+          oom: true,
+          completedTokens: request.trace.tokens.length
+        };
+      }
       const breakdown = request.trace.prefillBreakdown || {};
       const storage = resources.ssd.reserveGB(breakdown.storageGB || 0, event.time, breakdown.storageRequests || 1, 'prefill');
       const dram = resources.dram.reserveGB(breakdown.dramTrafficGB || 0, event.time, 1, 'prefill');
@@ -166,18 +216,23 @@ function simulateDeviceServing(config, requestSpecs, options = {}) {
       }
       const batchFactor = 1 + 0.08 * Math.max(0, batch.length - 1);
       const maxPatch = Math.max(...batch.map(item => item.work.patchMs));
-      const maxCpu = Math.max(...batch.map(item => item.work.cpuComputeMs));
-      const maxGpu = Math.max(...batch.map(item => item.work.gpuComputeMs));
+      const maxAttention = Math.max(...batch.map(item => item.work.attentionMs));
+      const maxRuntime = Math.max(...batch.map(item => item.work.runtimeMs));
+      const maxCpuExpert = Math.max(...batch.map(item => item.work.cpuExpertMs));
+      const maxGpuExpert = Math.max(...batch.map(item => item.work.gpuExpertMs));
       const phases = new Set(batch.map(item => item.phase));
       const phase = phases.size === 1 ? batch[0].phase : 'mixed';
       const patch = resources.patch.reserveMs(maxPatch * batchFactor, memoryCpuReady, phase);
-      const compute = deviceServingReserveCompute(resources, {
-        cpuComputeMs: maxCpu * batchFactor,
-        gpuComputeMs: maxGpu * batchFactor
-      }, patch.end, phase, profile);
+      const batchWork = {
+        attentionMs: maxAttention * batchFactor,
+        runtimeMs: maxRuntime * batchFactor,
+        cpuExpertMs: maxCpuExpert * batchFactor,
+        gpuExpertMs: maxGpuExpert * batchFactor,
+        attentionDevice: profile.attentionDevice
+      };
+      const compute = deviceServingReserveCompute(resources, batchWork, patch.end, phase, profile);
       const analyticService = Math.max(...batch.map(item => item.work.computeMs + item.work.patchMs));
-      const scheduledService = maxPatch * batchFactor +
-        (profile.execution === 'sequential' ? (maxCpu + maxGpu) * batchFactor : Math.max(maxCpu, maxGpu) * batchFactor);
+      const scheduledService = maxPatch * batchFactor + deviceServingComputeServiceMs(batchWork, profile);
       const batchOverhead = Math.max(0, scheduledService - analyticService);
       for (const item of batch) {
         const admissionDelay = batchReady - item.time;
@@ -226,7 +281,11 @@ function simulateDeviceServing(config, requestSpecs, options = {}) {
   return {
     modelStatus: 'Estimated · event-driven CPU/GPU shared-resource model',
     schedulerSchema: DEVICE_SERVING_SCHEMA,
-    runId: servingRunId(config, normalizedSpecs), completedTokens, makespanMs,
+    schedulerOptions: { batchWindowMs },
+    runId: servingRunId(config, normalizedSpecs, simulatorProvenance(), {
+      schedulerSchema: DEVICE_SERVING_SCHEMA,
+      batchWindowMs
+    }), completedTokens, makespanMs,
     throughputTPS: makespanMs > EPS ? completedTokens / (makespanMs / 1000) : 0,
     p50TokenMs: percentile(decodeTokenLatencies, 0.5),
     p95TokenMs: percentile(decodeTokenLatencies, 0.95),

@@ -116,8 +116,10 @@ function simulatorProvenance() {
   });
 }
 
-function servingRunId(config, requests, provenance = simulatorProvenance()) {
-  const text = stableValue({ provenance, config, requests });
+function servingRunId(config, requests, provenance = simulatorProvenance(), executionIdentity = null) {
+  const identity = { provenance, config, requests };
+  if (executionIdentity) identity.executionIdentity = executionIdentity;
+  const text = stableValue(identity);
   const mask64 = (1n << 64n) - 1n;
   let hash = 0xcbf29ce484222325n;
   for (let i = 0; i < text.length; i++) {
@@ -132,16 +134,17 @@ function defaultServingRequests(config) {
   return Array.from({ length: config.conc }, (_, index) => ({ id: `request-${index + 1}`, arrivalMs: 0, output: config.output }));
 }
 
-function runSimulationConfig(config) {
+function runSimulationConfig(config, servingOptions = {}, requestSpecs = undefined) {
   const engine = config.mode === 'afm3' ? simulateAFM : simulateColibri;
   const placedConfig = config.mode === 'colibri' ? applyColibriPlacement(config) : config;
+  const requests = requestSpecs === undefined ? defaultServingRequests(config) : requestSpecs;
   const aggregateMemoryResult = engine(placedConfig);
   if (aggregateMemoryResult.error) {
-    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, defaultServingRequests(config));
+    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, requests);
     return aggregateMemoryResult;
   }
   if (aggregateMemoryResult.oom) {
-    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, defaultServingRequests(config));
+    aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, requests);
     return aggregateMemoryResult;
   }
   const singleRequestConfig = {
@@ -151,16 +154,14 @@ function runSimulationConfig(config) {
   };
   const result = engine(singleRequestConfig);
   if (result.error) return result;
-  const requests = defaultServingRequests(config);
-  const serving = simulateServing(placedConfig, requests);
+  const serving = simulateServing(placedConfig, requests, servingOptions);
   if (serving.error) return { ...result, error: serving.error };
   result.serving = serving;
   result.agg = serving.throughputTPS;
   result.state = aggregateMemoryResult.state;
   result.oom = aggregateMemoryResult.oom;
   result.c = placedConfig;
-  result.runId = servingRunId(placedConfig, requests);
-  serving.runId = result.runId;
+  result.runId = serving.runId;
   return result;
 }
 
@@ -232,7 +233,7 @@ function validateServingRequests(config, requestSpecs, options) {
   if (requestSpecs.length > 64) return 'At most 64 requests are allowed.';
   if (requestSpecs.length !== config.conc) return 'Serving request count must equal config.conc.';
   if (!options || typeof options !== 'object') return 'Scheduler options must be an object.';
-  const batchWindowMs = options.batchWindowMs ?? 2;
+  const batchWindowMs = options.batchWindowMs === undefined ? 2 : options.batchWindowMs;
   if (!Number.isFinite(batchWindowMs) || batchWindowMs < 0 || batchWindowMs > 1000) return 'batchWindowMs must be finite and between 0 and 1000.';
   const ids = new Set();
   let totalOutput = 0;
@@ -287,7 +288,7 @@ function simulateServing(config, requestSpecs, options = {}) {
     compute: new SharedServingResource('compute')
   };
   const queue = new EventQueue();
-  const batchWindowMs = options.batchWindowMs ?? 2;
+  const batchWindowMs = options.batchWindowMs === undefined ? 2 : options.batchWindowMs;
   const readyBatch = [];
   let dispatchScheduled = false;
   let sharedColibriCacheState = null;
@@ -414,7 +415,12 @@ function simulateServing(config, requestSpecs, options = {}) {
   const normalizedSpecs = requests.map(request => ({ id: request.id, arrivalMs: request.arrivalMs, output: request.output }));
   return {
     modelStatus: 'Estimated · event-driven shared-resource model',
-    runId: servingRunId(config, normalizedSpecs),
+    schedulerSchema: 'serving/v1',
+    schedulerOptions: { batchWindowMs },
+    runId: servingRunId(config, normalizedSpecs, simulatorProvenance(), {
+      schedulerSchema: 'serving/v1',
+      batchWindowMs
+    }),
     completedTokens,
     makespanMs,
     throughputTPS: makespanMs > EPS ? completedTokens / (makespanMs / 1000) : 0,

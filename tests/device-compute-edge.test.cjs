@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const source = ['core.js', 'compute.js', 'config.js', 'compute-placement.js', 'memory.js', 'colibri.js']
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
-  .join('\n') + `\nglobalThis.__simulator = { simulateColibri, deriveColibriDeviceProfile, applyColibriPlacement, colibriAssignedGpuExperts };`;
+  .join('\n') + `\nglobalThis.__simulator = { simulateColibri, validateSimulationConfig, deriveColibriDeviceProfile, applyColibriPlacement, colibriAssignedGpuExperts, colibriExpectedDeviceCounts };`;
 const sandbox = { console, structuredClone, document: { getElementById: () => null, addEventListener: () => {}, readyState: 'complete' } };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox, { filename: 'device-compute-edge-bundle.js' });
@@ -137,4 +137,80 @@ test('Hybrid warm VRAM cache fills every GPU-assigned Expert that fits', () => {
     [...result.cacheState.v[0]].sort((a, b) => a - b),
     Array.from({ length: gpuExperts }, (_, expert) => expert)
   );
+});
+
+test('Hybrid Prefill uses exact placement cardinality when every Expert is active', () => {
+  const input = config({
+    experts: 10,
+    active: 10,
+    compute: compute({
+      expertDevice: 'hybrid',
+      hybrid: { cpuExpertFraction: 0.6, execution: 'parallel', overlapEfficiency: 1 }
+    })
+  });
+  const profile = simulator.deriveColibriDeviceProfile(input);
+
+  const counts = simulator.colibriExpectedDeviceCounts(input, profile);
+  assert.equal(counts.cpuActive, 6);
+  assert.equal(counts.gpuActive, 4);
+});
+
+test('Hybrid placement rounds the requested CPU Expert fraction directly', () => {
+  const input = config({
+    experts: 10,
+    compute: compute({
+      expertDevice: 'hybrid',
+      hybrid: { cpuExpertFraction: 0.25, execution: 'parallel', overlapEfficiency: 1 }
+    })
+  });
+  const profile = simulator.deriveColibriDeviceProfile(input);
+
+  assert.equal(simulator.colibriAssignedGpuExperts(profile), 7);
+});
+
+test('calibrated config rejects explicit malformed enum and object values', () => {
+  assert.equal(simulator.validateSimulationConfig(config({ compute: compute({ mode: '' }) })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({ compute: compute({ attentionDevice: '' }) })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({ compute: compute({ expertDevice: '' }) })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ hybrid: { cpuExpertFraction: 0.5, execution: '', overlapEfficiency: 1 } })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ hybrid: 'parallel' })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    quantization: quant({ payloadMode: '' })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ mode: null })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ attentionDevice: null })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ cpu: { ...compute().cpu, speedScale: null } })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ hybrid: { ...compute().hybrid, overlapEfficiency: Infinity } })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute(),
+    quantization: quant({ payloadMode: null })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute(),
+    quantization: quant({ weightBits: NaN })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: { ...compute(), extra: true }
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ cpu: { ...compute().cpu, extra: true } })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    quantization: quant({ extra: true })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    quantization: quant({ format: 4 })
+  })).valid, false);
 });

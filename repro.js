@@ -203,7 +203,7 @@ function validateArtifactConfigShape(config) {
   }
 }
 
-function parseScenarioArtifactReplay(text) {
+function parseScenarioArtifactReplay(text, replayOptions = {}) {
   if (typeof text !== 'string' || text.length > 1_000_000) throw new Error('Scenario artifact is too large; maximum size is 1MB.');
   let artifact;
   try {
@@ -225,7 +225,7 @@ function parseScenarioArtifactReplay(text) {
   for (const key of ['modelVersion', 'packageVersion', 'commit', 'buildVersion']) {
     if (artifact[key] !== expectedProvenance[key]) throw new Error(`Unsupported ${key}: ${artifact[key] || 'missing'}`);
   }
-  const requestError = validateServingRequests(artifact.config, artifact.requests, {});
+  const requestError = validateServingRequests(artifact.config, artifact.requests, replayOptions);
   if (requestError) throw new Error(`Invalid imported requests: ${requestError}`);
   if (artifact.requests.length !== artifact.config.conc) throw new Error('Imported request count must match config.conc.');
   const expectedRunId = servingRunId(artifact.config, artifact.requests, artifact.provenance);
@@ -238,7 +238,11 @@ function parseScenarioArtifactReplay(text) {
   if (!Number.isSafeInteger(artifact.result.completedTokens)) throw new Error('Invalid imported result metric: completedTokens must be an integer.');
   if (typeof artifact.result.oom !== 'boolean') throw new Error('Invalid imported result status: oom.');
   if (artifact.result.oom) throw new Error('OOM scenario results cannot be imported as completed-population artifacts.');
-  if (!['Estimated · single-request trend model', 'Estimated · event-driven shared-resource model'].includes(artifact.result.modelStatus)) {
+  if (![
+    'Estimated · single-request trend model',
+    'Estimated · event-driven shared-resource model',
+    'Estimated · event-driven CPU/GPU shared-resource model'
+  ].includes(artifact.result.modelStatus)) {
     throw new Error('Invalid imported result status: modelStatus.');
   }
   const insightError = validateBottleneckInsight(artifact.insight);
@@ -247,9 +251,11 @@ function parseScenarioArtifactReplay(text) {
   if (artifact.sweep && stableValue(artifact.sweep.baselineConfig) !== stableValue(artifact.config)) throw new Error('Imported sweep baseline does not match the top-level scenario config.');
   assertScenarioReplayBudget(artifact.config, artifact.sweep);
   validateAndReplaySweep(artifact.sweep);
-  const replayResult = runSimulationConfig(sweepClone(artifact.config));
+  const replayResult = runSimulationConfig(sweepClone(artifact.config), replayOptions, sweepClone(artifact.requests));
   if (replayResult.error) throw new Error(`Imported scenario replay failed: ${replayResult.error}`);
-  if (replayResult.runId !== artifact.runId) throw new Error('Imported scenario replay produced a noncanonical run ID.');
+  const canonicalRunId = servingRunId(artifact.config, artifact.requests, artifact.provenance);
+  if (canonicalRunId !== artifact.runId) throw new Error('Imported scenario replay produced a noncanonical run ID.');
+  replayResult.runId = artifact.runId;
   if (stableValue(replayResult.c) !== stableValue(artifact.config)) throw new Error('Imported scenario configuration is not canonical.');
   const replaySummary = summarizeSimulationResult(replayResult);
   if (!resultSummariesMatch(artifact.result, replaySummary)) throw new Error('Imported scenario replay result verification failed.');
