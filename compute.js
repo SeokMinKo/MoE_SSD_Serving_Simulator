@@ -11,14 +11,14 @@ function deviceComputeInteger(value, fallback) {
   return Number.isSafeInteger(value) ? value : fallback;
 }
 
-function deviceComputeDeviceProfile(input, legacy, kernelMultiplier) {
+function deviceComputeDeviceProfile(input, legacy, expertKernelMultiplier) {
   const source = input && typeof input === 'object' ? input : {};
   const speedScale = deviceComputeNumber(source.speedScale, 1);
   const attentionMs = deviceComputeNumber(source.attentionMs, legacy.attentionMs);
   const expertMs = deviceComputeNumber(source.expertMs, legacy.expertMs);
   const parallelExperts = deviceComputeInteger(source.parallelExperts, legacy.parallelExperts);
   const prefillSpeedup = deviceComputeNumber(source.prefillSpeedup, legacy.prefillSpeedup);
-  const multiplier = deviceComputeNumber(kernelMultiplier, 1);
+  const multiplier = deviceComputeNumber(expertKernelMultiplier, 1);
   return {
     speedScale,
     attentionMs,
@@ -26,7 +26,7 @@ function deviceComputeDeviceProfile(input, legacy, kernelMultiplier) {
     parallelExperts,
     prefillSpeedup,
     kernelMultiplier: multiplier,
-    effectiveAttentionMs: attentionMs * multiplier / Math.max(DEVICE_COMPUTE_EPSILON, speedScale),
+    effectiveAttentionMs: attentionMs / Math.max(DEVICE_COMPUTE_EPSILON, speedScale),
     effectiveExpertMs: expertMs * multiplier / Math.max(DEVICE_COMPUTE_EPSILON, speedScale)
   };
 }
@@ -192,10 +192,12 @@ function colibriExpectedDeviceCounts(c, profile) {
   if (profile.expertDevice === 'cpu') return { cpuActive: c.active, gpuActive: 0 };
   let cpuMass = 0;
   let totalMass = 0;
-  for (let expert = 0; expert < c.experts; expert++) {
-    const weight = 1 / Math.pow(expert + 1, 1.05);
-    totalMass += weight;
-    if (colibriExpertDevice(profile, 0, expert, c.seed) === 'cpu') cpuMass += weight;
+  for (let layer = 0; layer < c.layers; layer++) {
+    for (let expert = 0; expert < c.experts; expert++) {
+      const weight = 1 / Math.pow(expert + 1, 1.05);
+      totalMass += weight;
+      if (colibriExpertDevice(profile, layer, expert, c.seed) === 'cpu') cpuMass += weight;
+    }
   }
   const cpuActive = Math.max(0, Math.min(c.active, Math.round(c.active * cpuMass / Math.max(DEVICE_COMPUTE_EPSILON, totalMass))));
   return { cpuActive, gpuActive: c.active - cpuActive };
