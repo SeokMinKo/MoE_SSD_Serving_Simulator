@@ -1,6 +1,6 @@
 'use strict';
 
-const DEVICE_COMPUTE_SCHEMA = 'device-compute/v1';
+const DEVICE_COMPUTE_SCHEMA = 'device-compute/v2';
 const DEVICE_COMPUTE_EPSILON = 1e-12;
 
 function deviceComputeNumber(value, fallback) {
@@ -54,28 +54,16 @@ function deriveQuantizedExpertPayload(config, legacyExpertMB = config?.esize) {
   };
 }
 
-function splitColibriActiveExperts(active, expertDevice, cpuExpertFraction) {
-  if (expertDevice === 'cpu') return { cpuActive: active, gpuActive: 0 };
-  if (expertDevice === 'hybrid') {
-    const cpuActive = Math.max(0, Math.min(active, Math.round(active * cpuExpertFraction)));
-    return { cpuActive, gpuActive: active - cpuActive };
-  }
-  return { cpuActive: 0, gpuActive: active };
-}
-
 function deriveColibriDeviceProfile(config) {
   const compute = config?.compute && typeof config.compute === 'object' ? config.compute : null;
   const mode = compute?.mode === 'calibrated' ? 'calibrated' : 'legacy';
-  const previousLegacy = config?.__deviceCompute?.legacy && typeof config.__deviceCompute.legacy === 'object'
-    ? config.__deviceCompute.legacy
-    : null;
   const legacyValues = {
-    attn: deviceComputeNumber(previousLegacy?.attn, config.attn),
-    ems: deviceComputeNumber(previousLegacy?.ems, config.ems),
-    par: deviceComputeInteger(previousLegacy?.par, config.par),
-    prefillSpeedup: deviceComputeNumber(previousLegacy?.prefillSpeedup, config.prefillSpeedup),
-    esize: deviceComputeNumber(previousLegacy?.esize, config.esize),
-    vcache: deviceComputeNumber(previousLegacy?.vcache, config.vcache)
+    attn: config.attn,
+    ems: config.ems,
+    par: config.par,
+    prefillSpeedup: config.prefillSpeedup,
+    esize: config.esize,
+    vcache: config.vcache
   };
   const quantization = deriveQuantizedExpertPayload(config, legacyValues.esize);
   if (mode === 'legacy') {
@@ -85,13 +73,14 @@ function deriveColibriDeviceProfile(config) {
       quantization,
       attentionDevice: 'gpu',
       expertDevice: 'gpu',
-      cpuActive: 0,
-      gpuActive: config.active,
-      cpuExpertFraction: 0,
-      gpuExpertFraction: 1,
+      targetCpuExpertFraction: 0,
+      targetGpuExpertFraction: 1,
+      execution: 'sequential',
+      overlapEfficiency: 0,
       effectiveAttentionMs: legacyValues.attn,
-      effectiveExpertPhaseMs: Math.ceil(config.active / legacyValues.par) * legacyValues.ems,
       effectivePrefillSpeedup: legacyValues.prefillSpeedup,
+      usesCpu: false,
+      usesGpu: true,
       legacy: legacyValues
     };
   }
@@ -99,7 +88,7 @@ function deriveColibriDeviceProfile(config) {
   const attentionDevice = compute.attentionDevice === 'cpu' ? 'cpu' : 'gpu';
   const expertDevice = ['cpu', 'hybrid'].includes(compute.expertDevice) ? compute.expertDevice : 'gpu';
   const hybrid = compute.hybrid && typeof compute.hybrid === 'object' ? compute.hybrid : {};
-  const cpuExpertFraction = expertDevice === 'cpu'
+  const targetCpuExpertFraction = expertDevice === 'cpu'
     ? 1
     : expertDevice === 'gpu'
       ? 0
@@ -114,21 +103,9 @@ function deriveColibriDeviceProfile(config) {
   };
   const cpu = deviceComputeDeviceProfile(compute.cpu, legacy, quantization.cpuKernelMultiplier);
   const gpu = deviceComputeDeviceProfile(compute.gpu, legacy, quantization.gpuKernelMultiplier);
-  const { cpuActive, gpuActive } = splitColibriActiveExperts(config.active, expertDevice, cpuExpertFraction);
-  const cpuWaves = cpuActive ? Math.ceil(cpuActive / cpu.parallelExperts) : 0;
-  const gpuWaves = gpuActive ? Math.ceil(gpuActive / gpu.parallelExperts) : 0;
-  const cpuExpertPhaseMs = cpuWaves * cpu.effectiveExpertMs;
-  const gpuExpertPhaseMs = gpuWaves * gpu.effectiveExpertMs;
-  const effectiveExpertPhaseMs = execution === 'sequential'
-    ? cpuExpertPhaseMs + gpuExpertPhaseMs
-    : Math.max(cpuExpertPhaseMs, gpuExpertPhaseMs) +
-      (1 - overlapEfficiency) * Math.min(cpuExpertPhaseMs, gpuExpertPhaseMs);
-  const activeTotal = Math.max(1, cpuActive + gpuActive);
-  const effectivePrefillSpeedup = (
-    cpuActive * cpu.prefillSpeedup + gpuActive * gpu.prefillSpeedup
-  ) / activeTotal;
   const effectiveAttentionMs = attentionDevice === 'cpu' ? cpu.effectiveAttentionMs : gpu.effectiveAttentionMs;
-
+  const usesCpu = attentionDevice === 'cpu' || targetCpuExpertFraction > DEVICE_COMPUTE_EPSILON;
+  const usesGpu = attentionDevice === 'gpu' || targetCpuExpertFraction < 1 - DEVICE_COMPUTE_EPSILON;
   return {
     schema: DEVICE_COMPUTE_SCHEMA,
     mode,
@@ -139,36 +116,111 @@ function deriveColibriDeviceProfile(config) {
     overlapEfficiency,
     cpu,
     gpu,
-    cpuActive,
-    gpuActive,
-    cpuExpertFraction: cpuActive / activeTotal,
-    gpuExpertFraction: gpuActive / activeTotal,
-    cpuExpertPhaseMs,
-    gpuExpertPhaseMs,
+    targetCpuExpertFraction,
+    targetGpuExpertFraction: 1 - targetCpuExpertFraction,
     effectiveAttentionMs,
-    effectiveExpertPhaseMs,
-    effectivePrefillSpeedup,
+    effectivePrefillSpeedup: attentionDevice === 'cpu' ? cpu.prefillSpeedup : gpu.prefillSpeedup,
+    usesCpu,
+    usesGpu,
     legacy: legacyValues
   };
 }
 
-function normalizeColibriDeviceConfig(input) {
-  if (!input || input.mode !== 'colibri') return { config: input, profile: null };
-  const profile = deriveColibriDeviceProfile(input);
-  if (profile.mode === 'legacy' && !input.quantization) return { config: input, profile };
-  const effectiveExpertMB = profile.quantization.effectiveExpertMB;
-  const normalized = {
-    ...input,
-    esize: effectiveExpertMB,
-    __deviceCompute: profile
-  };
-  if (profile.mode === 'calibrated') {
-    normalized.attn = profile.effectiveAttentionMs;
-    normalized.ems = profile.effectiveExpertPhaseMs;
-    normalized.par = Math.max(1, input.active);
-    normalized.prefillSpeedup = profile.effectivePrefillSpeedup;
+function deviceComputeHashUnit(seed, layer, expert) {
+  const mask = (1n << 64n) - 1n;
+  let value = (BigInt(seed || 0) ^ (BigInt(layer + 1) * 0x9E3779B97F4A7C15n) ^ (BigInt(expert + 1) * 0xBF58476D1CE4E5B9n)) & mask;
+  value = ((value ^ (value >> 30n)) * 0xBF58476D1CE4E5B9n) & mask;
+  value = ((value ^ (value >> 27n)) * 0x94D049BB133111EBn) & mask;
+  value ^= value >> 31n;
+  return Number(value >> 11n) / 9007199254740992;
+}
+
+function colibriExpertDevice(profile, layer, expert, seed) {
+  if (!profile || profile.mode === 'legacy' || profile.expertDevice === 'gpu') return 'gpu';
+  if (profile.expertDevice === 'cpu') return 'cpu';
+  if (profile.targetCpuExpertFraction <= DEVICE_COMPUTE_EPSILON) return 'gpu';
+  if (profile.targetCpuExpertFraction >= 1 - DEVICE_COMPUTE_EPSILON) return 'cpu';
+  return deviceComputeHashUnit(seed, layer, expert) < profile.targetCpuExpertFraction ? 'cpu' : 'gpu';
+}
+
+function colibriRouteDeviceSplit(route, layer, profile, seed) {
+  const cpuExperts = [];
+  const gpuExperts = [];
+  for (const expert of route || []) {
+    (colibriExpertDevice(profile, layer, expert, seed) === 'cpu' ? cpuExperts : gpuExperts).push(expert);
   }
-  return { config: normalized, profile };
+  return { cpuExperts, gpuExperts, cpuActive: cpuExperts.length, gpuActive: gpuExperts.length };
+}
+
+function combineColibriDevicePhases(cpuMs, gpuMs, execution, overlapEfficiency) {
+  if (execution === 'sequential') return cpuMs + gpuMs;
+  return Math.max(cpuMs, gpuMs) + (1 - overlapEfficiency) * Math.min(cpuMs, gpuMs);
+}
+
+function colibriLayerCompute(c, profile, cpuActive, gpuActive, prefill = false) {
+  if (!profile || profile.mode === 'legacy') {
+    const expertMs = Math.ceil(c.active / c.par) * c.ems;
+    return {
+      attentionMs: c.attn / c.layers,
+      runtimeMs: 0.39,
+      cpuExpertMs: 0,
+      gpuExpertMs: expertMs,
+      exposedExpertMs: expertMs,
+      totalMs: c.attn / c.layers + 0.39 + expertMs
+    };
+  }
+  const cpuWaves = cpuActive > 0 ? Math.ceil(cpuActive / profile.cpu.parallelExperts) : 0;
+  const gpuWaves = gpuActive > 0 ? Math.ceil(gpuActive / profile.gpu.parallelExperts) : 0;
+  const cpuExpertMs = cpuWaves * profile.cpu.effectiveExpertMs / (prefill ? profile.cpu.prefillSpeedup : 1);
+  const gpuExpertMs = gpuWaves * profile.gpu.effectiveExpertMs / (prefill ? profile.gpu.prefillSpeedup : 1);
+  const exposedExpertMs = combineColibriDevicePhases(cpuExpertMs, gpuExpertMs, profile.execution, profile.overlapEfficiency);
+  const attentionProfile = profile.attentionDevice === 'cpu' ? profile.cpu : profile.gpu;
+  const attentionMs = profile.effectiveAttentionMs / c.layers / (prefill ? attentionProfile.prefillSpeedup : 1);
+  const runtimeMs = 0.39 / (prefill ? attentionProfile.prefillSpeedup : 1);
+  return {
+    attentionMs,
+    runtimeMs,
+    cpuExpertMs,
+    gpuExpertMs,
+    exposedExpertMs,
+    totalMs: attentionMs + runtimeMs + exposedExpertMs
+  };
+}
+
+function colibriExpectedDeviceCounts(c, profile) {
+  if (!profile || profile.mode === 'legacy' || profile.expertDevice === 'gpu') return { cpuActive: 0, gpuActive: c.active };
+  if (profile.expertDevice === 'cpu') return { cpuActive: c.active, gpuActive: 0 };
+  let cpuMass = 0;
+  let totalMass = 0;
+  for (let expert = 0; expert < c.experts; expert++) {
+    const weight = 1 / Math.pow(expert + 1, 1.05);
+    totalMass += weight;
+    if (colibriExpertDevice(profile, 0, expert, c.seed) === 'cpu') cpuMass += weight;
+  }
+  const cpuActive = Math.max(0, Math.min(c.active, Math.round(c.active * cpuMass / Math.max(DEVICE_COMPUTE_EPSILON, totalMass))));
+  return { cpuActive, gpuActive: c.active - cpuActive };
+}
+
+function colibriPrefillCompute(c, profile) {
+  if (!c.prompt) return { computeMs: 0, perTokenMs: 0, cpuActive: 0, gpuActive: 0, layer: null };
+  if (!profile || profile.mode === 'legacy') {
+    const perTokenMs = c.attn + c.layers * (0.39 + Math.ceil(c.active / c.par) * c.ems);
+    return {
+      computeMs: c.prompt * perTokenMs / Math.max(DEVICE_COMPUTE_EPSILON, c.prefillSpeedup || 4.5),
+      perTokenMs,
+      cpuActive: 0,
+      gpuActive: c.active,
+      layer: null
+    };
+  }
+  const counts = colibriExpectedDeviceCounts(c, profile);
+  const layer = colibriLayerCompute(c, profile, counts.cpuActive, counts.gpuActive, true);
+  const perTokenMs = c.layers * layer.totalMs;
+  return { computeMs: c.prompt * perTokenMs, perTokenMs, ...counts, layer };
+}
+
+function colibriDeviceReserveGB(c, profile = deriveColibriDeviceProfile(c)) {
+  return c?.arch === 'discrete' && profile?.usesGpu ? 0.8 : 0;
 }
 
 function validateDeviceComputeConfig(config) {
@@ -237,186 +289,28 @@ function deviceComputeFormatErrors(validation) {
   return validation.errors.map(error => `${error.path}: ${error.message}`).join(' ');
 }
 
-function finalizeColibriDeviceResult(result) {
-  const profile = result?.c?.__deviceCompute;
-  if (!result || result.error || profile?.mode !== 'calibrated') return result;
-  const c = result.c;
-  const rawUnitGB = c.esize / 1000;
-  const oldFirstTpot = result.tokens[0]?.tpot || 0;
-  let addedDramTrafficGB = 0;
-  let addedDramStallMs = 0;
-  let peakDramGBs = result.state?.peakDramGBs || 0;
-
-  for (const token of result.tokens || []) {
-    const cpuActiveWeightGB = c.arch === 'discrete'
-      ? c.layers * profile.cpuActive * rawUnitGB
-      : 0;
-    const oldTrafficGB = Math.max(0, token.memory?.dramTrafficGB || 0);
-    const newTrafficGB = oldTrafficGB + cpuActiveWeightGB;
-    const oldElapsed = token.tpot;
-    const dramFloorMs = newTrafficGB / Math.max(DEVICE_COMPUTE_EPSILON, c.dramBW) * 1000;
-    const newElapsed = Math.max(oldElapsed, dramFloorMs);
-    const deltaMs = newElapsed - oldElapsed;
-    token.tpot = newElapsed;
-    token.computeBreakdown = {
-      schema: DEVICE_COMPUTE_SCHEMA,
-      attentionDevice: profile.attentionDevice,
-      expertDevice: profile.expertDevice,
-      cpuActiveExperts: profile.cpuActive,
-      gpuActiveExperts: profile.gpuActive,
-      cpuExpertMs: c.layers * profile.cpuExpertPhaseMs,
-      gpuExpertMs: c.layers * profile.gpuExpertPhaseMs,
-      exposedExpertMs: c.layers * profile.effectiveExpertPhaseMs,
-      attentionMs: profile.effectiveAttentionMs
-    };
-    if (token.memory) {
-      token.memory.dramTrafficGB = newTrafficGB;
-      token.memory.dramStallMs = Math.max(0, (token.memory.dramStallMs || 0) + deltaMs);
-      token.memory.dramGBs = newTrafficGB / Math.max(DEVICE_COMPUTE_EPSILON, newElapsed / 1000);
-      token.memory.dramUtilization = token.memory.dramGBs / c.dramBW;
-      peakDramGBs = Math.max(peakDramGBs, token.memory.dramGBs);
-    }
-    addedDramTrafficGB += cpuActiveWeightGB;
-    addedDramStallMs += deltaMs;
-  }
-
-  if (result.state) {
-    result.state.totalDramTrafficGB += addedDramTrafficGB;
-    result.state.totalDramStallMs += addedDramStallMs;
-    result.state.peakDramGBs = peakDramGBs;
-  }
-
-  if (result.prefillBreakdown) {
-    const prefill = result.prefillBreakdown;
-    const oldPrefillMs = prefill.ms;
-    const oldTransferGB = prefill.transferGB;
-    const newTransferGB = c.arch === 'discrete' ? oldTransferGB * profile.gpuExpertFraction : 0;
-    const newTransferMs = c.arch === 'discrete'
-      ? newTransferGB / Math.max(DEVICE_COMPUTE_EPSILON, Math.min(c.pcieBW, c.dramBW)) * 1000
-      : 0;
-    const cpuExpertGB = c.arch === 'discrete'
-      ? c.prompt * c.layers * profile.cpuActive * rawUnitGB
-      : 0;
-    const cpuResidentGB = c.arch === 'discrete' && profile.attentionDevice === 'cpu'
-      ? c.prompt * c.resident
-      : 0;
-    const newDramTrafficGB = Math.max(0, prefill.dramTrafficGB - oldTransferGB) + newTransferGB + cpuExpertGB + cpuResidentGB;
-    const newDramMs = newDramTrafficGB / Math.max(DEVICE_COMPUTE_EPSILON, c.dramBW) * 1000;
-    const newPrefillMs = Math.max(prefill.computeMs, prefill.storageMs, newTransferMs, newDramMs);
-    prefill.transferGB = newTransferGB;
-    prefill.transferMs = newTransferMs;
-    prefill.transferEntries *= profile.gpuExpertFraction;
-    prefill.dramTrafficGB = newDramTrafficGB;
-    prefill.dramMs = newDramMs;
-    prefill.ms = newPrefillMs;
-    result.prefill = newPrefillMs;
-    result.ttft += newPrefillMs - oldPrefillMs;
-  }
-
-  const newFirstTpot = result.tokens[0]?.tpot || 0;
-  result.ttft += newFirstTpot - oldFirstTpot;
-  const intervals = result.tokens.length > 1 ? result.tokens.slice(1) : result.tokens;
-  result.avg = intervals.reduce((sum, token) => sum + token.tpot, 0) / intervals.length;
-  result.tps = 1000 / result.avg;
-  const pciePt = result.tot.pcieGB / result.tokens.length;
-  result.pcieBound = c.arch === 'discrete' && pciePt
-    ? Math.min(c.pcieBW, c.dramBW) / pciePt
-    : Infinity;
-  const dramPt = result.state.totalDramTrafficGB / result.tokens.length;
-  result.dramBound = dramPt ? c.dramBW / dramPt : Infinity;
-  result.agg = Math.min(c.conc * result.tps, result.ssdBound, result.pcieBound, result.dramBound);
-  result.computeProfile = profile;
-  result.quantizationProfile = profile.quantization;
-  return result;
-}
-
-function installDeviceComputeModel() {
-  if (globalThis.__DEVICE_COMPUTE_INSTALLED__) return false;
-  if (typeof simulateColibri !== 'function' || typeof validateSimulationConfig !== 'function' || typeof applyColibriPlacement !== 'function' || typeof LinkResource !== 'function') {
-    throw new Error('Device compute model must be installed after the Colibri engine and core resources are loaded.');
-  }
-  const legacySimulateColibri = simulateColibri;
-  const legacyValidateSimulationConfig = validateSimulationConfig;
-  const legacyApplyColibriPlacement = applyColibriPlacement;
-  const LegacyLinkResource = LinkResource;
-
-  LinkResource = class DeviceAwareLinkResource extends LegacyLinkResource {
-    reserveGB(gb, now) {
-      const profile = this.c?.__deviceCompute;
-      const scaledGB = profile?.mode === 'calibrated' ? gb * profile.gpuExpertFraction : gb;
-      return super.reserveGB(scaledGB, now);
-    }
+function installDeviceArtifactModel() {
+  if (globalThis.__DEVICE_ARTIFACT_INSTALLED__) return false;
+  if (typeof validateArtifactConfigShape !== 'function') return false;
+  const legacyValidateArtifactConfigShape = validateArtifactConfigShape;
+  validateArtifactConfigShape = function deviceAwareArtifactConfigShape(config) {
+    const sanitized = { ...config };
+    delete sanitized.compute;
+    delete sanitized.quantization;
+    legacyValidateArtifactConfigShape(sanitized);
+    const validation = validateDeviceComputeConfig(config);
+    if (!validation.valid) throw new Error(`Invalid device compute artifact config: ${deviceComputeFormatErrors(validation)}`);
   };
-
-  applyColibriPlacement = function deviceAwareColibriPlacement(input) {
-    const { config, profile } = normalizeColibriDeviceConfig(input);
-    const requestedVcacheGB = config?.__devicePlacementApplied === DEVICE_COMPUTE_SCHEMA
-      ? deviceComputeNumber(config.placementInfo?.requestedVcacheGB, profile?.legacy?.vcache)
-      : config?.vcache;
-    const placementInput = config?.__devicePlacementApplied === DEVICE_COMPUTE_SCHEMA
-      ? { ...config, vcache: requestedVcacheGB, __devicePlacementApplied: undefined }
-      : config;
-    const placed = legacyApplyColibriPlacement(placementInput);
-    if (profile?.mode !== 'calibrated' || placed.arch !== 'discrete') return placed;
-    const physicalVcacheGB = placed.vcache;
-    placed.vcache = physicalVcacheGB * profile.gpuExpertFraction;
-    placed.__deviceCompute = profile;
-    placed.__devicePlacementApplied = DEVICE_COMPUTE_SCHEMA;
-    placed.placementInfo = {
-      ...(placed.placementInfo || {}),
-      requestedVcacheGB: physicalVcacheGB,
-      effectiveVcacheGB: placed.vcache,
-      gpuExpertFraction: profile.gpuExpertFraction,
-      cpuExpertFraction: profile.cpuExpertFraction
-    };
-    return placed;
-  };
-
-  validateSimulationConfig = function deviceAwareValidation(input) {
-    const deviceValidation = validateDeviceComputeConfig(input);
-    let normalized = input;
-    try {
-      normalized = normalizeColibriDeviceConfig(input).config;
-    } catch (error) {
-      return {
-        valid: false,
-        errors: [...deviceValidation.errors, { path: 'compute', code: 'NORMALIZATION_ERROR', message: String(error?.message || error) }]
-      };
-    }
-    const legacyValidation = legacyValidateSimulationConfig(normalized);
-    return {
-      valid: deviceValidation.valid && legacyValidation.valid,
-      errors: [...deviceValidation.errors, ...legacyValidation.errors]
-    };
-  };
-
-  simulateColibri = function deviceAwareSimulateColibri(input = readColibri(), options = {}) {
-    const validation = validateDeviceComputeConfig(input);
-    if (!validation.valid) {
-      return {
-        error: `Invalid configuration: ${deviceComputeFormatErrors(validation)}`,
-        validationErrors: validation.errors,
-        c: input,
-        mode: 'colibri'
-      };
-    }
-    const { config } = normalizeColibriDeviceConfig(input);
-    const result = legacySimulateColibri(config, options);
-    return finalizeColibriDeviceResult(result);
-  };
-
-  globalThis.__DEVICE_COMPUTE_INSTALLED__ = Object.freeze({ schema: DEVICE_COMPUTE_SCHEMA });
+  globalThis.__DEVICE_ARTIFACT_INSTALLED__ = Object.freeze({ schema: DEVICE_COMPUTE_SCHEMA });
   return true;
 }
 
-function scheduleDeviceComputeInstall() {
+function scheduleDeviceArtifactInstall() {
   if (typeof document !== 'object' || typeof document.addEventListener !== 'function') return false;
-  const install = () => {
-    if (!globalThis.__DEVICE_COMPUTE_INSTALLED__) installDeviceComputeModel();
-  };
+  const install = () => installDeviceArtifactModel();
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
   else Promise.resolve().then(install);
   return true;
 }
 
-scheduleDeviceComputeInstall();
+scheduleDeviceArtifactInstall();
