@@ -7,9 +7,9 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
-const source = ['core.js', 'compute.js', 'config.js', 'memory.js', 'colibri.js']
+const source = ['core.js', 'compute.js', 'config.js', 'compute-placement.js', 'memory.js', 'colibri.js']
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
-  .join('\n') + `\nglobalThis.__simulator = { simulateColibri, deriveColibriDeviceProfile };`;
+  .join('\n') + `\nglobalThis.__simulator = { simulateColibri, deriveColibriDeviceProfile, applyColibriPlacement, colibriAssignedGpuExperts };`;
 const sandbox = { console, structuredClone, document: { getElementById: () => null, addEventListener: () => {}, readyState: 'complete' } };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox, { filename: 'device-compute-edge-bundle.js' });
@@ -96,4 +96,42 @@ test('compressed KV touch CPU time is charged once in Colibri TPOT', () => {
   assert.ok(result.tokens[0].memoryCpuMs > 900 && result.tokens[0].memoryCpuMs < 1100);
   assert.ok(result.tokens[0].tpot > 900 && result.tokens[0].tpot < 1500,
     `touch decompression appears duplicated: ${result.tokens[0].tpot}ms`);
+});
+
+test('Hybrid auto placement caps VRAM cache at the GPU-assigned Expert pool', () => {
+  const input = config({
+    placement: 'auto',
+    layers: 2,
+    experts: 10,
+    active: 2,
+    pinned: 0,
+    vcache: 0,
+    dcache: 0,
+    compute: compute({ expertDevice: 'hybrid', hybrid: { cpuExpertFraction: 0.6, execution: 'parallel', overlapEfficiency: 1 } })
+  });
+  const profile = simulator.deriveColibriDeviceProfile(input);
+  const placed = simulator.applyColibriPlacement(input);
+  const expertPoolGB = input.layers * input.experts * input.esize * 1.03 / 1000;
+  const expectedGpuPoolGB = expertPoolGB * simulator.colibriAssignedGpuExperts(profile) / input.experts;
+  assert.ok(Math.abs(placed.vcache - expectedGpuPoolGB) < 1e-12);
+  assert.equal(placed.placementInfo.vcacheGB, placed.vcache);
+});
+
+test('Hybrid warm VRAM cache fills every GPU-assigned Expert that fits', () => {
+  const input = config({
+    cold: false,
+    layers: 1,
+    experts: 10,
+    active: 2,
+    pinned: 0,
+    dcache: 0.01,
+    compute: compute({ expertDevice: 'hybrid', hybrid: { cpuExpertFraction: 0.6, execution: 'parallel', overlapEfficiency: 1 } })
+  });
+  const profile = simulator.deriveColibriDeviceProfile(input);
+  const gpuExperts = simulator.colibriAssignedGpuExperts(profile);
+  input.vcache = gpuExperts * input.esize * 1.03 / 1000;
+  const result = simulator.simulateColibri(input);
+  assert.equal(result.error, undefined);
+  assert.equal(result.cacheState.v[0].length, gpuExperts);
+  assert.deepEqual(result.cacheState.v[0], Array.from({ length: gpuExperts }, (_, expert) => expert));
 });
