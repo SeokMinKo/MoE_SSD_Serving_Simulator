@@ -328,7 +328,7 @@ test('P0: concurrent auto placement reserves KV capacity for the full request co
   assert.equal(placement.actualDcache, placement.expectedDcache);
 });
 
-test('P1: normalized export and replay produce the same deterministic run ID', () => {
+test('P1: normalized V5 export is schema-fenced while replay preserves its deterministic Run ID', () => {
   const snapshot = new Map([...elements].map(([id, element]) => [id, { value: element.value, checked: element.checked }]));
   const placement = elements.get('placement');
   placement.value = 'auto';
@@ -336,18 +336,20 @@ test('P1: normalized export and replay produce the same deterministic run ID', (
   const ids = vm.runInContext(`(() => {
     const first = simulate();
     const artifact = createScenarioArtifact(first.c, first);
+    const replay = parseScenarioArtifactReplay(JSON.stringify(artifact));
     applyScenarioConfig(artifact.config);
     const second = simulate();
-    return [first.runId, artifact.runId, second.runId, bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(second))];
+    return [first.runId, artifact.runId, replay.replayResult.runId, second.runId, bottleneckInsightsMatch(artifact.insight, createBottleneckInsight(second))];
   })()`, sandbox);
   for (const [id, state] of snapshot) {
     const element = elements.get(id);
     element.value = state.value;
     element.checked = state.checked;
   }
-  assert.equal(ids[0], ids[1]);
+  assert.notEqual(ids[0], ids[1]);
   assert.equal(ids[1], ids[2]);
-  assert.equal(ids[3], true);
+  assert.equal(ids[0], ids[3]);
+  assert.equal(ids[4], true);
 });
 
 test('P1: sticky action toolbar and Storage I/O workspace expose the approved controls', () => {

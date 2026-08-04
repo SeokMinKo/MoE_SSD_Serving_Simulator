@@ -238,7 +238,11 @@ function parseScenarioArtifactReplay(text) {
   if (!Number.isSafeInteger(artifact.result.completedTokens)) throw new Error('Invalid imported result metric: completedTokens must be an integer.');
   if (typeof artifact.result.oom !== 'boolean') throw new Error('Invalid imported result status: oom.');
   if (artifact.result.oom) throw new Error('OOM scenario results cannot be imported as completed-population artifacts.');
-  if (!['Estimated · single-request trend model', 'Estimated · event-driven shared-resource model'].includes(artifact.result.modelStatus)) {
+  if (![
+    'Estimated · single-request trend model',
+    'Estimated · event-driven shared-resource model',
+    'Estimated · event-driven CPU/GPU shared-resource model'
+  ].includes(artifact.result.modelStatus)) {
     throw new Error('Invalid imported result status: modelStatus.');
   }
   const insightError = validateBottleneckInsight(artifact.insight);
@@ -249,7 +253,9 @@ function parseScenarioArtifactReplay(text) {
   validateAndReplaySweep(artifact.sweep);
   const replayResult = runSimulationConfig(sweepClone(artifact.config));
   if (replayResult.error) throw new Error(`Imported scenario replay failed: ${replayResult.error}`);
-  if (replayResult.runId !== artifact.runId) throw new Error('Imported scenario replay produced a noncanonical run ID.');
+  const canonicalRunId = servingRunId(artifact.config, artifact.requests, artifact.provenance);
+  if (canonicalRunId !== artifact.runId) throw new Error('Imported scenario replay produced a noncanonical run ID.');
+  replayResult.runId = artifact.runId;
   if (stableValue(replayResult.c) !== stableValue(artifact.config)) throw new Error('Imported scenario configuration is not canonical.');
   const replaySummary = summarizeSimulationResult(replayResult);
   if (!resultSummariesMatch(artifact.result, replaySummary)) throw new Error('Imported scenario replay result verification failed.');

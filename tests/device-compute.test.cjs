@@ -9,11 +9,14 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 
 function loadSimulator(includeRepro = false) {
-  const files = ['core.js', 'compute.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js'];
-  if (includeRepro) files.push('serving.js', 'advisor.js', 'sweep.js', 'repro.js');
-  const source = `globalThis.__MOE_SSD_BUILD__ = Object.freeze({ schemaVersion: 'moe-ssd-sim/v4', modelVersion: '1.6.2', packageVersion: '1.6.2', commit: 'test', buildVersion: 'test' });\n` +
+  const files = ['core.js', 'compute.js', 'config.js', 'compute-placement.js', 'memory.js', 'colibri.js', 'afm.js'];
+  if (includeRepro) files.push('serving.js', 'serving-device.js', 'device-experience.js', 'advisor.js', 'sweep.js', 'repro.js', 'artifact-v5.js');
+  const source = fs.readFileSync(path.join(root, 'build-info.js'), 'utf8') + '\n' +
     files.map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n') +
     `\nif (typeof installDeviceArtifactModel === 'function') installDeviceArtifactModel();\n` +
+    `if (typeof installDeviceServingScheduler === 'function') installDeviceServingScheduler();\n` +
+    `if (typeof installDeviceExperienceModel === 'function') installDeviceExperienceModel();\n` +
+    `if (typeof installArtifactV5 === 'function') installArtifactV5();\n` +
     `globalThis.__simulator = {
       simulateColibri,
       validateSimulationConfig,
@@ -78,6 +81,7 @@ function manualQuantization(overrides = {}) {
   return {
     payloadMode: 'manual', format: 'custom', weightBits: 4, packing: 1,
     manualExpertMB: 20, cpuKernelMultiplier: 1, gpuKernelMultiplier: 1,
+    dequantMode: 'fused', cpuDequantBW: 25, gpuDequantBW: 600,
     ...overrides
   };
 }
@@ -268,6 +272,60 @@ test('PR2: calibrated artifact exports imports and replays with only external co
   const parsed = simulator.parseScenarioArtifactReplay(JSON.stringify(artifact));
   assert.equal(parsed.artifact.runId, artifact.runId);
   assert.equal(parsed.replayResult.runId, artifact.runId);
+});
+
+test('PR4: Artifact V5 Run ID is fenced from an equivalent V4 contract', () => {
+  const simulator = loadSimulator(true);
+  const config = colibriConfig({
+    compute: calibratedCompute({ attentionDevice: 'cpu', expertDevice: 'hybrid' }),
+    quantization: manualQuantization()
+  });
+  const result = simulator.runSimulationConfig(config);
+  const artifact = simulator.createScenarioArtifact(result.c, result);
+  const downgraded = structuredClone(artifact);
+  downgraded.schemaVersion = 'moe-ssd-sim/v4';
+  downgraded.provenance.schemaVersion = 'moe-ssd-sim/v4';
+  delete downgraded.engineContracts;
+  delete downgraded.executionIdentity;
+  delete downgraded.migration;
+
+  assert.equal(artifact.provenance.schemaVersion, 'moe-ssd-sim/v5');
+  assert.throws(
+    () => simulator.parseScenarioArtifactReplay(JSON.stringify(downgraded)),
+    /run ID/
+  );
+});
+
+test('PR4: Replay Worker preserves calibrated Artifact V5 schema and Run ID', () => {
+  const simulator = loadSimulator(true);
+  const config = colibriConfig({
+    compute: calibratedCompute({ attentionDevice: 'cpu', expertDevice: 'hybrid' }),
+    quantization: manualQuantization()
+  });
+  const result = simulator.runSimulationConfig(config);
+  const artifact = simulator.createScenarioArtifact(result.c, result);
+  let posted = null;
+  const workerSandbox = {
+    console,
+    structuredClone,
+    TextEncoder,
+    setTimeout,
+    clearTimeout,
+    self: { postMessage: value => { posted = value; } }
+  };
+  const workerContext = vm.createContext(workerSandbox);
+  workerSandbox.importScripts = (...names) => {
+    for (const name of names) {
+      vm.runInContext(fs.readFileSync(path.join(root, name), 'utf8'), workerContext, { filename: name });
+    }
+  };
+  vm.runInContext(fs.readFileSync(path.join(root, 'replay-worker.js'), 'utf8'), workerContext, { filename: 'replay-worker.js' });
+
+  workerSandbox.self.onmessage({ data: JSON.stringify(artifact) });
+
+  assert.equal(posted.error, undefined);
+  assert.equal(posted.artifact.schemaVersion, 'moe-ssd-sim/v5');
+  assert.equal(posted.replayResult.runId, artifact.runId);
 });
 
 test('PR1: invalid calibrated settings fail closed', () => {

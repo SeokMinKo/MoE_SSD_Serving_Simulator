@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const files = ['core.js', 'compute.js', 'config.js', 'compute-placement.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'serving-device.js'];
 const source = files.map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n') +
-  '\ninstallDevicePlacementModel(); installDeviceServingScheduler(); globalThis.__sim={simulateColibri,simulateServing};';
+  '\ninstallDevicePlacementModel(); installDeviceServingScheduler(); globalThis.__sim={simulateColibri,simulateServing,deviceServingReserveCompute};';
 const sandbox = { console, structuredClone, document: { getElementById: () => null, addEventListener: () => {}, readyState: 'complete' } };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox, { filename: 'device-serving-bundle.js' });
@@ -110,4 +110,89 @@ test('PR3: slower CPU increases queueing and reduces throughput in CPU-bound ser
   assert.ok(slow.resources.cpuCompute.queueMs > fast.resources.cpuCompute.queueMs);
   assert.ok(slow.throughputTPS < fast.throughputTPS);
   assert.ok(slow.resources.cpuCompute.utilization >= 0 && slow.resources.cpuCompute.utilization <= 1);
+});
+
+test('PR3: partial decode OOM fails closed instead of publishing success KPIs', () => {
+  const c = config({
+    arch: 'unified',
+    host: 8,
+    vram: 0,
+    output: 8,
+    context: 1,
+    kvKB: 1_000_000,
+    compute: compute({ attentionDevice: 'cpu', expertDevice: 'cpu' })
+  });
+
+  const serving = sim.simulateServing(c, requests(1, 8), { batchWindowMs: 0 });
+
+  assert.equal(serving.oom, true);
+  assert.match(serving.error, /OOM/);
+  assert.equal(serving.throughputTPS, undefined);
+});
+
+test('PR3: zero-overlap Hybrid scheduling matches sequential resource timing', () => {
+  const parallelConfig = config({
+    conc: 4,
+    compute: compute({
+      attentionDevice: 'gpu',
+      expertDevice: 'hybrid',
+      hybrid: { cpuExpertFraction: 0.5, execution: 'parallel', overlapEfficiency: 0 }
+    })
+  });
+  const sequentialConfig = {
+    ...parallelConfig,
+    compute: compute({
+      attentionDevice: 'gpu',
+      expertDevice: 'hybrid',
+      hybrid: { cpuExpertFraction: 0.5, execution: 'sequential', overlapEfficiency: 0 }
+    })
+  };
+
+  const parallel = sim.simulateServing(parallelConfig, requests(4), { batchWindowMs: 0 });
+  const sequential = sim.simulateServing(sequentialConfig, requests(4), { batchWindowMs: 0 });
+
+  assert.ok(Math.abs(parallel.resources.cpuCompute.freeAt - sequential.resources.cpuCompute.freeAt) < 1e-9);
+  assert.ok(Math.abs(parallel.resources.gpuCompute.freeAt - sequential.resources.gpuCompute.freeAt) < 1e-9);
+  assert.ok(Math.abs(parallel.resources.cpuCompute.queueMs - sequential.resources.cpuCompute.queueMs) < 1e-9);
+  assert.ok(Math.abs(parallel.resources.gpuCompute.queueMs - sequential.resources.gpuCompute.queueMs) < 1e-9);
+});
+
+test('PR3: serving reserves Attention and runtime before exposed Expert phases', () => {
+  const resource = () => ({
+    freeAt: 0,
+    calls: [],
+    reserveMs(durationMs, arrivalMs, phase) {
+      const start = Math.max(arrivalMs, this.freeAt);
+      const end = start + durationMs;
+      const reservation = { start, end, wait: start - arrivalMs, durationMs, arrivalMs, phase };
+      this.calls.push(reservation);
+      this.freeAt = end;
+      return reservation;
+    }
+  });
+  const resources = { cpuCompute: resource(), gpuCompute: resource() };
+
+  const reservation = sim.deviceServingReserveCompute(resources, {
+    attentionMs: 10,
+    runtimeMs: 2,
+    cpuExpertMs: 20,
+    gpuExpertMs: 5,
+    attentionDevice: 'gpu'
+  }, 0, 'decode', { execution: 'sequential', overlapEfficiency: 0 });
+
+  assert.equal(resources.gpuCompute.calls[0].arrivalMs, 0);
+  assert.equal(resources.gpuCompute.calls[0].durationMs, 12);
+  assert.equal(resources.cpuCompute.calls[0].arrivalMs, 12);
+  assert.equal(resources.gpuCompute.calls[1].arrivalMs, 32);
+  assert.equal(reservation.end, 37);
+});
+
+test('PR3: scheduler options that change results are included in the Run ID', () => {
+  const c = config({ conc: 2 });
+  const immediate = sim.simulateServing(c, requests(2), { batchWindowMs: 0 });
+  const batched = sim.simulateServing(c, requests(2), { batchWindowMs: 100 });
+
+  assert.notEqual(immediate.throughputTPS, batched.throughputTPS);
+  assert.notEqual(immediate.runId, batched.runId);
+  assert.match(sim.simulateServing(c, requests(2), { batchWindowMs: null }).error, /batchWindowMs must be finite/);
 });

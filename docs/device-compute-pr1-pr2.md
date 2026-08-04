@@ -26,7 +26,7 @@ The calibrated path is enabled only with:
 compute: { mode: 'calibrated', ... }
 ```
 
-The device-specific contract is identified by `device-compute/v2`. The repository keeps the existing `moe-ssd-sim/v4` artifact envelope and V1.6.2 package/model identity during this incremental PR; build commit, Run ID, explicit `compute`/`quantization` configuration, and the device-compute schema preserve reproducibility.
+The device-specific contract is identified by `device-compute/v2`. Browser exports use the exact `moe-ssd-sim/v5` envelope and retain V4 as the internal replay runtime. The V5 Run ID binds build provenance, explicit `compute`/`quantization` configuration, engine contracts, scheduler schema, and batch window.
 
 ## Configuration
 
@@ -64,7 +64,10 @@ The device-specific contract is identified by `device-compute/v2`. The repositor
     expertParamsM: 35,
     manualExpertMB: 19,
     cpuKernelMultiplier: 1,
-    gpuKernelMultiplier: 1
+    gpuKernelMultiplier: 1,
+    dequantMode: 'fused',          // fused | separate
+    cpuDequantBW: 25,
+    gpuDequantBW: 600
   }
 }
 ```
@@ -99,7 +102,7 @@ Consequences:
 - Manual `vcache` remains the explicit physical VRAM budget.
 - Auto Placement caps `vcache` at the total GPU-assigned Expert pool, avoiding unused reservation that would unnecessarily reduce GPU KV capacity.
 
-The requested CPU fraction is an Expert-count placement target. The observed activation fraction can differ because routing popularity is non-uniform; the result reports both target and actual fractions.
+The requested CPU fraction is rounded directly to a CPU Expert count; the GPU count is the remainder. The observed activation fraction can differ because routing popularity is non-uniform. Prefill's popularity estimate is clamped to the feasible cardinality interval. When every Expert is active, CPU/GPU active counts equal the exact placement counts.
 
 ## Compute equations
 
@@ -160,13 +163,14 @@ The calibrated path performs device accounting inside the Colibri timeline inste
 Layer start
 → demand/prefetch storage readiness
 → GPU-only PCIe transfer
-→ CPU/GPU compute composition
+→ Attention/runtime on its owning device
+→ CPU/GPU Expert phase composition
 → per-layer DRAM roofline
 → layer completion
 → next layer
 ```
 
-This means additional CPU DRAM time advances subsequent layers and tokens and therefore affects prefetch timeliness, queue timing, swap completion, and observed bandwidth consistently. KV compression/decompression CPU time is charged once at the point where it occurs; reporting totals do not add that elapsed time a second time.
+This means additional CPU DRAM time advances subsequent layers and tokens and therefore affects prefetch timeliness, queue timing, swap completion, and observed bandwidth consistently. The serving scheduler preserves the Attention/runtime → Expert barrier. For parallel Hybrid execution, the lower-duration device phase is shifted so the modeled overlap interval equals `overlapEfficiency × min(CPU, GPU)`; efficiency zero is resource-timeline equivalent to sequential execution. KV compression/decompression CPU time is charged once at the point where it occurs; reporting totals do not add that elapsed time a second time.
 
 Prefill independently calculates:
 
@@ -178,14 +182,14 @@ Prefill independently calculates:
 
 ## Artifact and replay
 
-Artifacts persist only external configuration fields. No internal normalized profile or placement cache is exported.
+Artifacts persist only external configuration fields. No internal normalized profile or placement cache is exported. V5 rejects unknown envelope, result, migration, execution-identity, compute, quantization, and nested device fields.
 
 Allowed calibrated fields:
 
 - `compute`
 - `quantization`
 
-The parser validates these fields, recalculates placement and timing, and verifies Run ID, result summary, Advisor insight, and replay result against the same build.
+The parser validates these fields, recalculates placement and timing, and verifies Run ID, result summary, Advisor insight, and replay result against the same build. V4 input remains available only with exact V4 build provenance; V5 does not claim cross-build migration.
 
 ## Validation coverage
 
@@ -211,8 +215,8 @@ The dedicated tests use non-zero Prompt, KV, resident weights, DRAM traffic, PCI
 
 ## Remaining limitations
 
-- CPU and GPU are composed inside each analytic layer phase but do not yet use independent multi-request scheduler resources. Cross-request CPU/GPU contention is deferred to PR3.
+- CPU and GPU use independent multi-request scheduler resources, but the scheduler remains a synthetic resource-level approximation rather than a kernel trace.
 - Popularity-aware placement is static and is not dynamically retrained from measured traces.
 - GPU-resident dense Attention weights and explicit dense-weight PCIe loading remain part of the existing `resident` calibration rather than a separate cache.
-- Dequantization is represented through calibrated Expert-kernel multipliers; a separate dequant resource is deferred.
-- UI controls, Sweep descriptors, Advisor CPU/GPU sub-scores, and a future V5 artifact redesign remain later phases.
+- Separate dequantization is modeled as calibrated device time, not as a separately contended scheduler resource.
+- UI controls, Sweep descriptors, aggregate CPU/GPU Advisor evidence, and the V5 artifact envelope are implemented; device-specific Advisor sub-scores remain outside this contract.

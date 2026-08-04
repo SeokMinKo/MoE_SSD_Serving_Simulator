@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const files = ['core.js', 'compute.js', 'config.js', 'compute-placement.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'serving-device.js', 'advisor.js', 'sweep.js', 'device-experience.js'];
 const source = files.map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n') +
-  '\ninstallDevicePlacementModel(); installDeviceServingScheduler(); installDeviceExperienceModel(); globalThis.__sim={colibriLayerCompute,deriveColibriDeviceProfile,sweepCatalogForConfig,validateDeviceComputeConfig,simulateServing,simulateColibri};';
+  '\ninstallDevicePlacementModel(); installDeviceServingScheduler(); installDeviceExperienceModel(); globalThis.__sim={colibriLayerCompute,deriveColibriDeviceProfile,sweepCatalogForConfig,validateDeviceComputeConfig,simulateServing,simulateColibri,advisorPhaseResource};';
 const sandbox = { console, structuredClone };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox, { filename: 'device-experience-bundle.js' });
@@ -73,6 +73,17 @@ test('invalid separate dequantization bandwidth fails closed', () => {
   assert.ok(validation.errors.some(error => error.path === 'quantization.cpuDequantBW'));
 });
 
+test('explicit empty dequantization mode fails closed', () => {
+  const c = config({ quantization: { ...config().quantization, dequantMode: '' } });
+
+  const validation = sim.validateDeviceComputeConfig(c);
+
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.some(error => error.path === 'quantization.dequantMode'));
+  const nullMode = config({ quantization: { ...config().quantization, dequantMode: null } });
+  assert.equal(sim.validateDeviceComputeConfig(nullMode).valid, false);
+});
+
 test('separate CPU dequantization contributes to CPU serving work', () => {
   const fused = config({ conc: 2 });
   const separate = config({ conc: 2, quantization: { ...fused.quantization, dequantMode: 'separate', cpuDequantBW: 2 } });
@@ -81,4 +92,19 @@ test('separate CPU dequantization contributes to CPU serving work', () => {
   const separateServing = sim.simulateServing(separate, requests, { batchWindowMs: 0 });
   assert.ok(separateServing.resources.cpuCompute.busyMs > fusedServing.resources.cpuCompute.busyMs);
   assert.ok(separateServing.throughputTPS < fusedServing.throughputTPS);
+});
+
+test('device Advisor aggregates CPU and GPU compute resource-time consistently', () => {
+  const serving = {
+    resources: {
+      cpuCompute: { phases: { decode: { jobs: 2, busyMs: 30, queueMs: 10 } } },
+      gpuCompute: { phases: { decode: { jobs: 3, busyMs: 20, queueMs: 5 } } }
+    }
+  };
+
+  const aggregate = sim.advisorPhaseResource(serving, 'compute', 'decode');
+
+  assert.equal(aggregate.jobs, 5);
+  assert.equal(aggregate.busyMs, 50);
+  assert.equal(aggregate.queueMs, 15);
 });
