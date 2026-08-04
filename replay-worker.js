@@ -30,6 +30,7 @@ importScripts(
   'compute.js',
   'presets.js',
   'config.js',
+  'compute-placement.js',
   'memory.js',
   'colibri.js',
   'afm.js',
@@ -39,6 +40,7 @@ importScripts(
   'repro.js'
 );
 
+installDevicePlacementModel();
 installDeviceArtifactModel();
 
 self.onmessage = event => {
