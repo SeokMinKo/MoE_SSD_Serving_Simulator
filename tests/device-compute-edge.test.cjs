@@ -201,4 +201,16 @@ test('calibrated config rejects explicit malformed enum and object values', () =
     compute: compute(),
     quantization: quant({ weightBits: NaN })
   })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: { ...compute(), extra: true }
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    compute: compute({ cpu: { ...compute().cpu, extra: true } })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    quantization: quant({ extra: true })
+  })).valid, false);
+  assert.equal(simulator.validateSimulationConfig(config({
+    quantization: quant({ format: 4 })
+  })).valid, false);
 });

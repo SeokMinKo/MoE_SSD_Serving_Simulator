@@ -91,11 +91,15 @@ test('Artifact V5 rejects unknown envelope result migration and device config fi
   migration.migration.__private = true;
   assert.throws(() => sim.parseScenarioArtifactReplay(JSON.stringify(migration)), /unknown fields/);
 
-  const compute = sim.createScenarioArtifact({ mode: 'colibri', compute: { mode: 'legacy', __internal: true } });
-  assert.throws(() => sim.parseScenarioArtifactReplay(JSON.stringify(compute)), /config\.compute contains unknown fields/);
+  assert.throws(
+    () => sim.createScenarioArtifact({ mode: 'colibri', compute: { mode: 'legacy', __internal: true } }),
+    /config\.compute contains unknown fields/
+  );
 
-  const quantization = sim.createScenarioArtifact({ mode: 'colibri', quantization: { payloadMode: 'manual', __internal: true } });
-  assert.throws(() => sim.parseScenarioArtifactReplay(JSON.stringify(quantization)), /config\.quantization contains unknown fields/);
+  assert.throws(
+    () => sim.createScenarioArtifact({ mode: 'colibri', quantization: { payloadMode: 'manual', __internal: true } }),
+    /config\.quantization contains unknown fields/
+  );
 
   const migrationContract = sim.createScenarioArtifact({ mode: 'colibri' });
   migrationContract.migration.accepts = ['moe-ssd-sim/v5'];

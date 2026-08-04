@@ -36,6 +36,12 @@ function artifactV5AssertExactKeys(value, allowed, label) {
   if (unknown.length) throw new Error(`Artifact V5 ${label} contains unknown fields: ${unknown.join(', ')}.`);
 }
 
+function artifactV5AssertRequiredKeys(value, required, label) {
+  const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const missing = required.filter(key => !Object.prototype.hasOwnProperty.call(object, key));
+  if (missing.length) throw new Error(`Artifact V5 ${label} is missing required fields: ${missing.join(', ')}.`);
+}
+
 function artifactV5ValidateDeviceConfig(config) {
   if (config.compute !== undefined) {
     artifactV5AssertExactKeys(config.compute, ['mode', 'attentionDevice', 'expertDevice', 'cpu', 'gpu', 'hybrid'], 'config.compute');
@@ -63,6 +69,23 @@ function artifactV5ValidateDeviceConfig(config) {
       'config.quantization'
     );
   }
+  if (config.compute?.mode === 'calibrated') {
+    const computeKeys = ['mode', 'attentionDevice', 'expertDevice', 'cpu', 'gpu', 'hybrid'];
+    const deviceKeys = ['speedScale', 'attentionMs', 'expertMs', 'parallelExperts', 'prefillSpeedup'];
+    const hybridKeys = ['cpuExpertFraction', 'execution', 'overlapEfficiency'];
+    const quantizationKeys = [
+      'payloadMode', 'format', 'weightBits', 'packing', 'manualExpertMB', 'expertParamsM',
+      'cpuKernelMultiplier', 'gpuKernelMultiplier', 'dequantMode', 'cpuDequantBW', 'gpuDequantBW'
+    ];
+    artifactV5AssertRequiredKeys(config.compute, computeKeys, 'config.compute');
+    artifactV5AssertRequiredKeys(config.compute.cpu, deviceKeys, 'config.compute.cpu');
+    artifactV5AssertRequiredKeys(config.compute.gpu, deviceKeys, 'config.compute.gpu');
+    artifactV5AssertRequiredKeys(config.compute.hybrid, hybridKeys, 'config.compute.hybrid');
+    if (!config.quantization || typeof config.quantization !== 'object' || Array.isArray(config.quantization)) {
+      throw new Error('Artifact V5 calibrated config.quantization is required.');
+    }
+    artifactV5AssertRequiredKeys(config.quantization, quantizationKeys, 'config.quantization');
+  }
 }
 
 function artifactV5ExecutionIdentity(artifact, result = null) {
@@ -82,6 +105,11 @@ function artifactV5ValidateEnvelope(artifact) {
   artifactV5AssertExactKeys(artifact.result, ARTIFACT_V5_RESULT_KEYS, 'result');
   artifactV5AssertExactKeys(artifact.migration, ['accepts', 'exportedAs', 'requiresExactProvenance'], 'migration');
   artifactV5AssertExactKeys(artifact.executionIdentity, ['schedulerSchema', 'batchWindowMs', 'engineContracts'], 'executionIdentity');
+  if (!Array.isArray(artifact.requests) || !artifact.requests.length) throw new Error('Artifact V5 requests must be a non-empty array.');
+  for (const [index, request] of artifact.requests.entries()) {
+    artifactV5AssertExactKeys(request, ['id', 'arrivalMs', 'output'], `request ${index}`);
+    artifactV5AssertRequiredKeys(request, ['id', 'arrivalMs', 'output'], `request ${index}`);
+  }
   artifactV5ValidateContracts(artifact.engineContracts);
   artifactV5ValidateContracts(artifact.executionIdentity.engineContracts);
   if (!Array.isArray(artifact.migration.accepts) || artifact.migration.accepts.length !== 2 ||
@@ -141,6 +169,7 @@ function installArtifactV5() {
     };
     envelope.executionIdentity = artifactV5ExecutionIdentity(envelope, result);
     envelope.runId = servingRunId(envelope.config, envelope.requests, envelope.provenance, envelope.executionIdentity);
+    artifactV5ValidateEnvelope(envelope);
     return envelope;
   };
 

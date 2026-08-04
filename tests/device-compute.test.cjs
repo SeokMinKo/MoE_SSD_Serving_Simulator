@@ -81,7 +81,7 @@ function calibratedCompute(overrides = {}) {
 function manualQuantization(overrides = {}) {
   return {
     payloadMode: 'manual', format: 'custom', weightBits: 4, packing: 1,
-    manualExpertMB: 20, cpuKernelMultiplier: 1, gpuKernelMultiplier: 1,
+    manualExpertMB: 20, expertParamsM: 35, cpuKernelMultiplier: 1, gpuKernelMultiplier: 1,
     dequantMode: 'fused', cpuDequantBW: 25, gpuDequantBW: 600,
     ...overrides
   };
@@ -311,6 +311,38 @@ test('PR4: Artifact V5 replay executes and verifies its declared scheduler ident
   );
 });
 
+test('PR4: Artifact V5 rejects noncanonical requests and incomplete calibrated config', () => {
+  const simulator = loadSimulator(true);
+  const config = colibriConfig({
+    compute: calibratedCompute({ attentionDevice: 'cpu', expertDevice: 'hybrid' }),
+    quantization: manualQuantization()
+  });
+  const result = simulator.runSimulationConfig(config);
+  const artifact = simulator.createScenarioArtifact(result.c, result);
+
+  const unknownRequest = structuredClone(artifact);
+  unknownRequest.requests[0].priority = 'urgent';
+  unknownRequest.runId = simulator.servingRunId(
+    unknownRequest.config,
+    unknownRequest.requests,
+    unknownRequest.provenance,
+    unknownRequest.executionIdentity
+  );
+  assert.throws(
+    () => simulator.parseScenarioArtifactReplay(JSON.stringify(unknownRequest)),
+    /request.*unknown fields/i
+  );
+
+  const incomplete = structuredClone(config);
+  delete incomplete.compute.cpu.speedScale;
+  const incompleteResult = simulator.runSimulationConfig(incomplete);
+  assert.equal(incompleteResult.error, undefined);
+  assert.throws(
+    () => simulator.createScenarioArtifact(incompleteResult.c, incompleteResult),
+    /config\.compute\.cpu.*required fields/
+  );
+});
+
 test('PR4: Artifact V5 Run ID is fenced from an equivalent V4 contract', () => {
   const simulator = loadSimulator(true);
   const config = colibriConfig({
@@ -375,6 +407,18 @@ test('PR4: Replay Worker preserves calibrated Artifact V5 schema and Run ID', ()
   posted = null;
   workerSandbox.self.onmessage({ data: JSON.stringify(tampered) });
   assert.match(posted.error, /scheduler identity/);
+
+  const unknownRequest = structuredClone(artifact);
+  unknownRequest.requests[0].priority = 'urgent';
+  unknownRequest.runId = simulator.servingRunId(
+    unknownRequest.config,
+    unknownRequest.requests,
+    unknownRequest.provenance,
+    unknownRequest.executionIdentity
+  );
+  posted = null;
+  workerSandbox.self.onmessage({ data: JSON.stringify(unknownRequest) });
+  assert.match(posted.error, /request.*unknown fields/i);
 });
 
 test('PR4: Simulation Worker fails closed on the same malformed calibrated config', () => {
@@ -401,6 +445,10 @@ test('PR4: Simulation Worker fails closed on the same malformed calibrated confi
   workerSandbox.onmessage({ data: { config: invalid } });
 
   assert.match(workerSandbox.posted.error, /compute\.mode/);
+
+  const unknown = colibriConfig({ compute: { ...calibratedCompute(), extra: true } });
+  workerSandbox.onmessage({ data: { config: unknown } });
+  assert.match(workerSandbox.posted.error, /compute\.extra/);
 });
 
 test('PR1: invalid calibrated settings fail closed', () => {
