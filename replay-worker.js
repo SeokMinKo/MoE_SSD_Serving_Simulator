@@ -31,12 +31,15 @@ importScripts(
   'config.js',
   'memory.js',
   'colibri.js',
+  'compute.js',
   'afm.js',
   'serving.js',
   'advisor.js',
   'sweep.js',
   'repro.js'
 );
+
+installDeviceComputeModel();
 
 self.onmessage = event => {
   try {
