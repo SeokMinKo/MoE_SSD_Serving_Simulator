@@ -70,6 +70,8 @@ function deriveColibriDeviceProfile(config) {
     return {
       schema: DEVICE_COMPUTE_SCHEMA,
       mode,
+      experts: config.experts,
+      layers: config.layers,
       quantization,
       attentionDevice: 'gpu',
       expertDevice: 'gpu',
@@ -109,6 +111,8 @@ function deriveColibriDeviceProfile(config) {
   return {
     schema: DEVICE_COMPUTE_SCHEMA,
     mode,
+    experts: config.experts,
+    layers: config.layers,
     quantization,
     attentionDevice,
     expertDevice,
@@ -126,21 +130,22 @@ function deriveColibriDeviceProfile(config) {
   };
 }
 
-function deviceComputeHashUnit(seed, layer, expert) {
-  const mask = (1n << 64n) - 1n;
-  let value = (BigInt(seed || 0) ^ (BigInt(layer + 1) * 0x9E3779B97F4A7C15n) ^ (BigInt(expert + 1) * 0xBF58476D1CE4E5B9n)) & mask;
-  value = ((value ^ (value >> 30n)) * 0xBF58476D1CE4E5B9n) & mask;
-  value = ((value ^ (value >> 27n)) * 0x94D049BB133111EBn) & mask;
-  value ^= value >> 31n;
-  return Number(value >> 11n) / 9007199254740992;
+function colibriAssignedGpuExperts(profile) {
+  const experts = Math.max(0, deviceComputeInteger(profile?.experts, 0));
+  if (!experts || !profile || profile.mode === 'legacy' || profile.expertDevice === 'gpu') return experts;
+  if (profile.expertDevice === 'cpu') return 0;
+  return Math.max(0, Math.min(experts, Math.round(experts * profile.targetGpuExpertFraction)));
+}
+
+function colibriGpuExpertPoolFraction(profile) {
+  const experts = Math.max(0, deviceComputeInteger(profile?.experts, 0));
+  return experts > 0 ? colibriAssignedGpuExperts(profile) / experts : profile?.usesGpu ? 1 : 0;
 }
 
 function colibriExpertDevice(profile, layer, expert, seed) {
   if (!profile || profile.mode === 'legacy' || profile.expertDevice === 'gpu') return 'gpu';
   if (profile.expertDevice === 'cpu') return 'cpu';
-  if (profile.targetCpuExpertFraction <= DEVICE_COMPUTE_EPSILON) return 'gpu';
-  if (profile.targetCpuExpertFraction >= 1 - DEVICE_COMPUTE_EPSILON) return 'cpu';
-  return deviceComputeHashUnit(seed, layer, expert) < profile.targetCpuExpertFraction ? 'cpu' : 'gpu';
+  return expert < colibriAssignedGpuExperts(profile) ? 'gpu' : 'cpu';
 }
 
 function colibriRouteDeviceSplit(route, layer, profile, seed) {
@@ -192,12 +197,10 @@ function colibriExpectedDeviceCounts(c, profile) {
   if (profile.expertDevice === 'cpu') return { cpuActive: c.active, gpuActive: 0 };
   let cpuMass = 0;
   let totalMass = 0;
-  for (let layer = 0; layer < c.layers; layer++) {
-    for (let expert = 0; expert < c.experts; expert++) {
-      const weight = 1 / Math.pow(expert + 1, 1.05);
-      totalMass += weight;
-      if (colibriExpertDevice(profile, layer, expert, c.seed) === 'cpu') cpuMass += weight;
-    }
+  for (let expert = 0; expert < c.experts; expert++) {
+    const weight = 1 / Math.pow(expert + 1, 1.05);
+    totalMass += weight;
+    if (colibriExpertDevice(profile, 0, expert, c.seed) === 'cpu') cpuMass += weight;
   }
   const cpuActive = Math.max(0, Math.min(c.active, Math.round(c.active * cpuMass / Math.max(DEVICE_COMPUTE_EPSILON, totalMass))));
   return { cpuActive, gpuActive: c.active - cpuActive };
