@@ -27,8 +27,10 @@ function boundedJsonBytes(value, limit, seen = new WeakSet()) {
 importScripts(
   'build-info.js',
   'core.js',
+  'compute.js',
   'presets.js',
   'config.js',
+  'compute-placement.js',
   'memory.js',
   'colibri.js',
   'afm.js',
@@ -37,6 +39,9 @@ importScripts(
   'sweep.js',
   'repro.js'
 );
+
+installDevicePlacementModel();
+installDeviceArtifactModel();
 
 self.onmessage = event => {
   try {

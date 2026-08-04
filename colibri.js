@@ -97,6 +97,49 @@ function zipfTopMass(n, top, a = 1.05) {
   return selected / total;
 }
 
+function colibriProfileForRun(c) {
+  if (typeof deriveColibriDeviceProfile === 'function') return deriveColibriDeviceProfile(c);
+  return {
+    mode: 'legacy', attentionDevice: 'gpu', expertDevice: 'gpu', usesGpu: true,
+    quantization: { effectiveExpertMB: c.esize }
+  };
+}
+
+function colibriDynamic(c, state, V, D, P, unitGB) {
+  const expertEntries = c.arch === 'unified' ? unionEntries(V, D) : totalEntries(D);
+  const expertGB = expertEntries * unitGB;
+  const pageGB = totalEntries(P) * unitGB;
+  const fixedGB = c.resident + c.pinned + c.mem.osReservedGB + c.mem.backgroundGB + 3 + (c.arch === 'unified' ? 0.8 : 0);
+  const physicalGB = fixedGB + expertGB + pageGB + kvPhysicalGB(state, c) + state.pendingSwapOutGB;
+  const profile = colibriProfileForRun(c);
+  const deviceReserveGB = typeof colibriDeviceReserveGB === 'function'
+    ? colibriDeviceReserveGB(c, profile)
+    : c.arch === 'discrete' ? 0.8 : 0;
+  const deviceGB = c.arch === 'discrete' ? totalEntries(V) * unitGB + state.deviceKVGB + deviceReserveGB : 0;
+  return { fixedGB, expertGB, pageGB, kvGB: kvPhysicalGB(state, c), physicalGB, deviceGB };
+}
+
+function colibriExpertDeviceForRun(profile, layer, expert, seed) {
+  return typeof colibriExpertDevice === 'function' ? colibriExpertDevice(profile, layer, expert, seed) : 'gpu';
+}
+
+function colibriRouteSplitForRun(route, layer, profile, seed) {
+  if (typeof colibriRouteDeviceSplit === 'function') return colibriRouteDeviceSplit(route, layer, profile, seed);
+  return { cpuExperts: [], gpuExperts: [...route], cpuActive: 0, gpuActive: route.length };
+}
+
+function colibriLayerComputeForRun(c, profile, cpuActive, gpuActive, prefill = false) {
+  if (typeof colibriLayerCompute === 'function') return colibriLayerCompute(c, profile, cpuActive, gpuActive, prefill);
+  const expertMs = Math.ceil(c.active / c.par) * c.ems;
+  return { attentionMs: c.attn / c.layers, runtimeMs: 0.39, cpuExpertMs: 0, gpuExpertMs: expertMs, exposedExpertMs: expertMs, totalMs: c.attn / c.layers + 0.39 + expertMs };
+}
+
+function colibriPrefillComputeForRun(c, profile) {
+  if (typeof colibriPrefillCompute === 'function') return colibriPrefillCompute(c, profile);
+  const perTokenMs = c.attn + c.layers * (0.39 + Math.ceil(c.active / c.par) * c.ems);
+  return { computeMs: c.prompt * perTokenMs / Math.max(EPS, c.prefillSpeedup || 4.5), perTokenMs, cpuActive: 0, gpuActive: c.active, layer: null };
+}
+
 function causalPrefetchCandidates(c, previousRoute, R) {
   const max = Math.min(c.experts, Math.floor(c.budget / (c.esize * 1.03)));
   if (!c.pf || max <= 0 || c.prefetchPolicy === 'none') return [];
@@ -118,7 +161,7 @@ function causalPrefetchCandidates(c, previousRoute, R) {
   return candidates.slice(0, max);
 }
 
-function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
+function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB, profile = colibriProfileForRun(c)) {
   const prompt = Math.max(0, c.prompt | 0);
   const empty = {
     ms: 0,
@@ -135,7 +178,8 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
     storageEvents: [],
     transferEntries: 0,
     warmedDramEntries: 0,
-    warmedVramEntries: 0
+    warmedVramEntries: 0,
+    computeBreakdown: null
   };
   if (!prompt) return empty;
 
@@ -150,27 +194,42 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
   let storageRequests = 0;
   let transferEntries = 0;
   for (let l = 0; l < c.layers; l++) {
+    if (profile.mode === 'legacy') {
+      let compulsoryStorage = 0;
+      let compulsoryTransfer = 0;
+      for (let e = 0; e < uniquePerLayer; e++) {
+        if (V[l].has(e)) continue;
+        if (c.arch === 'discrete') compulsoryTransfer++;
+        const resident = e < pin || D[l].has(e) || (!c.odirect && P[l].has(e));
+        if (!resident) compulsoryStorage++;
+      }
+      const storageHotEntries = Math.min(uniquePerLayer, Math.max(pin + D[l].cap, pin + P[l].cap, V[l].cap));
+      storageRequests += compulsoryStorage + Math.ceil(repeatedActivationsPerLayer * (1 - zipfTopMass(uniquePerLayer, storageHotEntries)));
+      if (c.arch === 'discrete') {
+        const vramHotEntries = Math.min(uniquePerLayer, V[l].cap);
+        transferEntries += compulsoryTransfer + Math.ceil(repeatedActivationsPerLayer * (1 - zipfTopMass(uniquePerLayer, vramHotEntries)));
+      }
+      continue;
+    }
+
     let compulsoryStorage = 0;
     let compulsoryTransfer = 0;
+    let totalMass = 0;
+    let storageMissMass = 0;
+    let transferMissMass = 0;
     for (let e = 0; e < uniquePerLayer; e++) {
-      if (V[l].has(e)) continue;
-      if (c.arch === 'discrete') compulsoryTransfer++;
-      const resident = e < pin || D[l].has(e) || (!c.odirect && P[l].has(e));
-      if (!resident) compulsoryStorage++;
+      const device = colibriExpertDeviceForRun(profile, l, e, c.seed);
+      const inVram = device === 'gpu' && V[l].has(e);
+      const hostResident = e < pin || D[l].has(e) || (!c.odirect && P[l].has(e));
+      if (!inVram && !hostResident) compulsoryStorage++;
+      if (c.arch === 'discrete' && device === 'gpu' && !inVram) compulsoryTransfer++;
+      const weight = 1 / Math.pow(e + 1, 1.05);
+      totalMass += weight;
+      if (!inVram && !hostResident) storageMissMass += weight;
+      if (c.arch === 'discrete' && device === 'gpu' && !inVram) transferMissMass += weight;
     }
-    const storageHotEntries = Math.min(
-      uniquePerLayer,
-      Math.max(pin + D[l].cap, pin + P[l].cap, V[l].cap)
-    );
-    storageRequests += compulsoryStorage + Math.ceil(
-      repeatedActivationsPerLayer * (1 - zipfTopMass(uniquePerLayer, storageHotEntries))
-    );
-    if (c.arch === 'discrete') {
-      const vramHotEntries = Math.min(uniquePerLayer, V[l].cap);
-      transferEntries += compulsoryTransfer + Math.ceil(
-        repeatedActivationsPerLayer * (1 - zipfTopMass(uniquePerLayer, vramHotEntries))
-      );
-    }
+    storageRequests += compulsoryStorage + Math.ceil(repeatedActivationsPerLayer * storageMissMass / Math.max(EPS, totalMass));
+    transferEntries += compulsoryTransfer + Math.ceil(repeatedActivationsPerLayer * transferMissMass / Math.max(EPS, totalMass));
   }
 
   const storageGB = storageRequests * unitGB;
@@ -180,17 +239,28 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
   const transferMs = c.arch === 'discrete'
     ? transferGB / Math.max(EPS, Math.min(c.pcieBW, c.dramBW)) * 1000
     : 0;
-  const perTokenComputeMs = c.attn + c.layers * (0.39 + Math.ceil(c.active / c.par) * c.ems);
-  const computeMs = prompt * perTokenComputeMs / Math.max(EPS, c.prefillSpeedup || 4.5);
+  const computeBreakdown = colibriPrefillComputeForRun(c, profile);
+  const computeMs = computeBreakdown.computeMs;
 
   const kvPerTokenGB = c.kvKB * 1000 * c.conc / 1e9;
   const initialKvGB = (c.context + prompt) * kvPerTokenGB;
-  const deviceKvCap = c.arch === 'discrete' ? Math.max(0, c.vram - c.vcache - 0.8) : 0;
+  const deviceReserveGB = typeof colibriDeviceReserveGB === 'function' ? colibriDeviceReserveGB(c, profile) : c.arch === 'discrete' ? 0.8 : 0;
+  const deviceKvCap = c.arch === 'discrete' && profile.attentionDevice === 'gpu' ? Math.max(0, c.vram - c.vcache - deviceReserveGB) : 0;
   const hostKvFraction = initialKvGB > EPS ? Math.max(0, initialKvGB - deviceKvCap) / initialKvGB : 0;
   const kvAttentionGB = prompt * (c.context + prompt / 2) * kvPerTokenGB * c.mem.kvTouchFraction;
-  const activeWeightGB = prompt * (c.resident + c.layers * c.active * rawUnitGB);
-  const dramTrafficGB = storageGB +
-    (c.arch === 'unified' ? activeWeightGB + kvAttentionGB : transferGB + kvAttentionGB * hostKvFraction);
+  let dramTrafficGB;
+  if (profile.mode === 'legacy') {
+    const activeWeightGB = prompt * (c.resident + c.layers * c.active * rawUnitGB);
+    dramTrafficGB = storageGB + (c.arch === 'unified' ? activeWeightGB + kvAttentionGB : transferGB + kvAttentionGB * hostKvFraction);
+  } else if (c.arch === 'unified') {
+    const activeWeightGB = prompt * (c.resident + c.layers * c.active * rawUnitGB);
+    dramTrafficGB = storageGB + activeWeightGB + kvAttentionGB;
+  } else {
+    const cpuExpertGB = prompt * c.layers * computeBreakdown.cpuActive * rawUnitGB;
+    const cpuResidentGB = profile.attentionDevice === 'cpu' ? prompt * c.resident : 0;
+    const hostKvGB = profile.attentionDevice === 'cpu' ? kvAttentionGB : kvAttentionGB * hostKvFraction;
+    dramTrafficGB = storageGB + transferGB + cpuExpertGB + cpuResidentGB + hostKvGB;
+  }
   const dramMs = dramTrafficGB / Math.max(EPS, c.dramBW) * 1000;
 
   let warmedDramEntries = 0;
@@ -203,7 +273,8 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
         if (!wasInDram && D[l].has(e)) warmedDramEntries++;
         if (!c.odirect) P[l].put(e);
       }
-      if (c.arch === 'discrete') {
+      const gpuExpert = profile.mode === 'legacy' || colibriExpertDeviceForRun(profile, l, e, c.seed) === 'gpu';
+      if (c.arch === 'discrete' && gpuExpert) {
         const wasInVram = V[l].has(e);
         V[l].put(e);
         if (!wasInVram && V[l].has(e)) warmedVramEntries++;
@@ -226,15 +297,13 @@ function simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB) {
     storageEvents: summarizeStorageEvents(prefillStorage.events),
     transferEntries,
     warmedDramEntries,
-    warmedVramEntries
+    warmedVramEntries,
+    computeBreakdown
   };
 }
 
 function snapshotColibriCaches(groups) {
-  return groups.map(group => group.map(cache => ({
-    entries: [...cache.m.entries()],
-    ev: cache.ev
-  })));
+  return groups.map(group => group.map(cache => ({ entries: [...cache.m.entries()], ev: cache.ev })));
 }
 
 function restoreColibriCaches(groups, snapshot) {
@@ -244,17 +313,13 @@ function restoreColibriCaches(groups, snapshot) {
   }));
 }
 
-function simulateColibri(c = readColibri(), options = {}) {
-  const validation = validateSimulationConfig(c);
+function simulateColibri(input = readColibri(), options = {}) {
+  const validation = validateSimulationConfig(input);
   if (!validation.valid) {
-    return {
-      error: `Invalid configuration: ${formatConfigErrors(validation)}`,
-      validationErrors: validation.errors,
-      c,
-      mode: 'colibri'
-    };
+    return { error: `Invalid configuration: ${formatConfigErrors(validation)}`, validationErrors: validation.errors, c: input, mode: 'colibri' };
   }
-  c = applyColibriPlacement(c);
+  const profile = colibriProfileForRun(input);
+  let c = applyColibriPlacement(input);
   const R = rng(c.seed);
   const unitGB = c.esize * 1.03 / 1000;
   const rawUnitGB = c.esize / 1000;
@@ -263,11 +328,15 @@ function simulateColibri(c = readColibri(), options = {}) {
   const V = Array.from({ length: c.layers }, () => new LRU(cpl(c.vcache, c)));
   const D = Array.from({ length: c.layers }, () => new LRU(cpl(c.dcache, c)));
   const P = Array.from({ length: c.layers }, () => new LRU(c.odirect ? 0 : cpl(c.page, c)));
-  for (const [caches, snapshots] of [[V, options.cacheState?.v], [D, options.cacheState?.d], [P, options.cacheState?.p]]) {
+  for (const [tier, caches, snapshots] of [['v', V, options.cacheState?.v], ['d', D, options.cacheState?.d], ['p', P, options.cacheState?.p]]) {
     if (!Array.isArray(snapshots)) continue;
     for (let layer = 0; layer < Math.min(caches.length, snapshots.length); layer++) {
       if (!Array.isArray(snapshots[layer])) continue;
-      for (const expert of snapshots[layer]) if (Number.isSafeInteger(expert) && expert >= 0 && expert < c.experts) caches[layer].put(expert);
+      for (const expert of snapshots[layer]) {
+        if (!Number.isSafeInteger(expert) || expert < 0 || expert >= c.experts) continue;
+        if (tier === 'v' && profile.mode !== 'legacy' && colibriExpertDeviceForRun(profile, layer, expert, c.seed) !== 'gpu') continue;
+        caches[layer].put(expert);
+      }
     }
   }
   const pin = Math.min(c.experts, cpl(c.pinned, c));
@@ -279,18 +348,21 @@ function simulateColibri(c = readColibri(), options = {}) {
   const tokens = [];
   const kvPerTokenGB = c.kvKB * 1000 * c.conc / 1e9;
   const initialKvGB = (c.context + c.prompt) * kvPerTokenGB;
-  const deviceKvCap = c.arch === 'discrete' ? Math.max(0, c.vram - c.vcache - 0.8) : 0;
+  const deviceReserveGB = typeof colibriDeviceReserveGB === 'function' ? colibriDeviceReserveGB(c, profile) : c.arch === 'discrete' ? 0.8 : 0;
+  const deviceKvCap = c.arch === 'discrete' && profile.attentionDevice === 'gpu' ? Math.max(0, c.vram - c.vcache - deviceReserveGB) : 0;
   const state = createMemoryState(c, 'colibri', initialKvGB, deviceKvCap);
-  const tot = { act: 0, v: 0, d: 0, p: 0, pin: 0, vPromotions: 0, demandGB: 0, pfGB: 0, pfIssued: 0, pfUseful: 0, pfEvicted: 0, pfLate: 0, pcieGB: 0, stall: 0, swapExpertInGB: 0 };
+  const tot = { act: 0, cpuAct: 0, gpuAct: 0, v: 0, d: 0, p: 0, pin: 0, vPromotions: 0, demandGB: 0, pfGB: 0, pfIssued: 0, pfUseful: 0, pfEvicted: 0, pfLate: 0, pcieGB: 0, stall: 0, swapExpertInGB: 0 };
 
   if (!c.cold) {
     for (let l = 0; l < c.layers; l++) {
-      for (let e = 0; e < Math.min(c.experts, cpl(c.vcache, c)); e++) V[l].put(e);
+      for (let e = 0; e < Math.min(c.experts, cpl(c.vcache, c)); e++) {
+        if (profile.mode === 'legacy' || colibriExpertDeviceForRun(profile, l, e, c.seed) === 'gpu') V[l].put(e);
+      }
       for (let e = pin; e < Math.min(c.experts, pin + cpl(c.dcache, c)); e++) D[l].put(e);
     }
   }
 
-  const prefillBreakdown = simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB);
+  const prefillBreakdown = simulateColibriPrefill(c, V, D, P, pin, unitGB, rawUnitGB, profile);
   let now = prefillBreakdown.ms;
   const initialDyn = colibriDynamic(c, state, V, D, P, unitGB);
   state.peakAllocationDemandGB = Math.max(state.peakAllocationDemandGB, initialDyn.physicalGB);
@@ -338,8 +410,9 @@ function simulateColibri(c = readColibri(), options = {}) {
     const ts = now;
     const storageEventStart = storage.events.length;
     let tokenSSDGB = 0, tokenDemandGB = 0, tokenPrefetchGB = 0, tokenPcieGB = 0, tokenComputeMs = 0, tokenStorageRequests = 0, tokenDemandRequests = 0, tokenPrefetchRequests = 0, hits = 0, tokenSwapInGB = 0;
-    let tokenCompressionTrafficGB = 0, tokenCompressionCpuMs = 0;
+    let tokenCompressionTrafficGB = 0, tokenCompressionCpuMs = 0, tokenPressureCompressionCpuMs = 0;
     let tokenStorageServiceMs = 0, tokenStorageQueueMs = 0, tokenSwapServiceMs = 0, tokenSwapQueueMs = 0;
+    let tokenLayerDramTrafficGB = 0, tokenLayerDramStallMs = 0, tokenCpuActive = 0, tokenGpuActive = 0, tokenCpuExpertMs = 0, tokenGpuExpertMs = 0;
 
     completePendingSwapOuts(state, now);
     const tokenTransaction = {
@@ -362,7 +435,9 @@ function simulateColibri(c = readColibri(), options = {}) {
     tokenSwapServiceMs += touch.storageServiceMs;
     tokenSwapQueueMs += touch.storageQueueMs;
     tokenCompressionTrafficGB += touch.compressionTrafficGB;
+    tokenCompressionCpuMs += touch.compressionCpuMs;
 
+    const tokenKvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
     const previousRoutes = last.map(route => route.slice());
     const routes = [];
     for (let l = 0; l < c.layers; l++) {
@@ -374,10 +449,7 @@ function simulateColibri(c = readColibri(), options = {}) {
       const sparseDrawLimit = Math.max(32, c.active * 8);
       while (!denseRoute && a.length < c.active && guard++ < sparseDrawLimit) {
         const e = zipfPick(R, routeZipfCDF);
-        if (!selected.has(e)) {
-          selected.add(e);
-          a.push(e);
-        }
+        if (!selected.has(e)) { selected.add(e); a.push(e); }
       }
       if (a.length < c.active) fillZipfWithoutReplacement(a, selected, R, routeZipfWeights, c.active);
       routes.push(a);
@@ -388,21 +460,28 @@ function simulateColibri(c = readColibri(), options = {}) {
       const start = now;
       flush(start);
       const misses = [];
-      const hostSources = [];
-      let hostN = 0, readyAt = start;
+      const gpuHostSources = [];
+      let readyAt = start;
+      const split = colibriRouteSplitForRun(routes[l], l, profile, c.seed);
+      tokenCpuActive += split.cpuActive;
+      tokenGpuActive += split.gpuActive;
+      tot.cpuAct += split.cpuActive;
+      tot.gpuAct += split.gpuActive;
+
       for (const e of routes[l]) {
         tot.act++;
+        const device = colibriExpertDeviceForRun(profile, l, e, c.seed);
+        const gpuExpert = device === 'gpu';
         const k = key(l, e);
-        if (V[l].get(e)) {
-          tot.v++; hits++;
-          ready.delete(k);
+        if (gpuExpert && V[l].get(e)) {
+          tot.v++; hits++; ready.delete(k);
         } else if (e < pin) {
-          tot.pin++; hits++; hostN++; hostSources.push(e);
+          tot.pin++; hits++; if (gpuExpert) gpuHostSources.push(e);
         } else if (D[l].get(e)) {
-          tot.d++; hits++; hostN++; hostSources.push(e);
+          tot.d++; hits++; if (gpuExpert) gpuHostSources.push(e);
           if (ready.delete(k)) tot.pfUseful++;
         } else if (!c.odirect && P[l].get(e)) {
-          tot.p++; hits++; hostN++; hostSources.push(e);
+          tot.p++; hits++; if (gpuExpert) gpuHostSources.push(e);
           const evicted = D[l].put(e);
           pruneReady(l, evicted);
           if (ready.delete(k)) tot.pfUseful++;
@@ -419,7 +498,7 @@ function simulateColibri(c = readColibri(), options = {}) {
           state.totalSwapInGB += unitGB;
           tokenSwapInGB += unitGB;
           tot.swapExpertInGB += unitGB;
-          hostN++; hostSources.push(e);
+          if (gpuExpert) gpuHostSources.push(e);
           const evicted = D[l].put(e);
           pruneReady(l, evicted);
         } else if (pending.has(k)) {
@@ -429,10 +508,10 @@ function simulateColibri(c = readColibri(), options = {}) {
           readyAt = Math.max(readyAt, x.end);
           flush(readyAt);
           ready.delete(k);
-          hostN++; hostSources.push(e);
+          if (gpuExpert) gpuHostSources.push(e);
         } else {
           misses.push(e);
-          hostN++; hostSources.push(e);
+          if (gpuExpert) gpuHostSources.push(e);
         }
       }
 
@@ -447,46 +526,25 @@ function simulateColibri(c = readColibri(), options = {}) {
       tokenSSDGB += dj.gb;
       tokenDemandGB += dj.gb;
 
-      const hostGB = hostN * unitGB;
+      const hostGB = gpuHostSources.length * unitGB;
       const lj = link.reserveGB(hostGB, readyAt);
       tokenPcieGB += lj.gb;
       tot.pcieGB += lj.gb;
 
-      const fixed = c.attn / c.layers + 0.39;
-      const waves = Math.ceil(c.active / c.par);
-      const compute = waves * c.ems;
-      tokenComputeMs += fixed + compute;
-      const overlap = (fixed + compute * 0.55) * 0.58;
-      const exposed = Math.max(0, lj.end - start - overlap);
-      now = start + fixed + compute + exposed;
-      tot.stall += exposed;
-
-      for (const e of misses) {
-        const dEvicted = D[l].put(e);
-        const pEvicted = c.odirect ? null : P[l].put(e);
-        pruneReady(l, dEvicted);
-        pruneReady(l, pEvicted);
-      }
-      if (c.arch === 'discrete' && lj.end <= now) {
-        for (const e of hostSources) {
-          const wasInVram = V[l].has(e);
-          V[l].put(e);
-          if (!wasInVram && V[l].has(e)) tot.vPromotions++;
-        }
-      }
-
+      let layerPrefetchGB = 0;
       if (c.pf && l + 1 < c.layers) {
         const candidates = causalPrefetchCandidates(c, previousRoutes[l + 1], R);
-        const filtered = candidates.filter(e =>
-          e >= pin &&
-          !V[l + 1].has(e) &&
-          !D[l + 1].has(e) &&
-          (c.odirect || !P[l + 1].has(e)) &&
-          !pending.has(key(l + 1, e)) &&
-          !state.swappedExperts.has(key(l + 1, e))
-        );
-        const pfGB = filtered.length * unitGB;
-        const pj = storage.reserveGB(pfGB, start, 'expert-prefetch-read', Math.max(1, filtered.length), 1);
+        const filtered = candidates.filter(e => {
+          const gpuExpert = colibriExpertDeviceForRun(profile, l + 1, e, c.seed) === 'gpu';
+          return e >= pin &&
+            (!gpuExpert || !V[l + 1].has(e)) &&
+            !D[l + 1].has(e) &&
+            (c.odirect || !P[l + 1].has(e)) &&
+            !pending.has(key(l + 1, e)) &&
+            !state.swappedExperts.has(key(l + 1, e));
+        });
+        layerPrefetchGB = filtered.length * unitGB;
+        const pj = storage.reserveGB(layerPrefetchGB, start, 'expert-prefetch-read', Math.max(1, filtered.length), 1);
         tokenStorageServiceMs += pj.service;
         tokenStorageQueueMs += pj.wait;
         tokenStorageRequests += filtered.length;
@@ -496,6 +554,47 @@ function simulateColibri(c = readColibri(), options = {}) {
         tot.pfGB += pj.gb;
         tokenSSDGB += pj.gb;
         tokenPrefetchGB += pj.gb;
+      }
+
+      const layerCompute = colibriLayerComputeForRun(c, profile, split.cpuActive, split.gpuActive, false);
+      tokenComputeMs += layerCompute.totalMs;
+      tokenCpuExpertMs += layerCompute.cpuExpertMs;
+      tokenGpuExpertMs += layerCompute.gpuExpertMs;
+      const overlap = (layerCompute.attentionMs + layerCompute.runtimeMs + layerCompute.exposedExpertMs * 0.55) * 0.58;
+      const exposed = Math.max(0, lj.end - start - overlap);
+      const baseLayerElapsed = layerCompute.totalMs + exposed;
+      let layerDramStallMs = 0;
+      if (profile.mode === 'legacy') {
+        now = start + baseLayerElapsed;
+      } else {
+        const layerAttentionGB = c.arch === 'unified'
+          ? (c.resident + tokenKvTouchGB) / c.layers
+          : profile.attentionDevice === 'cpu'
+            ? (c.resident + tokenKvTouchGB) / c.layers
+            : tokenKvTouchGB / c.layers;
+        const layerActiveWeightGB = c.arch === 'unified' ? c.active * rawUnitGB : split.cpuActive * rawUnitGB;
+        const layerDramGB = demandGB + layerPrefetchGB + lj.gb + layerAttentionGB + layerActiveWeightGB;
+        const layerDramFloorMs = layerDramGB / Math.max(EPS, c.dramBW) * 1000;
+        const layerElapsed = Math.max(baseLayerElapsed, layerDramFloorMs);
+        layerDramStallMs = Math.max(0, layerElapsed - baseLayerElapsed);
+        tokenLayerDramTrafficGB += layerDramGB;
+        tokenLayerDramStallMs += layerDramStallMs;
+        now = start + layerElapsed;
+      }
+      tot.stall += exposed + layerDramStallMs;
+
+      for (const e of misses) {
+        const dEvicted = D[l].put(e);
+        const pEvicted = c.odirect ? null : P[l].put(e);
+        pruneReady(l, dEvicted);
+        pruneReady(l, pEvicted);
+      }
+      if (c.arch === 'discrete' && lj.end <= now) {
+        for (const e of gpuHostSources) {
+          const wasInVram = V[l].has(e);
+          V[l].put(e);
+          if (!wasInVram && V[l].has(e)) tot.vPromotions++;
+        }
       }
     }
 
@@ -518,12 +617,11 @@ function simulateColibri(c = readColibri(), options = {}) {
     now = Math.max(now, swapSchedule.blockedUntil);
     tokenCompressionTrafficGB += pressure.compressionTrafficGB;
     tokenCompressionCpuMs += pressure.compressionCpuMs;
+    tokenPressureCompressionCpuMs += pressure.compressionCpuMs;
 
     const dyn = pressure.dyn;
     if (c.arch === 'discrete' && dyn.deviceGB > c.vram + EPS) {
-      pressure.state = 'OOM';
-      pressure.oom = true;
-      state.oom = true;
+      pressure.state = 'OOM'; pressure.oom = true; state.oom = true;
     }
     if (pressure.oom) {
       const allocationDemandGB = state.peakAllocationDemandGB;
@@ -544,19 +642,30 @@ function simulateColibri(c = readColibri(), options = {}) {
       now = tokenTransaction.now;
       break;
     }
-    const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
-    const loadWriteGB = tokenSSDGB;
+
     const swapTrafficGB = tokenSwapInGB + pressure.swapOutGB;
-    const activeWeightGB = c.arch === 'unified' ? c.layers * c.active * rawUnitGB + c.resident : tokenPcieGB;
-    const dramTrafficGB = activeWeightGB + kvTouchGB + loadWriteGB + swapTrafficGB + tokenCompressionTrafficGB;
-    const baseElapsed = now - ts + tokenCompressionCpuMs;
-    const dramFloorMs = dramTrafficGB / c.dramBW * 1000;
-    const finalElapsed = Math.max(baseElapsed, dramFloorMs);
-    const dramStallMs = Math.max(0, finalElapsed - baseElapsed);
-    now = ts + finalElapsed;
+    let dramTrafficGB;
+    let baseElapsed = now - ts + tokenPressureCompressionCpuMs;
+    let dramStallMs;
+    if (profile.mode === 'legacy') {
+      const kvTouchGB = (state.kvUncompressedGB + state.kvCompressedOriginalGB) * c.mem.kvTouchFraction;
+      const loadWriteGB = tokenSSDGB;
+      const activeWeightGB = c.arch === 'unified' ? c.layers * c.active * rawUnitGB + c.resident : tokenPcieGB;
+      dramTrafficGB = activeWeightGB + kvTouchGB + loadWriteGB + swapTrafficGB + tokenCompressionTrafficGB;
+      const dramFloorMs = dramTrafficGB / c.dramBW * 1000;
+      const finalElapsedLegacy = Math.max(baseElapsed, dramFloorMs);
+      dramStallMs = Math.max(0, finalElapsedLegacy - baseElapsed);
+      now = ts + finalElapsedLegacy;
+    } else {
+      dramTrafficGB = tokenLayerDramTrafficGB + swapTrafficGB + tokenCompressionTrafficGB;
+      const dramFloorMs = dramTrafficGB / Math.max(EPS, c.dramBW) * 1000;
+      const finalElapsedCalibrated = Math.max(baseElapsed, dramFloorMs);
+      dramStallMs = tokenLayerDramStallMs + Math.max(0, finalElapsedCalibrated - baseElapsed);
+      now = ts + finalElapsedCalibrated;
+    }
+    const finalElapsed = now - ts;
     completePendingSwapOuts(state, now);
     const snapshotDyn = colibriDynamic(c, state, V, D, P, unitGB);
-
     const dramGBs = dramTrafficGB / Math.max(EPS, finalElapsed / 1000);
     state.peakDramGBs = Math.max(state.peakDramGBs, dramGBs);
     state.totalDramTrafficGB += dramTrafficGB;
@@ -578,7 +687,19 @@ function simulateColibri(c = readColibri(), options = {}) {
       prefetchGB: tokenPrefetchGB,
       pcieGB: tokenPcieGB,
       computeMs: tokenComputeMs + tokenCompressionCpuMs,
+      computeOnlyMs: tokenComputeMs,
       memoryCpuMs: tokenCompressionCpuMs,
+      computeBreakdown: {
+        schema: profile.schema || 'legacy',
+        attentionDevice: profile.attentionDevice,
+        expertDevice: profile.expertDevice,
+        cpuActiveExperts: tokenCpuActive,
+        gpuActiveExperts: tokenGpuActive,
+        cpuExpertMs: tokenCpuExpertMs,
+        gpuExpertMs: tokenGpuExpertMs,
+        exposedComputeMs: tokenComputeMs,
+        attentionMs: profile.mode === 'legacy' ? c.attn : profile.effectiveAttentionMs
+      },
       storageServiceMs: tokenStorageServiceMs,
       storageQueueMs: tokenStorageQueueMs,
       swapServiceMs: tokenSwapServiceMs,
@@ -594,7 +715,6 @@ function simulateColibri(c = readColibri(), options = {}) {
       memory: snap
     });
     storage.events.length = storageEventStart;
-
   }
 
   if (!tokens.length) return { error: state.oom ? 'Memory pressure OOM before any decode token completed.' : 'No token completed.', c, mode: 'colibri', state, tokens, oom: state.oom };
@@ -617,10 +737,14 @@ function simulateColibri(c = readColibri(), options = {}) {
   const decodeStorageElapsedMs = Math.max(decodeMs, storage.free - predecodeReadyMs);
   const observed = decodeStorageGB / Math.max(EPS, decodeStorageElapsedMs / 1000);
   const ev = V.reduce((a, x) => a + x.ev, 0) + D.reduce((a, x) => a + x.ev, 0) + P.reduce((a, x) => a + x.ev, 0);
+  const actualCpuExpertFraction = tot.act ? tot.cpuAct / tot.act : profile.targetCpuExpertFraction || 0;
+  const computeProfile = profile.mode === 'legacy' ? profile : { ...profile, actualCpuExpertFraction, actualGpuExpertFraction: 1 - actualCpuExpertFraction };
   return {
     mode: 'colibri', c, tokens, tot, state, avg, tps, ssdPt, startupStorageGB, decodeStorageGB, hit, prefill, prefillBreakdown, prefillStorageEvents, ttft, agg,
     ssdBound, pcieBound, dramBound, observed, ssdBusy: storage.busy, ssdQueue: storage.queue,
     storageByKind: storage.byKind,
+    computeProfile,
+    quantizationProfile: profile.quantization,
     initialCompressionCpuMs: initialPressure.compressionCpuMs,
     initialSwapServiceMs: initialSwap.job?.service || 0,
     initialSwapQueueMs: initialSwap.job?.wait || 0,
