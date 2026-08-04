@@ -64,7 +64,21 @@ function readCommon() {
   };
 }
 
-function colibriCapacity(c) {
+function colibriDeviceProfileFor(c) {
+  if (typeof deriveColibriDeviceProfile === 'function') return deriveColibriDeviceProfile(c);
+  return {
+    mode: 'legacy', attentionDevice: 'gpu', expertDevice: 'gpu', usesGpu: true,
+    quantization: { effectiveExpertMB: c.esize }
+  };
+}
+
+function colibriEffectiveExpertMB(c) {
+  return colibriDeviceProfileFor(c).quantization.effectiveExpertMB;
+}
+
+function colibriCapacity(input) {
+  const effectiveExpertMB = colibriEffectiveExpertMB(input);
+  const c = { ...input, esize: effectiveExpertMB };
   const expertPoolGB = Math.max(0, c.layers * c.experts * c.esize * 1.03 / 1000);
   const pinnedExpertsPerLayer = Math.min(
     c.experts,
@@ -75,12 +89,14 @@ function colibriCapacity(c) {
     c.layers * (c.experts - pinnedExpertsPerLayer) * c.esize * 1.03 / 1000
   );
   const anticipatedKvGB = Math.max(0, (c.context + c.prompt + c.output) * c.kvKB * 1000 * c.conc / 1e9);
-  return { expertPoolGB, hostExpertPoolGB, pinnedExpertsPerLayer, anticipatedKvGB };
+  return { expertPoolGB, hostExpertPoolGB, pinnedExpertsPerLayer, anticipatedKvGB, effectiveExpertMB };
 }
 
 function applyColibriPlacement(input) {
-  const c = { ...input };
-  const { expertPoolGB, hostExpertPoolGB, pinnedExpertsPerLayer, anticipatedKvGB } = colibriCapacity(c);
+  const profile = colibriDeviceProfileFor(input);
+  const capacity = colibriCapacity(input);
+  const c = { ...input, esize: capacity.effectiveExpertMB };
+  const { expertPoolGB, hostExpertPoolGB, pinnedExpertsPerLayer, anticipatedKvGB } = capacity;
   if (c.placement !== 'auto') {
     c.placement = 'manual';
     c.placementInfo = {
@@ -95,11 +111,15 @@ function applyColibriPlacement(input) {
     return c;
   }
 
-  const deviceReserveGB = c.arch === 'discrete' ? 0.8 : 0;
+  const deviceReserveGB = typeof colibriDeviceReserveGB === 'function'
+    ? colibriDeviceReserveGB(c, profile)
+    : c.arch === 'discrete' ? 0.8 : 0;
   const deviceBudgetGB = Math.max(0, c.vram - deviceReserveGB);
-  const deviceKvGB = c.arch === 'discrete' ? Math.min(anticipatedKvGB, deviceBudgetGB) : 0;
+  const deviceKvGB = c.arch === 'discrete' && profile.attentionDevice === 'gpu'
+    ? Math.min(anticipatedKvGB, deviceBudgetGB)
+    : 0;
   const hostKvGB = anticipatedKvGB - deviceKvGB;
-  const vcacheGB = c.arch === 'discrete'
+  const vcacheGB = c.arch === 'discrete' && profile.usesGpu
     ? Math.min(expertPoolGB, Math.max(0, deviceBudgetGB - deviceKvGB))
     : 0;
   const placementTargetRatio = c.mem.policy === 'strict' ? c.mem.hard : c.mem.soft;
@@ -231,8 +251,9 @@ function afmDerived(c) {
   return { expertParams, rawExpertGB, expertGB, sharedGB, routedGB, activeGB: sharedGB + routedGB, activeFFNParams, totalNandGB };
 }
 
-function colibriSimulationWork(c) {
-  if (!c || c.mode !== 'colibri') return { routeWork: 0, cacheWork: 0, routeLimit: 100_000_000, cacheLimit: 20_000_000, replayWork: 0, fraction: 0 };
+function colibriSimulationWork(input) {
+  if (!input || input.mode !== 'colibri') return { routeWork: 0, cacheWork: 0, routeLimit: 100_000_000, cacheLimit: 20_000_000, replayWork: 0, fraction: 0 };
+  const c = { ...input, esize: colibriEffectiveExpertMB(input) };
   const repeatedTraceCount = c.conc > 1 ? c.conc + 1 : 1;
   const routeCount = c.layers * c.output * repeatedTraceCount;
   const routeSearchCost = Math.max(1, Math.ceil(Math.log2(c.experts + 1)));
@@ -335,11 +356,24 @@ function validateSimulationConfig(c) {
     finite('recall', c.recall, 0, 1);
     finite('precision', c.precision, 0.001, 1);
     finite('budget', c.budget, 0, 1_000_000);
+    if (typeof validateDeviceComputeConfig === 'function') {
+      const deviceValidation = validateDeviceComputeConfig(c);
+      for (const error of deviceValidation.errors) add(error.path, error.code, error.message);
+      try {
+        finite('quantization.effectiveExpertMB', colibriEffectiveExpertMB(c), 0.001, 1_000_000);
+      } catch (error) {
+        add('quantization', 'NORMALIZATION_ERROR', String(error?.message || error));
+      }
+    }
     if (c.placement === 'manual' && Number.isFinite(c.minDCache) && Number.isFinite(c.dcache) && c.minDCache > c.dcache) {
       add('minDCache', 'CAPACITY_EXCEEDED', 'minDCache cannot exceed dcache.');
     }
-    if (c.arch === 'discrete' && c.placement === 'manual' && Number.isFinite(c.vcache) && Number.isFinite(c.vram) && c.vcache + 0.8 > c.vram + EPS) {
-      add('vcache', 'CAPACITY_EXCEEDED', 'Manual VRAM Expert cache plus the 0.8GB device reserve cannot exceed physical VRAM.');
+    const profile = colibriDeviceProfileFor(c);
+    const deviceReserveGB = typeof colibriDeviceReserveGB === 'function'
+      ? colibriDeviceReserveGB(c, profile)
+      : c.arch === 'discrete' ? 0.8 : 0;
+    if (c.arch === 'discrete' && c.placement === 'manual' && Number.isFinite(c.vcache) && Number.isFinite(c.vram) && c.vcache + deviceReserveGB > c.vram + EPS) {
+      add('vcache', 'CAPACITY_EXCEEDED', 'Manual VRAM Expert cache plus the device runtime reserve cannot exceed physical VRAM.');
     }
     const work = colibriSimulationWork(c);
     if (!Number.isFinite(work.routeWork) || !Number.isFinite(work.cacheWork) || work.routeWork > work.routeLimit || work.cacheWork > work.cacheLimit) {
