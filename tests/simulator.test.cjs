@@ -843,6 +843,45 @@ test('P0: concurrent artifact summary uses scheduler KPI populations', () => {
   assert.equal(artifact.result.storagePerTokenGB, schedulerStorageGB / result.serving.completedTokens);
 });
 
+test('P0: direct serving fails closed when a request trace reaches OOM before its requested output', () => {
+  const c = colibriConfig({
+    host: 8, arch: 'unified', vram: 0, placement: 'manual', pinned: 0,
+    dcache: 0, minDCache: 0, vcache: 0, page: 0, resident: 0,
+    experts: 2, active: 1, layers: 1, esize: 1, prompt: 0,
+    conc: 1, context: 1, output: 8, kvKB: 1_000_000,
+    mem: memoryPolicy({ policy: 'strict', osReservedGB: 0, minHeadroomGB: 0, hard: 0.99,
+      compressionEnabled: false, swapEnabled: false })
+  });
+  const trace = simulator.simulateColibri(c);
+  const serving = simulator.simulateServing(c, [{ id: 'partial-oom', arrivalMs: 0, output: 8 }]);
+
+  assert.equal(trace.oom, true);
+  assert.ok(trace.tokens.length > 0 && trace.tokens.length < 8, `completed=${trace.tokens.length}`);
+  assert.equal(serving.oom, true);
+  assert.equal(serving.completedTokens, trace.tokens.length);
+  assert.match(serving.error || '', /OOM.*completing 8 output tokens/i);
+  assert.equal(serving.throughputTPS, undefined);
+  assert.equal(serving.requests, undefined);
+});
+
+test('P0: custom-request partial OOM cannot be replaced by a successful default-request artifact', () => {
+  const c = colibriConfig({
+    host: 8, arch: 'unified', vram: 0, placement: 'manual', pinned: 0,
+    dcache: 0, minDCache: 0, vcache: 0, page: 0, resident: 0,
+    experts: 2, active: 1, layers: 1, esize: 1, prompt: 0,
+    conc: 1, context: 1, output: 2, kvKB: 1_000_000,
+    mem: memoryPolicy({ policy: 'strict', osReservedGB: 0, minHeadroomGB: 0, hard: 0.99,
+      compressionEnabled: false, swapEnabled: false })
+  });
+  const requests = [{ id: 'custom-eight', arrivalMs: 0, output: 8 }];
+  const result = simulator.runSimulationConfig(c, {}, requests);
+
+  assert.equal(result.oom, true);
+  assert.match(result.error || '', /OOM.*completing 8 output tokens/i);
+  assert.equal(result.serving, undefined);
+  assert.throws(() => simulator.createScenarioArtifact(c, result), /OOM.*cannot be exported/i);
+});
+
 test('P0: partial OOM results cannot be exported as mixed-population artifacts', () => {
   const c = colibriConfig({
     host: 8, arch: 'unified', vram: 0, placement: 'manual', pinned: 0,

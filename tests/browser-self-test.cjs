@@ -775,6 +775,12 @@ test('P1: design polish prioritizes mobile results and progressively discloses d
   assert.match(fs.readFileSync(path.join(root, 'render.js'), 'utf8'), /context\.font = '11px sans-serif'/);
 });
 
+test('P0: shared SSD queue wait is labeled as the accumulated job-wait population', () => {
+  const renderSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
+  assert.equal((renderSource.match(/공유 SSD 누적 큐 대기 \(작업 합계\)/g) || []).length, 2);
+  assert.equal((renderSource.match(/\['공유 SSD 큐 대기'/g) || []).length, 0);
+});
+
 test('P1: result sections follow KPI, simulation, Storage I/O, insight, graph, advisor, validation, summary order', () => {
   assert.match(tokenIOSource, /const orderedSections = \[panel, resultVisuals, advisor\]\.filter\(Boolean\)/);
   assert.match(tokenIOSource, /const currentTail = Array\.from\(resultHero\.children\)\.slice\(-orderedSections\.length\)/);
