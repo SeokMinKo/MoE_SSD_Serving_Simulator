@@ -396,15 +396,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .actionToolbar button { min-height: 44px; white-space: nowrap; }
   main { display: flex; flex-direction: column; gap: 12px; }
   .resultHero { display: contents; }
-  .resultHero > .kpis { order: 0; }
-  main > .resultVisuals { order: 1; }
-  .resultHero > .advisor { order: 2; }
-  .resultHero > .token { order: 3; }
-  .resultHero > .tokenIOPlayback { order: 4; }
-  .resultHero > .bar { order: 5; }
-  .resultHero > .status { order: 6; }
-  main > .guidedAnalysis { order: 7; }
-  main > .rows { order: 8; margin-top: 0; }
+  main > .rows { margin-top: 0; }
   .advisor { padding: 12px; }
   .advisorDetails > summary { min-height: 44px; padding-block: 8px; }
   .advisorGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -531,15 +523,9 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   main { display: flex; flex-direction: column; gap: 12px; }
   body:not(.hasResults) main > .rows { display: none; }
   .hasResults .resultHero { display: contents; }
-  .hasResults .resultHero > .kpis { order: 0; }
-  .hasResults main > .resultVisuals { order: 1; }
-  .hasResults .resultHero > .advisor { order: 2; margin: 0; }
-  .hasResults .resultHero > .tokenIOPlayback { order: 3; margin: 0; }
-  .hasResults .resultHero > .token { order: 4; }
-  .hasResults .resultHero > .bar { order: 5; }
-  .hasResults .resultHero > .status { order: 6; }
-  .hasResults main > .guidedAnalysis { order: 7; }
-  .hasResults main > .rows { order: 8; margin-top: 0; }
+  .hasResults .resultHero > .tokenIOPlayback,
+  .hasResults .resultHero > .advisor { margin: 0; }
+  .hasResults main > .rows { margin-top: 0; }
   .sweepSetup { align-items: start; }
   .advisorGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0; background: transparent; overflow: visible; }
   .phaseCard { border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); }

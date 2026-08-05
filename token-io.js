@@ -215,19 +215,29 @@
       <div id="tokenIOLiveStatus" class="srOnly" role="status" aria-live="polite" aria-atomic="true"></div>`;
   }
 
+  function arrangeResultSections(documentObject, resultHero, panel) {
+    resultHero.appendChild(panel);
+    const resultVisuals = documentObject.getElementById('resultVisuals');
+    if (resultVisuals) resultHero.appendChild(resultVisuals);
+    const advisor = documentObject.getElementById('advisor');
+    if (advisor) resultHero.appendChild(advisor);
+  }
+
   function ensurePanel(documentObject) {
     if (!documentObject) return null;
     let panel = documentObject.getElementById('tokenIOPlaybackPanel');
-    if (panel) return panel;
     const resultHero = documentObject.querySelector('.resultHero');
     if (!resultHero) return null;
+    if (panel) {
+      arrangeResultSections(documentObject, resultHero, panel);
+      return panel;
+    }
     panel = documentObject.createElement('section');
     panel.id = 'tokenIOPlaybackPanel';
     panel.className = 'tokenIOPlayback';
     panel.setAttribute('aria-labelledby', 'tokenIOPlaybackTitle');
     panel.innerHTML = panelMarkup();
-    const progress = resultHero.querySelector('.bar');
-    resultHero.insertBefore(panel, progress || null);
+    arrangeResultSections(documentObject, resultHero, panel);
     bindPanelEvents(panel);
     return panel;
   }
