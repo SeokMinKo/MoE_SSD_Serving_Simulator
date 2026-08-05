@@ -303,6 +303,7 @@ test('P1: Storage I/O copy distinguishes per-token average from cumulative popul
   })()`, sandbox);
 
   assert.equal(result.label, '디코드 토큰당 평균 Storage I/O');
+  assert.equal(result.outputTokens, 64);
   assert.match(moduleSource, /\$\('ssdpt'\)\.textContent = [^;]*fmt\(r\.ssdPt, 2\)[^;]*GB/);
   assert.ok(Math.abs(result.decodeTotal - result.perToken * result.outputTokens) < 1e-9);
   assert.ok(Math.abs(result.tokenTotal - result.decodeTotal) < 1e-9);
