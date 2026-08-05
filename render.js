@@ -145,7 +145,7 @@ function renderPressure(r) {
 function renderColibri(r) {
   $('tpotLabel').textContent = '평균 TPOT';
   $('tpsLabel').textContent = '전체 TPS';
-  $('storageLabel').textContent = '토큰당 스토리지';
+  $('storageLabel').textContent = '디코드 토큰당 평균 Storage I/O';
   $('hitLabel').textContent = '캐시 적중률';
   const prefillPaths = {
     Compute: r.prefillBreakdown.computeMs,
@@ -169,6 +169,9 @@ function renderColibri(r) {
     ['SSD / PCIe / DRAM 병목 상한', `${fmt(r.ssdBound, 2)} / ${Number.isFinite(r.pcieBound) ? fmt(r.pcieBound, 2) : 'N/A'} / ${fmt(r.dramBound, 2)}`],
     ['스토리지 관측/설정 대역폭', `${fmt(r.observed, 2)} / ${fmt(r.c.ssdBW, 2)} GB/s`],
     ['스토리지 사용/큐 대기', `${ms(r.ssdBusy)} / ${ms(r.ssdQueue)}`],
+    ['디코드 누적 Storage I/O', `${fmt(r.decodeStorageGB, 2)} GB (${r.tokens.length}토큰 합계)`],
+    ['시작·프리필 Storage I/O', `${fmt(r.startupStorageGB, 2)} GB`],
+    ['실행 전체 누적 Storage I/O', `${fmt(r.startupStorageGB + r.decodeStorageGB, 2)} GB`],
     ['Expert 요청 / 프리페치', `${fmt(r.storageByKind['expert-demand-read'] || 0, 2)} / ${fmt(r.storageByKind['expert-prefetch-read'] || 0, 2)} GB`],
     ['스왑 읽기 / 쓰기', `${fmt(r.storageByKind['swap-in-read'] || 0, 2)} / ${fmt(r.storageByKind['swap-out-write'] || 0, 2)} GB`],
     ['프리페치 유효/낭비/지연', `${r.tot.pfUseful} / ${r.tot.pfWasted} / ${r.tot.pfLate}`],

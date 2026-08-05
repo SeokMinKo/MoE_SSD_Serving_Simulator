@@ -52,9 +52,11 @@ test('P95 scale prevents one extreme token from flattening the full chart', () =
 
 test('token I/O panel uses Korean-first lifecycle copy while retaining technical terms', () => {
   assert.match(tokenIOSource, /실시간 스토리지 추적/);
-  assert.match(tokenIOSource, /디코드\(Decode\) 토큰마다/);
+  assert.match(tokenIOSource, /디코드\(Decode\) 토큰별로/);
   assert.match(tokenIOSource, /0 \/ 0 토큰/);
   assert.doesNotMatch(tokenIOSource, /LIVE STORAGE TRACE|0 \/ 0 tokens/);
+  assert.match(tokenIOSource, /전체 토큰 범위 · 토큰당 평균 집계/);
+  assert.doesNotMatch(tokenIOSource, /전체 · 자동 집계/);
 });
 
 test('result section arrangement is interaction-idempotent when DOM order is already correct', () => {
