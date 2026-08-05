@@ -57,6 +57,36 @@ test('token I/O panel uses Korean-first lifecycle copy while retaining technical
   assert.doesNotMatch(tokenIOSource, /LIVE STORAGE TRACE|0 \/ 0 tokens/);
 });
 
+test('result section arrangement is interaction-idempotent when DOM order is already correct', () => {
+  const start = tokenIOSource.indexOf('function arrangeResultSections');
+  const end = tokenIOSource.indexOf('\n\n  function ensurePanel', start);
+  const arrangeResultSections = vm.runInNewContext(`(${tokenIOSource.slice(start, end)})`);
+  const body = { id: 'body' };
+  const focusedControl = { id: 'graphViewMode' };
+  const panel = { id: 'tokenIOPlaybackPanel', contains: node => node === focusedControl };
+  const resultVisuals = { id: 'resultVisuals', contains: node => node === focusedControl };
+  const advisor = { id: 'advisor', contains: () => false };
+  const documentObject = {
+    activeElement: focusedControl,
+    getElementById(id) {
+      return { resultVisuals, advisor }[id] || null;
+    }
+  };
+  const resultHero = {
+    children: [panel, resultVisuals, advisor],
+    appendChild(node) {
+      if (node.contains?.(documentObject.activeElement)) documentObject.activeElement = body;
+      this.children = this.children.filter(child => child !== node);
+      this.children.push(node);
+    }
+  };
+
+  arrangeResultSections(documentObject, resultHero, panel);
+
+  assert.equal(documentObject.activeElement, focusedControl);
+  assert.deepEqual(resultHero.children, [panel, resultVisuals, advisor]);
+});
+
 test('token I/O canvas backing follows the visible CSS box without a mobile width floor', () => {
   assert.match(tokenIOSource, /Math\.max\(1, Math\.round\(canvas\.clientWidth/);
   assert.doesNotMatch(tokenIOSource, /Math\.max\(320, Math\.round\(canvas\.clientWidth/);

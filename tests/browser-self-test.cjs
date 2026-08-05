@@ -10,6 +10,7 @@ const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const uiSource = fs.readFileSync(path.join(root, 'ui.js'), 'utf8');
+const tokenIOSource = fs.readFileSync(path.join(root, 'token-io.js'), 'utf8');
 const shadcnSource = fs.readFileSync(path.join(root, 'ui-shadcn.css'), 'utf8');
 const elements = new Map();
 
@@ -652,11 +653,11 @@ test('P1: model status labels results as uncalibrated sensitivity estimates', ()
   assert.match(elements.get('modelStatus').innerHTML, /아직 보정되지 않은 민감도 추정값/);
 });
 
-test('P1: Bottleneck Advisor is directly below KPIs and exposes Korean-first phase scorecards', () => {
+test('P1: Bottleneck Advisor exposes Korean-first phase scorecards', () => {
   const kpiIndex = html.indexOf('<div class="kpis">');
   const advisorIndex = html.indexOf('<section id="advisor"');
   const tokenIndex = html.indexOf('<div id="token"');
-  assert.ok(kpiIndex >= 0 && advisorIndex > kpiIndex && tokenIndex > advisorIndex, `${kpiIndex}/${advisorIndex}/${tokenIndex}`);
+  assert.ok(kpiIndex >= 0 && advisorIndex >= 0 && tokenIndex >= 0, `${kpiIndex}/${advisorIndex}/${tokenIndex}`);
   assert.match(html, /추정 민감도 · 미검증 알파/);
   const result = vm.runInContext('simulateColibri(readColibri())', sandbox);
   sandbox.__advisorResult = result;
@@ -725,10 +726,7 @@ test('P1: design polish prioritizes mobile results and progressively discloses d
   assert.match(moduleSource, /catalog\.open = !\(typeof matchMedia === 'function' && matchMedia\('\(max-width: 720px\)'\)\.matches\)/);
   assert.match(moduleSource, /if \(\$\('parameterSearch'\)\.value\.trim\(\)\) \$\('parameterCatalog'\)\.open = true/);
   assert.match(shadcnSource, /\.guideStep small \{ display: none; \}/);
-  assert.match(shadcnSource, /main > \.resultVisuals \{ order: 1; \}/);
   assert.match(shadcnSource, /\.resultHero \{ display: contents; \}/);
-  assert.match(shadcnSource, /\.resultHero > \.advisor \{ order: 2; \}/);
-  assert.match(shadcnSource, /\.resultHero > \.tokenIOPlayback \{ order: 4; \}/);
   assert.match(uiSource, /function initializeResponsiveGraphFilters\(/);
   assert.match(testsInitFull, /initializeResponsiveGraphFilters\(\)/);
   assert.match(shadcnSource, /\.graphPanel \.copyToolbar \{[^}]*order: 4;/);
@@ -751,6 +749,13 @@ test('P1: design polish prioritizes mobile results and progressively discloses d
   assert.match(fs.readFileSync(path.join(root, 'render.js'), 'utf8'), /context\.font = '11px sans-serif'/);
 });
 
+test('P1: result sections follow KPI, simulation, Storage I/O, insight, graph, advisor, validation, summary order', () => {
+  assert.match(tokenIOSource, /const orderedSections = \[panel, resultVisuals, advisor\]\.filter\(Boolean\)/);
+  assert.match(tokenIOSource, /const currentTail = Array\.from\(resultHero\.children\)\.slice\(-orderedSections\.length\)/);
+  assert.match(tokenIOSource, /if \(orderedSections\.every\(\(section, index\) => currentTail\[index\] === section\)\) return/);
+  assert.match(shadcnSource, /\.resultHero \{ display: contents; \}/);
+});
+
 test('P1: desktop web design makes the next action and decisive insight visually explicit', () => {
   const renderSource = fs.readFileSync(path.join(root, 'render.js'), 'utf8');
   assert.match(html, /<div class="sweepWorkflowBar">/);
@@ -763,8 +768,6 @@ test('P1: desktop web design makes the next action and decisive insight visually
   assert.match(renderSource, /document\.body\?\.classList\.remove\('hasResults'\)/);
   assert.match(renderSource, /class="advisorScoreLegend"/);
   assert.match(shadcnSource, /@media \(min-width: 721px\)[\s\S]*\.hasResults \.resultHero \{ display: contents; \}/);
-  assert.match(shadcnSource, /\.hasResults main > \.resultVisuals \{ order: 1; \}/);
-  assert.match(shadcnSource, /\.hasResults \.resultHero > \.tokenIOPlayback \{[^}]*order: 3;/);
   assert.match(shadcnSource, /\.sweepSetup \{ align-items: start; \}/);
   assert.match(shadcnSource, /\.sweepEmptyGuide \{[\s\S]*min-height: 150px;/);
   assert.match(shadcnSource, /\.advisorScoreLegend/);
