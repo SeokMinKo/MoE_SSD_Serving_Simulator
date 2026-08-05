@@ -9,6 +9,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
+const tokenIO = require(path.join(root, 'token-io.js'));
 const source = ['core.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js']
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
   .join('\n') + ['serving.js', 'advisor.js', 'storage-io.js', 'sweep.js', 'repro.js']
@@ -193,6 +194,29 @@ function afmConfig(overrides = {}) {
     ...overrides
   };
 }
+
+test('AFM chart Compute excludes boundary patch materialization while retaining modeled selection work', () => {
+  const result = simulator.simulateAFM(afmConfig({
+    output: 3,
+    freq: 1,
+    shared: 0,
+    routed: 1,
+    active: 1,
+    overlap: 0,
+    periodicSel: 7,
+    patchBase: 50,
+    patchBW: 1_000_000,
+    attn: 2,
+    ffn: 3,
+    runtime: 5
+  }));
+  assert.equal(result.error, undefined, result.error);
+  const boundary = result.tokens.find(token => token.boundary && token.patchMs > 0);
+  assert.ok(boundary, 'expected an AFM boundary token with patch materialization');
+  assert.equal(boundary.computeMs, boundary.computeOnlyMs + boundary.patchMs);
+  assert.equal(tokenIO.tokenIOBreakdown(boundary, 'afm3').computeMs, boundary.computeOnlyMs);
+  assert.equal(boundary.computeOnlyMs, 17);
+});
 
 test('P1: CI runs dependency audit and release provenance build gates', () => {
   const workflow = fs.readFileSync(path.join(root, '.github/workflows/validate.yml'), 'utf8');
