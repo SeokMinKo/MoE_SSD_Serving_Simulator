@@ -169,7 +169,7 @@
         <div>
           <div class="tokenIOEyebrow">실시간 스토리지 추적</div>
           <div class="tokenIOTitleRow"><h3 id="tokenIOPlaybackTitle">토큰별 Storage I/O</h3><span id="tokenIOStateBadge" class="tokenIOStateBadge" data-state="idle">대기</span></div>
-          <p id="tokenIOPlaybackDescription">디코드(Decode) 토큰마다 발생한 요청 읽기, 프리페치, 스왑 인(Swap-in), 스왑 아웃(Swap-out)을 표시합니다. 프리필과 초기 로딩 I/O는 기존 전체 스토리지 추적에서 별도로 확인합니다.</p>
+          <p id="tokenIOPlaybackDescription">디코드(Decode) 토큰별로 캐시 판정 후 SSD가 서비스한 요청 읽기, 프리페치, 스왑 인(Swap-in), 스왑 아웃(Swap-out)의 합계를 표시합니다. 캐시 적중으로 회피된 논리적 요청 바이트는 제외하며, 실제 SSD 측정값이 아닌 모델링된 서비스 트래픽입니다. 시작·프리필 I/O와 실행 누적값은 결정 요약에서 별도로 확인합니다.</p>
         </div>
         <div class="tokenIOCurrent">
           <span id="tokenIOCurrentLabel">선택 토큰 없음</span>
@@ -177,7 +177,7 @@
         </div>
       </header>
       <div class="tokenIOControls" aria-label="토큰 I/O 그래프 설정">
-        <label>표시 범위<select id="tokenIOViewMode"><option value="recent">최근 토큰</option><option value="all">전체 · 자동 집계</option></select></label>
+        <label>표시 범위<select id="tokenIOViewMode"><option value="recent">최근 토큰 · 토큰별 값</option><option value="all">전체 토큰 범위 · 토큰당 평균 집계</option></select></label>
         <label>Y축 스케일<select id="tokenIOScaleMode"><option value="p95">P95 기준 · 이상치 표시</option><option value="linear">전체 최대값</option></select></label>
         <label class="tokenIOCheck"><input id="tokenIOTpotToggle" type="checkbox" checked>TPOT 선 함께 보기</label>
       </div>
@@ -201,7 +201,7 @@
       </div>
       <dl id="tokenIODetail" class="tokenIODetail" aria-live="off">
         <div><dt>Token</dt><dd id="tokenIODetailToken">—</dd></div>
-        <div><dt>전체 I/O</dt><dd id="tokenIODetailTotal">—</dd></div>
+        <div><dt>선택 토큰 합계 I/O</dt><dd id="tokenIODetailTotal">—</dd></div>
         <div><dt>TPOT</dt><dd id="tokenIODetailTpot">—</dd></div>
         <div><dt>메모리 상태</dt><dd id="tokenIODetailPressure">—</dd></div>
         <div><dt>요청 / 프리페치</dt><dd id="tokenIODetailReads">—</dd></div>

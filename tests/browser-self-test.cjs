@@ -287,6 +287,31 @@ test('P0: rendering an error invalidates every stale KPI and result table', () =
   assert.equal(elements.get('warn').textContent, '구성 오류: prompt 값은 0~1000000 범위여야 합니다.');
 });
 
+test('P1: Storage I/O copy distinguishes per-token average from cumulative populations', () => {
+  const result = vm.runInContext(`(() => {
+    const simulation = simulateColibri(readColibri());
+    renderColibri(simulation);
+    return {
+      label: $('storageLabel').textContent,
+      summary: $('summary').innerHTML,
+      outputTokens: simulation.tokens.length,
+      perToken: simulation.ssdPt,
+      decodeTotal: simulation.decodeStorageGB,
+      startupTotal: simulation.startupStorageGB,
+      tokenTotal: simulation.tokens.reduce((sum, token) => sum + token.ssdGB + token.swapInGB + token.swapOutGB, 0)
+    };
+  })()`, sandbox);
+
+  assert.equal(result.label, '디코드 토큰당 평균 Storage I/O');
+  assert.match(moduleSource, /\$\('ssdpt'\)\.textContent = [^;]*fmt\(r\.ssdPt, 2\)[^;]*GB/);
+  assert.ok(Math.abs(result.decodeTotal - result.perToken * result.outputTokens) < 1e-9);
+  assert.ok(Math.abs(result.tokenTotal - result.decodeTotal) < 1e-9);
+  assert.match(result.summary, /디코드 누적 Storage I\/O/);
+  assert.match(result.summary, /시작·프리필 Storage I\/O/);
+  assert.match(result.summary, /실행 전체 누적 Storage I\/O/);
+  assert.match(result.summary, new RegExp(`${(result.startupTotal + result.decodeTotal).toFixed(2)} GB`));
+});
+
 test('P0: rendering an error clears both stale charts', () => {
   const cleared = { chart: 0, memoryChart: 0 };
   for (const id of Object.keys(cleared)) elements.set(id, {
