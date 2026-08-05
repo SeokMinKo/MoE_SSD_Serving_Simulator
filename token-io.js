@@ -216,11 +216,12 @@
   }
 
   function arrangeResultSections(documentObject, resultHero, panel) {
-    resultHero.appendChild(panel);
     const resultVisuals = documentObject.getElementById('resultVisuals');
-    if (resultVisuals) resultHero.appendChild(resultVisuals);
     const advisor = documentObject.getElementById('advisor');
-    if (advisor) resultHero.appendChild(advisor);
+    const orderedSections = [panel, resultVisuals, advisor].filter(Boolean);
+    const currentTail = Array.from(resultHero.children).slice(-orderedSections.length);
+    if (orderedSections.every((section, index) => currentTail[index] === section)) return;
+    for (const section of orderedSections) resultHero.appendChild(section);
   }
 
   function ensurePanel(documentObject) {

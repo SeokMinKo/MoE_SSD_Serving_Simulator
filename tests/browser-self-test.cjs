@@ -750,11 +750,9 @@ test('P1: design polish prioritizes mobile results and progressively discloses d
 });
 
 test('P1: result sections follow KPI, simulation, Storage I/O, insight, graph, advisor, validation, summary order', () => {
-  const panelAppend = tokenIOSource.indexOf('resultHero.appendChild(panel);');
-  const resultVisualsAppend = tokenIOSource.indexOf('resultHero.appendChild(resultVisuals);');
-  const advisorAppend = tokenIOSource.indexOf('resultHero.appendChild(advisor);');
-  assert.ok(panelAppend >= 0 && resultVisualsAppend > panelAppend && advisorAppend > resultVisualsAppend,
-    `${panelAppend}/${resultVisualsAppend}/${advisorAppend}`);
+  assert.match(tokenIOSource, /const orderedSections = \[panel, resultVisuals, advisor\]\.filter\(Boolean\)/);
+  assert.match(tokenIOSource, /const currentTail = Array\.from\(resultHero\.children\)\.slice\(-orderedSections\.length\)/);
+  assert.match(tokenIOSource, /if \(orderedSections\.every\(\(section, index\) => currentTail\[index\] === section\)\) return/);
   assert.match(shadcnSource, /\.resultHero \{ display: contents; \}/);
 });
 
