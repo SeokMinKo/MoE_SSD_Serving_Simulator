@@ -41,6 +41,14 @@
     return nonnegative(token?.ssdGB);
   }
 
+  function computeMsForToken(token, mode) {
+    if (mode === 'colibri' && Number.isFinite(Number(token?.computeBreakdown?.exposedComputeMs))) {
+      return nonnegative(token.computeBreakdown.exposedComputeMs);
+    }
+    if (Number.isFinite(Number(token?.computeOnlyMs))) return nonnegative(token.computeOnlyMs);
+    return nonnegative(token?.computeMs);
+  }
+
   function tokenIOBreakdown(token, mode = 'colibri') {
     const demand = demandGBForToken(token, mode);
     const prefetch = nonnegative(token?.prefetchGB);
@@ -52,6 +60,7 @@
       swapIn,
       swapOut,
       total: demand + prefetch + swapIn + swapOut,
+      computeMs: computeMsForToken(token, mode),
       tpotMs: nonnegative(token?.tpot),
       pressureState: String(token?.memory?.pressureState || 'NORMAL')
     });
@@ -68,20 +77,28 @@
     return finite[Math.min(finite.length - 1, Math.max(0, Math.ceil(finite.length * ratio) - 1))];
   }
 
-  function groupValues(values, startIndex, endIndex) {
-    const slice = values.slice(startIndex, endIndex + 1);
-    const count = Math.max(1, slice.length);
-    const aggregate = { startIndex, endIndex, count, demand: 0, prefetch: 0, swapIn: 0, swapOut: 0, total: 0, tpotMs: 0, peakIndex: startIndex };
+  function groupValues(values, startIndex, endIndex, completedCount = values.length) {
+    const completedEndIndex = Math.min(endIndex, completedCount - 1);
+    const slice = completedEndIndex >= startIndex ? values.slice(startIndex, completedEndIndex + 1) : [];
+    const count = endIndex - startIndex + 1;
+    const sampleCount = slice.length;
+    const divisor = Math.max(1, sampleCount);
+    const aggregate = { startIndex, endIndex, completedEndIndex, count, sampleCount, demand: 0, prefetch: 0, swapIn: 0, swapOut: 0, total: 0, computeMs: 0, tpotMs: 0, peakIndex: startIndex, computePeakIndex: startIndex };
     let peak = -1;
+    let computePeak = -1;
     for (let offset = 0; offset < slice.length; offset++) {
       const value = slice[offset];
-      for (const key of ['demand', 'prefetch', 'swapIn', 'swapOut', 'total', 'tpotMs']) aggregate[key] += value[key];
+      for (const key of ['demand', 'prefetch', 'swapIn', 'swapOut', 'total', 'computeMs', 'tpotMs']) aggregate[key] += value[key];
       if (value.total > peak) {
         peak = value.total;
         aggregate.peakIndex = startIndex + offset;
       }
+      if (value.computeMs > computePeak) {
+        computePeak = value.computeMs;
+        aggregate.computePeakIndex = startIndex + offset;
+      }
     }
-    for (const key of ['demand', 'prefetch', 'swapIn', 'swapOut', 'total', 'tpotMs']) aggregate[key] /= count;
+    for (const key of ['demand', 'prefetch', 'swapIn', 'swapOut', 'total', 'computeMs', 'tpotMs']) aggregate[key] /= divisor;
     aggregate.label = startIndex === endIndex ? String(startIndex + 1) : `${startIndex + 1}–${endIndex + 1}`;
     return aggregate;
   }
@@ -93,12 +110,12 @@
       const responsiveLimit = Math.max(16, Math.min(recentLimit, total));
       const endExclusive = Math.min(total, Math.max(responsiveLimit, completedCount));
       const start = Math.max(0, endExclusive - responsiveLimit);
-      return Array.from({ length: endExclusive - start }, (_, offset) => groupValues(values, start + offset, start + offset));
+      return Array.from({ length: endExclusive - start }, (_, offset) => groupValues(values, start + offset, start + offset, completedCount));
     }
-    if (total <= maxAllBuckets) return values.map((_, index) => groupValues(values, index, index));
+    if (total <= maxAllBuckets) return values.map((_, index) => groupValues(values, index, index, completedCount));
     const bucketSize = Math.ceil(total / maxAllBuckets);
     const groups = [];
-    for (let start = 0; start < total; start += bucketSize) groups.push(groupValues(values, start, Math.min(total - 1, start + bucketSize - 1)));
+    for (let start = 0; start < total; start += bucketSize) groups.push(groupValues(values, start, Math.min(total - 1, start + bucketSize - 1), completedCount));
     return groups;
   }
 
@@ -109,6 +126,29 @@
     if (scaleMode !== 'p95' || completed.length < 5) return Math.max(0.000001, maximum);
     const p95 = percentile(completed, 0.95);
     return Math.max(0.000001, Math.min(maximum, p95 || maximum));
+  }
+
+  function tokenComputeScaleMax(groups, completedCount, scaleMode = 'p95', includeTpot = false) {
+    const completed = groups
+      .filter(group => group.startIndex < completedCount)
+      .map(group => Math.max(group.computeMs, includeTpot ? group.tpotMs : 0))
+      .filter(value => value > 0);
+    if (!completed.length) return 0.000001;
+    const maximum = Math.max(...completed);
+    if (scaleMode !== 'p95' || completed.length < 5) return Math.max(0.000001, maximum);
+    const p95 = percentile(completed, 0.95);
+    return Math.max(0.000001, Math.min(maximum, p95 || maximum));
+  }
+
+  function tokenChartInsets(showTpot) {
+    return { left: 52, right: showTpot ? 48 : 14, top: 16, bottom: 34 };
+  }
+
+  function tokenTickIndices(groups, plotWidth) {
+    if (!groups.length) return [];
+    if (groups.length === 1) return [0];
+    const labelCount = Math.min(groups.length, Math.max(2, Math.floor(plotWidth / 72)));
+    return [...new Set(Array.from({ length: labelCount }, (_, index) => Math.round(index * (groups.length - 1) / (labelCount - 1))))];
   }
 
   function tokenIOUnit(maxGB) {
@@ -192,6 +232,16 @@
         <canvas id="tokenIOPlaybackChart" width="1200" height="300" tabindex="0" role="img" aria-labelledby="tokenIOPlaybackTitle" aria-describedby="tokenIOPlaybackDescription tokenIOChartHelp"></canvas>
         <p id="tokenIOChartHelp" class="srOnly">좌우 방향키로 완료된 토큰을 탐색합니다. Home은 첫 토큰, End는 최신 완료 토큰을 선택합니다.</p>
       </div>
+      <section class="tokenComputeSection" aria-labelledby="tokenComputeTitle">
+        <div class="tokenComputeHeading">
+          <div><div class="tokenIOEyebrow">동일 토큰 범위 · 동일 집계</div><h4 id="tokenComputeTitle">토큰별 Compute 시간</h4></div>
+          <div class="tokenComputeLegend"><span><i class="tokenIOMarker compute"></i>Compute</span><span><i class="tokenIOMarker tpot"></i>TPOT</span></div>
+        </div>
+        <p id="tokenComputeDescription">Colibri에서는 Attention·Runtime·CPU/GPU Expert 실행에 설정된 CPU/GPU overlap을 반영한 compute 경로 경과시간입니다. AFM3에서는 steady compute·재선택·메모리 CPU 작업을 합산합니다. Storage I/O 서비스·큐 대기와 DRAM stall을 포함하지 않으며 I/O와 겹칠 수 있어 TPOT와 단순 합산할 수 없습니다. 실측 가속기 프로파일링 값이 아닌 모델링된 compute 경로 경과시간입니다.</p>
+        <div class="tokenIOCanvasWrap">
+          <canvas id="tokenComputeChart" width="1200" height="300" tabindex="0" role="img" aria-labelledby="tokenComputeTitle" aria-describedby="tokenComputeDescription tokenIOChartHelp"></canvas>
+        </div>
+      </section>
       <div class="tokenIOInspector" aria-label="토큰 상세 탐색">
         <button id="tokenIOPrevious" type="button" aria-label="이전 완료 토큰">← 이전</button>
         <label for="tokenIOSelector">토큰 선택</label>
@@ -202,6 +252,7 @@
       <dl id="tokenIODetail" class="tokenIODetail" aria-live="off">
         <div><dt>Token</dt><dd id="tokenIODetailToken">—</dd></div>
         <div><dt>선택 토큰 합계 I/O</dt><dd id="tokenIODetailTotal">—</dd></div>
+        <div><dt>Compute</dt><dd id="tokenIODetailCompute">—</dd></div>
         <div><dt>TPOT</dt><dd id="tokenIODetailTpot">—</dd></div>
         <div><dt>메모리 상태</dt><dd id="tokenIODetailPressure">—</dd></div>
         <div><dt>요청 / 프리페치</dt><dd id="tokenIODetailReads">—</dd></div>
@@ -209,7 +260,7 @@
       </dl>
       <details id="tokenIOTableDetails" class="tokenIOTableDetails">
         <summary>접근 가능한 토큰별 I/O 표</summary>
-        <div class="tokenIOTableScroller"><table class="tbl" id="tokenIOAccessibleTable"><caption>완료된 Decode 토큰의 Storage I/O와 TPOT</caption><thead><tr><th scope="col">Token</th><th scope="col">요청 읽기</th><th scope="col">프리페치</th><th scope="col">Swap-in</th><th scope="col">Swap-out</th><th scope="col">전체</th><th scope="col">TPOT</th><th scope="col">상태</th></tr></thead><tbody></tbody></table></div>
+        <div class="tokenIOTableScroller"><table class="tbl" id="tokenIOAccessibleTable"><caption>완료된 Decode 토큰의 Storage I/O, Compute 시간과 TPOT</caption><thead><tr><th scope="col">Token</th><th scope="col">요청 읽기</th><th scope="col">프리페치</th><th scope="col">Swap-in</th><th scope="col">Swap-out</th><th scope="col">전체</th><th scope="col">Compute</th><th scope="col">TPOT</th><th scope="col">상태</th></tr></thead><tbody></tbody></table></div>
       </details>
       <footer class="tokenIOFooter"><span id="tokenIOProgressLabel">0 / 0 토큰</span><span id="tokenIOAggregationLabel">최근 토큰을 개별 막대로 표시합니다.</span></footer>
       <div id="tokenIOLiveStatus" class="srOnly" role="status" aria-live="polite" aria-atomic="true"></div>`;
@@ -244,11 +295,12 @@
   }
 
   function bindPanelEvents(panel) {
-    const canvas = panel.querySelector('#tokenIOPlaybackChart');
-    canvas.addEventListener('pointermove', showTooltip);
-    canvas.addEventListener('pointerleave', hideTooltip);
-    canvas.addEventListener('click', selectFromPointer);
-    canvas.addEventListener('keydown', handleCanvasKeydown);
+    for (const canvas of panel.querySelectorAll('#tokenIOPlaybackChart, #tokenComputeChart')) {
+      canvas.addEventListener('pointermove', showTooltip);
+      canvas.addEventListener('pointerleave', hideTooltip);
+      canvas.addEventListener('click', selectFromPointer);
+      canvas.addEventListener('keydown', handleCanvasKeydown);
+    }
     panel.querySelector('#tokenIOViewMode').addEventListener('change', event => { state.viewMode = event.target.value; scheduleDraw(); });
     panel.querySelector('#tokenIOScaleMode').addEventListener('change', event => { state.scaleMode = event.target.value; scheduleDraw(); });
     panel.querySelector('#tokenIOTpotToggle').addEventListener('change', event => { state.showTpot = event.target.checked; scheduleDraw(); });
@@ -271,6 +323,7 @@
       prefetch: getCssColor('--token-io-prefetch', '#059669'),
       swapIn: getCssColor('--token-io-swap-in', '#7c3aed'),
       swapOut: getCssColor('--token-io-swap-out', '#e11d48'),
+      compute: getCssColor('--token-compute', '#38bdf8'),
       tpot: getCssColor('--token-io-tpot', '#f59e0b'),
       pending: getCssColor('--token-io-pending', 'rgba(148,163,184,.2)'),
       grid: getCssColor('--token-io-grid', 'rgba(148,163,184,.18)'),
@@ -323,7 +376,7 @@
     const groups = buildTokenIOGroups(state.values, state.completedCount, state.viewMode, maxBuckets, recentLimit);
     const scaleMax = tokenIOScaleMax(groups, state.completedCount, state.scaleMode);
     const unit = tokenIOUnit(scaleMax);
-    const left = 52, right = state.showTpot ? 48 : 14, top = 16, bottom = 34;
+    const { left, right, top, bottom } = tokenChartInsets(state.showTpot);
     const width = cssWidth - left - right;
     const height = cssHeight - top - bottom;
     ctx.font = '10px system-ui';
@@ -392,15 +445,88 @@
     }
     ctx.fillStyle = colors.text;
     ctx.textAlign = 'center';
-    const tickEvery = Math.max(1, Math.ceil(groups.length / Math.max(5, Math.floor(width / 78))));
-    groups.forEach((group, index) => {
-      if (index % tickEvery === 0 || index === groups.length - 1) ctx.fillText(group.label, left + slot * index + slot / 2, cssHeight - 10);
-    });
+    for (const index of tokenTickIndices(groups, width)) ctx.fillText(groups[index].label, left + slot * index + slot / 2, cssHeight - 10);
     canvas.__tokenIOGeometry = { left, top, width, height, slot, groups: geometryGroups, unit, scaleMax };
+    drawComputeChart(panel, groups);
     const aggregation = panel.querySelector('#tokenIOAggregationLabel');
+    const hasPartialBucket = groups.some(group => group.sampleCount > 0 && group.sampleCount < group.count);
     aggregation.textContent = state.viewMode === 'recent'
       ? `최근 ${groups.length}개 토큰을 개별 막대로 표시합니다.`
-      : groups.some(group => group.count > 1) ? `전체 ${state.values.length}개 토큰을 ${groups.length}개 구간의 토큰당 평균으로 집계했습니다.` : '전체 토큰을 개별 막대로 표시합니다.';
+      : hasPartialBucket
+        ? `완료된 ${state.completedCount}개 토큰만 ${groups.length}개 구간에 집계합니다.`
+        : groups.some(group => group.count > 1) ? `전체 ${state.values.length}개 토큰을 ${groups.length}개 구간의 토큰당 평균으로 집계했습니다.` : '전체 토큰을 개별 막대로 표시합니다.';
+  }
+
+  function drawComputeChart(panel, groups) {
+    const canvas = panel.querySelector('#tokenComputeChart');
+    if (!canvas) return;
+    const { context: ctx, cssWidth, cssHeight } = ensureCanvasSize(canvas);
+    const colors = chartColors();
+    const scaleMax = tokenComputeScaleMax(groups, state.completedCount, state.scaleMode, state.showTpot);
+    const { left, right, top, bottom } = tokenChartInsets(state.showTpot);
+    const width = cssWidth - left - right;
+    const height = cssHeight - top - bottom;
+    ctx.font = '10px system-ui';
+    ctx.fillStyle = colors.text;
+    ctx.textAlign = 'right';
+    for (let tick = 0; tick <= 4; tick++) {
+      const y = top + height * tick / 4;
+      const value = scaleMax * (1 - tick / 4);
+      ctx.strokeStyle = colors.grid;
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(cssWidth - right, y); ctx.stroke();
+      ctx.fillText(value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2), left - 7, y + 3);
+    }
+    ctx.save(); ctx.translate(12, top + height / 2); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.fillText('ms', 0, 0); ctx.restore();
+    const slot = width / Math.max(1, groups.length);
+    const barWidth = Math.max(3, Math.min(22, slot * 0.72));
+    const geometryGroups = [];
+    const completedGroups = [];
+    groups.forEach((group, groupIndex) => {
+      const x = left + slot * groupIndex + (slot - barWidth) / 2;
+      if (group.startIndex >= state.completedCount) {
+        ctx.fillStyle = colors.pending;
+        ctx.fillRect(x, top + height - 2, barWidth, 2);
+        geometryGroups.push({ ...group, peakIndex: group.computePeakIndex, x, width: barWidth });
+        return;
+      }
+      const rawHeight = group.computeMs / scaleMax * height;
+      const barHeight = Math.max(0, Math.min(height, rawHeight));
+      ctx.fillStyle = colors.compute;
+      ctx.fillRect(x, top + height - barHeight, barWidth, barHeight);
+      if (group.computeMs > scaleMax) {
+        ctx.fillStyle = colors.clipped;
+        ctx.beginPath(); ctx.moveTo(x, top + 1); ctx.lineTo(x + barWidth / 2, top - 5); ctx.lineTo(x + barWidth, top + 1); ctx.fill();
+      }
+      if (state.selectedIndex >= group.startIndex && state.selectedIndex <= group.endIndex) {
+        ctx.strokeStyle = colors.selected;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - 2, top - 1, barWidth + 4, height + 2);
+      }
+      completedGroups.push({ group, groupIndex });
+      geometryGroups.push({ ...group, peakIndex: group.computePeakIndex, x, width: barWidth });
+    });
+    if (state.showTpot && completedGroups.length) {
+      ctx.strokeStyle = colors.tpot;
+      ctx.fillStyle = colors.tpot;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      completedGroups.forEach(({ group, groupIndex }, index) => {
+        const x = left + slot * groupIndex + slot / 2;
+        const y = top + height - Math.min(1, group.tpotMs / scaleMax) * height;
+        if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      if (completedGroups.length === 1) {
+        const { group, groupIndex } = completedGroups[0];
+        const x = left + slot * groupIndex + slot / 2;
+        const y = top + height - Math.min(1, group.tpotMs / scaleMax) * height;
+        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.fillStyle = colors.text;
+    ctx.textAlign = 'center';
+    for (const index of tokenTickIndices(groups, width)) ctx.fillText(groups[index].label, left + slot * index + slot / 2, cssHeight - 10);
+    canvas.__tokenIOGeometry = { left, top, width, height, slot, groups: geometryGroups, scaleMax };
   }
 
   function scheduleDraw() {
@@ -449,7 +575,7 @@
     panel.querySelector('#tokenIONext').disabled = state.selectedIndex < 0 || state.selectedIndex >= state.completedCount - 1;
     panel.querySelector('#tokenIOFollowLatest').disabled = state.completedCount === 0 || state.followLatest;
     if (state.selectedIndex < 0 || !state.values[state.selectedIndex]) {
-      for (const id of ['tokenIOCurrentValue', 'tokenIODetailToken', 'tokenIODetailTotal', 'tokenIODetailTpot', 'tokenIODetailPressure', 'tokenIODetailReads', 'tokenIODetailSwap']) panel.querySelector(`#${id}`).textContent = '—';
+      for (const id of ['tokenIOCurrentValue', 'tokenIODetailToken', 'tokenIODetailTotal', 'tokenIODetailCompute', 'tokenIODetailTpot', 'tokenIODetailPressure', 'tokenIODetailReads', 'tokenIODetailSwap']) panel.querySelector(`#${id}`).textContent = '—';
       panel.querySelector('#tokenIOCurrentLabel').textContent = '선택 토큰 없음';
       return;
     }
@@ -460,6 +586,7 @@
     panel.querySelector('#tokenIOCurrentValue').textContent = formatTokenIO(value.total, unit);
     panel.querySelector('#tokenIODetailToken').textContent = String(state.selectedIndex + 1);
     panel.querySelector('#tokenIODetailTotal').textContent = formatTokenIO(value.total, unit);
+    panel.querySelector('#tokenIODetailCompute').textContent = `${value.computeMs.toFixed(value.computeMs >= 10 ? 1 : 2)} ms`;
     panel.querySelector('#tokenIODetailTpot').textContent = `${value.tpotMs.toFixed(value.tpotMs >= 10 ? 1 : 2)} ms`;
     panel.querySelector('#tokenIODetailPressure').textContent = value.pressureState;
     panel.querySelector('#tokenIODetailReads').textContent = `${formatTokenIO(value.demand, unit)} / ${formatTokenIO(value.prefetch, unit)}`;
@@ -482,7 +609,7 @@
     if (!body) return;
     body.innerHTML = state.values.slice(0, state.completedCount).map((value, index) => {
       const unit = tokenIOUnit(Math.max(value.total, 0.000001));
-      return `<tr><th scope="row">${index + 1}</th><td>${formatTokenIO(value.demand, unit)}</td><td>${formatTokenIO(value.prefetch, unit)}</td><td>${formatTokenIO(value.swapIn, unit)}</td><td>${formatTokenIO(value.swapOut, unit)}</td><td>${formatTokenIO(value.total, unit)}</td><td>${value.tpotMs.toFixed(value.tpotMs >= 10 ? 1 : 2)} ms</td><td>${escapeHtml(value.pressureState)}</td></tr>`;
+      return `<tr><th scope="row">${index + 1}</th><td>${formatTokenIO(value.demand, unit)}</td><td>${formatTokenIO(value.prefetch, unit)}</td><td>${formatTokenIO(value.swapIn, unit)}</td><td>${formatTokenIO(value.swapOut, unit)}</td><td>${formatTokenIO(value.total, unit)}</td><td>${value.computeMs.toFixed(value.computeMs >= 10 ? 1 : 2)} ms</td><td>${value.tpotMs.toFixed(value.tpotMs >= 10 ? 1 : 2)} ms</td><td>${escapeHtml(value.pressureState)}</td></tr>`;
     }).join('');
     state.tableDirty = false;
   }
@@ -524,8 +651,12 @@
       return;
     }
     const unit = tokenIOUnit(Math.max(group.total, 0.000001));
-    const range = group.startIndex === group.endIndex ? `Token ${group.startIndex + 1}` : `Tokens ${group.startIndex + 1}–${group.endIndex + 1} 평균`;
-    tooltip.innerHTML = `<b>${range}</b><br>전체 ${formatTokenIO(group.total, unit)}<br>요청 읽기 ${formatTokenIO(group.demand, unit)}<br>프리페치 ${formatTokenIO(group.prefetch, unit)}<br>Swap-in ${formatTokenIO(group.swapIn, unit)}<br>Swap-out ${formatTokenIO(group.swapOut, unit)}<br>TPOT ${group.tpotMs.toFixed(group.tpotMs >= 10 ? 1 : 2)} ms${group.count > 1 ? `<br>구간 Peak: Token ${group.peakIndex + 1}` : ''}`;
+    const range = group.startIndex === group.endIndex
+      ? `Token ${group.startIndex + 1}`
+      : group.sampleCount < group.count
+        ? `Tokens ${group.startIndex + 1}–${group.completedEndIndex + 1} 평균 (${group.startIndex + 1}–${group.endIndex + 1} 구간 중 완료 ${group.sampleCount}개)`
+        : `Tokens ${group.startIndex + 1}–${group.endIndex + 1} 평균`;
+    tooltip.innerHTML = `<b>${range}</b><br>전체 ${formatTokenIO(group.total, unit)}<br>Compute ${group.computeMs.toFixed(group.computeMs >= 10 ? 1 : 2)} ms<br>요청 읽기 ${formatTokenIO(group.demand, unit)}<br>프리페치 ${formatTokenIO(group.prefetch, unit)}<br>Swap-in ${formatTokenIO(group.swapIn, unit)}<br>Swap-out ${formatTokenIO(group.swapOut, unit)}<br>TPOT ${group.tpotMs.toFixed(group.tpotMs >= 10 ? 1 : 2)} ms${group.count > 1 ? `<br>구간 Peak: Token ${group.peakIndex + 1}` : ''}`;
     tooltip.style.left = `${Math.min(innerWidth - 230, event.clientX + 14)}px`;
     tooltip.style.top = `${Math.min(innerHeight - 190, event.clientY + 14)}px`;
     tooltip.hidden = false;
@@ -581,7 +712,7 @@
     }
     const current = state.completedCount > 0 ? state.values[state.completedCount - 1] : null;
     announceStatus(current
-      ? `Token ${state.completedCount} 완료. 전체 I/O ${formatTokenIO(current.total, tokenIOUnit(Math.max(current.total, 0.000001)))}. ${state.completedCount} / ${state.values.length}.`
+      ? `Token ${state.completedCount} 완료. 전체 I/O ${formatTokenIO(current.total, tokenIOUnit(Math.max(current.total, 0.000001)))}. Compute ${current.computeMs.toFixed(current.computeMs >= 10 ? 1 : 2)} ms. ${state.completedCount} / ${state.values.length}.`
       : `TTFT 준비 중. 출력 토큰 ${state.values.length}개.`, false);
     scheduleDraw();
   }
@@ -599,9 +730,10 @@
       panel.querySelector('#tokenIOProgressLabel').textContent = '0 / 0 토큰';
       panel.querySelector('#tokenIOAccessibleTable tbody').innerHTML = '';
       renderSelectedToken();
-      const canvas = panel.querySelector('#tokenIOPlaybackChart');
-      const { context, cssWidth, cssHeight } = ensureCanvasSize(canvas);
-      context.clearRect(0, 0, cssWidth, cssHeight);
+      for (const canvas of panel.querySelectorAll('#tokenIOPlaybackChart, #tokenComputeChart')) {
+        const { context, cssWidth, cssHeight } = ensureCanvasSize(canvas);
+        context.clearRect(0, 0, cssWidth, cssHeight);
+      }
     }
   }
 
@@ -619,7 +751,7 @@
     }
     if (typeof ResizeObserver === 'function') {
       state.observer = new ResizeObserver(() => scheduleDraw());
-      state.observer.observe(panel.querySelector('.tokenIOCanvasWrap'));
+      for (const wrapper of panel.querySelectorAll('.tokenIOCanvasWrap')) state.observer.observe(wrapper);
     } else if (typeof addEventListener === 'function') {
       addEventListener('resize', scheduleDraw, { passive: true });
     }
@@ -639,6 +771,9 @@
     buildTokenIOValues,
     buildTokenIOGroups,
     tokenIOScaleMax,
+    tokenComputeScaleMax,
+    tokenChartInsets,
+    tokenTickIndices,
     tokenIOUnit,
     formatTokenIO,
     percentile

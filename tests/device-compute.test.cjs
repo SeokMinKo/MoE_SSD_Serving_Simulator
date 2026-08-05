@@ -7,6 +7,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
+const tokenIO = require(path.join(root, 'token-io.js'));
 
 function loadSimulator(includeRepro = false) {
   const files = ['core.js', 'compute.js', 'config.js', 'compute-placement.js', 'memory.js', 'colibri.js', 'afm.js'];
@@ -101,6 +102,39 @@ function metrics(result) {
     deviceKVGB: result.state?.deviceKVGB
   };
 }
+
+test('Colibri chart Compute follows modeled CPU/GPU overlap while remaining independent of Storage time', () => {
+  const simulator = loadSimulator();
+  const commonCompute = calibratedCompute({
+    expertDevice: 'hybrid',
+    hybrid: { cpuExpertFraction: 0.5, execution: 'sequential', overlapEfficiency: 0 }
+  });
+  const common = { prompt: 0, context: 1, output: 4, compute: commonCompute, pf: false };
+  const sequential = simulator.simulateColibri(colibriConfig(common));
+  const parallel = simulator.simulateColibri(colibriConfig({
+    ...common,
+    compute: calibratedCompute({
+      expertDevice: 'hybrid',
+      hybrid: { cpuExpertFraction: 0.5, execution: 'parallel', overlapEfficiency: 1 }
+    })
+  }));
+  assert.equal(sequential.error, undefined, sequential.error);
+  assert.equal(parallel.error, undefined, parallel.error);
+  assert.ok(sequential.tokens.some(token => token.computeBreakdown.cpuExpertMs > 0 && token.computeBreakdown.gpuExpertMs > 0));
+  assert.ok(sequential.tokens.some((token, index) => token.computeBreakdown.exposedComputeMs > parallel.tokens[index].computeBreakdown.exposedComputeMs));
+  assert.deepEqual(
+    parallel.tokens.map(token => tokenIO.tokenIOBreakdown(token, 'colibri').computeMs),
+    parallel.tokens.map(token => token.computeBreakdown.exposedComputeMs)
+  );
+
+  const slowStorage = simulator.simulateColibri(colibriConfig({ ...common, ssdBW: 0.8, lat: 500 }));
+  assert.equal(slowStorage.error, undefined, slowStorage.error);
+  assert.deepEqual(
+    slowStorage.tokens.map(token => token.computeBreakdown.exposedComputeMs),
+    sequential.tokens.map(token => token.computeBreakdown.exposedComputeMs)
+  );
+  assert.ok(slowStorage.tokens.some((token, index) => token.storageServiceMs !== sequential.tokens[index].storageServiceMs));
+});
 
 test('PR1: explicit legacy mode preserves the legacy Colibri result', () => {
   const simulator = loadSimulator();
