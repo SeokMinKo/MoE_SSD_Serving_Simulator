@@ -477,6 +477,27 @@ test('P1: parameter help describes meaning, config key, unit, engine, and synthe
   assert.match(helpSource, /aria-describedby|aria-label/);
 });
 
+test('P1: help icons keep a centered visual circle inside responsive hit targets', () => {
+  const hitTarget = html.match(/\.helpTip\{([^}]*)\}/)?.[1] || '';
+  const glyph = html.match(/\.helpTip::before\{([^}]*)\}/)?.[1] || '';
+  assert.match(hitTarget, /position:relative/);
+  assert.match(hitTarget, /display:inline-(?:flex|grid)/);
+  assert.match(hitTarget, /width:28px/);
+  assert.match(hitTarget, /height:28px/);
+  assert.match(hitTarget, /padding:0/);
+  assert.match(hitTarget, /border:0/);
+  assert.match(hitTarget, /background:transparent/);
+  assert.match(hitTarget, /font-size:11px/);
+  assert.match(hitTarget, /line-height:1/);
+  assert.match(glyph, /content:""/);
+  assert.match(glyph, /position:absolute/);
+  assert.match(glyph, /transform:translate\(-50%,-50%\)/);
+  assert.match(glyph, /width:20px/);
+  assert.match(glyph, /height:20px/);
+  assert.match(glyph, /background:transparent/);
+  assert.match(html, /@media\(max-width:720px\)[\s\S]*\.helpTip\{width:44px;height:44px/);
+});
+
 test('P1: browser sweep and successful import never rerun accepted simulations on the main thread', () => {
   const sweepSource = fs.readFileSync(path.join(root, 'sweep-ui.js'), 'utf8');
   const reproSource = fs.readFileSync(path.join(root, 'repro.js'), 'utf8');
