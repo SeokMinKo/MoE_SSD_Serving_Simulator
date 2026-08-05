@@ -77,6 +77,8 @@ function createScenarioArtifact(config, result, sweepExecution = null) {
   const canonicalConfig = sweepClone(result?.c || config);
   const validation = validateSimulationConfig(canonicalConfig);
   if (!validation.valid) throw new Error(`Invalid configuration: ${formatConfigErrors(validation)}`);
+  if (result?.oom || result?.state?.oom) throw new Error('OOM scenario results cannot be exported as completed-population artifacts.');
+  if (result?.error) throw new Error(`Canonical scenario simulation failed: ${result.error}`);
   const canonicalResult = result?.serving ? result : runSimulationConfig(sweepClone(canonicalConfig));
   if (canonicalResult.oom || canonicalResult.state?.oom) throw new Error('OOM scenario results cannot be exported as completed-population artifacts.');
   if (canonicalResult.error) throw new Error(`Canonical scenario simulation failed: ${canonicalResult.error}`);

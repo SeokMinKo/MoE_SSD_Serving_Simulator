@@ -155,7 +155,15 @@ function runSimulationConfig(config, servingOptions = {}, requestSpecs = undefin
   const result = engine(singleRequestConfig);
   if (result.error) return result;
   const serving = simulateServing(placedConfig, requests, servingOptions);
-  if (serving.error) return { ...result, error: serving.error };
+  if (serving.error) {
+    return {
+      ...result,
+      error: serving.error,
+      oom: Boolean(serving.oom),
+      completedTokens: serving.completedTokens,
+      runId: servingRunId(placedConfig, requests)
+    };
+  }
   result.serving = serving;
   result.agg = serving.throughputTPS;
   result.state = aggregateMemoryResult.state;
@@ -300,6 +308,13 @@ function simulateServing(config, requestSpecs, options = {}) {
     if (event.type === 'arrival') {
       request.trace = traceForRequest(config, request, request.traceIndex, sharedColibriCacheState);
       if (request.trace.error) return { error: `Request ${request.id}: ${request.trace.error}` };
+      if (request.trace.oom || request.trace.tokens.length !== request.output) {
+        return {
+          error: `Request ${request.id}: OOM before completing ${request.output} output tokens.`,
+          oom: true,
+          completedTokens: request.trace.tokens.length
+        };
+      }
       let readyAt;
       if (config.mode === 'afm3') {
         const selector = resources.compute.reserveMs(config.initSel, event.time, 'prefill');

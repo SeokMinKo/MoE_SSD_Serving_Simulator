@@ -159,7 +159,7 @@ function renderColibri(r) {
       ['이벤트 스케줄러 처리량', `${fmt(r.serving.throughputTPS, 2)} tok/s`],
       ['요청 수 / 완료 토큰 수', `${r.serving.requests.length} / ${r.serving.completedTokens}`],
       ['서빙 토큰 P50 / P95', `${ms(r.serving.p50TokenMs)} / ${ms(r.serving.p95TokenMs)}`],
-      ['공유 SSD 큐 대기', ms(r.serving.resources.ssd.queueMs)]
+      ['공유 SSD 누적 큐 대기 (작업 합계)', ms(r.serving.resources.ssd.queueMs)]
     ] : []),
     ['전체 처리량 상한', `${fmt(r.agg, 2)} tok/s`],
     ['배치 정책 / DRAM / VRAM 캐시', `${r.c.placementInfo.policy} / ${fmt(r.c.dcache, 2)} / ${fmt(r.c.vcache, 2)} GB`],
@@ -204,7 +204,7 @@ function renderAFM(r) {
       ['이벤트 스케줄러 처리량', `${fmt(r.serving.throughputTPS, 2)} tok/s`],
       ['요청 수 / 완료 토큰 수', `${r.serving.requests.length} / ${r.serving.completedTokens}`],
       ['서빙 토큰 P50 / P95', `${ms(r.serving.p50TokenMs)} / ${ms(r.serving.p95TokenMs)}`],
-      ['공유 SSD 큐 대기', ms(r.serving.resources.ssd.queueMs)]
+      ['공유 SSD 누적 큐 대기 (작업 합계)', ms(r.serving.resources.ssd.queueMs)]
     ] : []),
     ['정상 상태 TPS / TPOT', `${fmt(r.steadyTPS, 2)} / ${ms(r.steady)}`],
     ['경계 TPOT', ms(r.boundaryTPOT)],
