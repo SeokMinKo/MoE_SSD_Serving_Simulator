@@ -21,6 +21,12 @@ const SWEEP_GUIDE = Object.freeze({
   'mem.swapEnabled': { label: '스왑 사용', unit: '불리언', description: '모델링된 스왑 용량과 I/O를 활성화합니다.', relationship: '호환 메모리 정책이 필요하며 스왑 용량, 쓰기 비율, 재접근 비율의 적용 여부를 결정합니다.' },
   pf: { label: '프리페치 사용', unit: '불리언', description: '요청 전에 Expert 프리페치를 실행합니다.', relationship: '프리페치 정책, 재현율, 정밀도, 예산이 실행에 영향을 주는지 결정합니다.' },
   prefetchPolicy: { label: '프리페치 정책', unit: '범주', description: '후보 Expert를 예측하는 방식을 선택합니다.', relationship: '조건부: 프리페치가 활성화되어야 하며 none은 예측 효과를 끕니다.' },
+  'runtime.threads': { label: 'llama.cpp CPU threads', unit: 'threads', description: 'serial CPU phase를 실행하는 llama.cpp thread 수입니다.', relationship: 'CPU timing reference threads와 thread scaling exponent에 따라 Attention/Expert kernel 시간만 변하며 byte population은 변하지 않습니다.' },
+  'runtime.referenceThreads': { label: 'CPU timing reference threads', unit: 'threads', description: '입력 Attention/Expert 시간이 보정된 thread 수입니다.', relationship: '현재 threads와 같으면 scale 1이며, 변경 시 exponent 기반 민감도만 계산합니다.' },
+  'runtime.threadScalingExponent': { label: 'CPU thread scaling exponent', unit: '지수(0–1)', description: 'thread 수 변화에 대한 CPU phase 민감도 가정입니다.', relationship: '0은 thread 수와 무관, 1은 이상적 선형 scaling이며 native holdout 전에는 미실측 가정입니다.' },
+  'runtime.ioThreads': { label: 'Expert I/O 실행 lane 수', unit: 'lanes', description: 'projection read command를 동시에 실행하는 lane 수입니다.', relationship: 'storage queue depth와 동일한 값이 아니며, command wave 수만 바꾸고 SSD GB/s 상한은 바꾸지 않습니다.' },
+  'runtime.cacheMiB': { label: 'Global Expert byte-LRU', unit: 'MiB', description: '(layer, expert) key를 보존하는 고정 binary-byte cache capacity입니다.', relationship: 'working set보다 작으면 cyclic LRU hit cliff가 발생할 수 있으며 Host RAM demand에도 포함됩니다.' },
+  'runtime.odirect': { label: 'O_DIRECT projection alignment', unit: '불리언', description: '각 GGUF projection slice를 개별 4 KiB 경계로 올림합니다.', relationship: 'payload population은 그대로지만 aligned storage bytes와 service time이 증가할 수 있습니다.' },
   qd: { label: '스토리지 큐 깊이 / 워커 수', unit: '요청', description: '동시에 서비스를 처리할 수 있는 모델링된 최대 스토리지 슬롯 수입니다.', relationship: 'SSD 대역폭과 기본 지연시간에 함께 작용하지만 워커가 늘어도 설정된 SSD 대역폭 상한은 커지지 않습니다.' }
 });
 
@@ -78,7 +84,43 @@ const SWEEP_AFM = Object.freeze([
   sweepDescriptor('freq', 'Compute', 1, 1_000_000, { integer: true }), sweepDescriptor('overlap', 'Compute', 0, 1), sweepDescriptor('initSel', 'Compute', 0, 1_000_000), sweepDescriptor('periodicSel', 'Compute', 0, 1_000_000), sweepDescriptor('patchBase', 'Compute', 0, 1_000_000), sweepDescriptor('patchBW', 'System / Storage', 0.001, 1e12), sweepDescriptor('attn', 'Compute', 0, 1_000_000), sweepDescriptor('ffn', 'Compute', 0, 1_000_000), sweepDescriptor('runtime', 'Compute', 0, 1_000_000), sweepDescriptor('prefillTPS', 'Compute', 0.001, 1_000_000), sweepDescriptor('chunkMode', 'Compute', 0, 0, { type: 'enum', values: ['sequential', 'pipelined'] }), sweepDescriptor('doubleBuffer', 'Compute', 0, 0, { type: 'boolean', values: [false, true] })
 ]);
 
+const SWEEP_BIGMOE = Object.freeze([
+  sweepDescriptor('prompt', 'Workload', SIMULATION_LIMITS.prompt.min, SIMULATION_LIMITS.prompt.max, { integer: true }),
+  sweepDescriptor('output', 'Workload', SIMULATION_LIMITS.output.min, SIMULATION_LIMITS.output.max, { integer: true }),
+  sweepDescriptor('context', 'Workload', 1, 10_000_000, { integer: true }),
+  sweepDescriptor('seed', 'Workload', 0, Number.MAX_SAFE_INTEGER, { integer: true }),
+  sweepDescriptor('host', 'System / Storage', 0.001, 4096),
+  sweepDescriptor('dramBW', 'System / Storage', 0.001, 1e12),
+  sweepDescriptor('ssdBW', 'System / Storage', 0.001, 1e12),
+  sweepDescriptor('lat', 'System / Storage', 0, 10_000_000),
+  sweepDescriptor('mem.backgroundGB', 'Memory', 0, 4096),
+  sweepDescriptor('mem.osReservedGB', 'Memory', 0, 4096),
+  sweepDescriptor('mem.minHeadroomGB', 'Memory', 0, 4096),
+  sweepDescriptor('model.layers', 'Model', 1, 500, { integer: true }),
+  sweepDescriptor('model.experts', 'Model', 1, 4096, { integer: true }),
+  sweepDescriptor('model.active', 'Model', 1, 4096, { integer: true }),
+  sweepDescriptor('model.expertProjectionMiB.0', 'Model', 0.000001, 1_000_000),
+  sweepDescriptor('model.expertProjectionMiB.1', 'Model', 0.000001, 1_000_000),
+  sweepDescriptor('model.expertProjectionMiB.2', 'Model', 0.000001, 1_000_000),
+  sweepDescriptor('model.denseResidentGB', 'Memory', 0, 4096),
+  sweepDescriptor('model.sharedExpertGB', 'Memory', 0, 4096),
+  sweepDescriptor('model.kvKB', 'Memory', 0, 1_000_000),
+  sweepDescriptor('runtime.threads', 'Compute', 1, 256, { integer: true }),
+  sweepDescriptor('runtime.referenceThreads', 'Compute', 1, 256, { integer: true }),
+  sweepDescriptor('runtime.threadScalingExponent', 'Compute', 0, 1),
+  sweepDescriptor('runtime.ioThreads', 'System / Storage', 1, 8, { integer: true }),
+  sweepDescriptor('runtime.odirect', 'System / Storage', 0, 0, { type: 'boolean', values: [false, true] }),
+  sweepDescriptor('runtime.cacheMode', 'Memory', 0, 0, { type: 'enum', values: ['off', 'fixed'] }),
+  sweepDescriptor('runtime.cacheMiB', 'Memory', 0, 1_000_000),
+  sweepDescriptor('runtime.attentionMs', 'Compute', 0, 1_000_000),
+  sweepDescriptor('runtime.expertMs', 'Compute', 0, 1_000_000),
+  sweepDescriptor('runtime.prefillTPS', 'Compute', 0.001, 1_000_000),
+  sweepDescriptor('runtime.managementMs', 'Compute', 0, 1_000_000),
+  sweepDescriptor('runtime.loopOverheadMs', 'Compute', 0, 1_000_000)
+]);
+
 function sweepCatalogForConfig(config) {
+  if (config?.mode === 'bigmoe-edge') return [...SWEEP_BIGMOE];
   if (!config || !['colibri', 'afm3'].includes(config.mode)) return [];
   const catalog = [...SWEEP_COMMON, ...(config.mode === 'afm3' ? SWEEP_AFM : SWEEP_COLIBRI)];
   if (config.mode === 'afm3') return catalog;
@@ -196,7 +238,9 @@ function sweepPercentile(values, ratio) {
 }
 
 function simulateSweepConfig(config) {
-  const validation = validateSimulationConfig(config);
+  const validation = config?.mode === 'bigmoe-edge'
+    ? validateBigMoeEdgeConfig(config)
+    : validateSimulationConfig(config);
   if (!validation.valid) return { error: `Invalid configuration: ${formatConfigErrors(validation)}`, c: config, mode: config?.mode };
   return runSimulationConfig(sweepClone(config));
 }
@@ -207,7 +251,12 @@ function summarizeSweepResult(result) {
     return { status: oom ? 'oom' : 'invalid', reason: String(result?.error || 'Simulation failed.'), oom, ttftMeanMs: null, ttftP50Ms: null, ttftP95Ms: null, singleTPS: null, aggregateTPS: null };
   }
   const ttfts = result.serving?.requests?.map(request => request.ttftMs).filter(Number.isFinite) || [result.ttft].filter(Number.isFinite);
-  const mean = ttfts.length ? ttfts.reduce((sum, value) => sum + value, 0) / ttfts.length : 0;
+  const singleTPS = Number(result.tps);
+  const aggregateTPS = Number(result.serving?.throughputTPS ?? result.agg ?? result.tps);
+  if (!ttfts.length || !Number.isFinite(singleTPS) || !Number.isFinite(aggregateTPS)) {
+    return { status: 'invalid', reason: 'Simulation produced non-finite numeric metrics.', oom: false, ttftMeanMs: null, ttftP50Ms: null, ttftP95Ms: null, singleTPS: null, aggregateTPS: null };
+  }
+  const mean = ttfts.reduce((sum, value) => sum + value, 0) / ttfts.length;
   return {
     status: result.oom || result.state?.oom ? 'oom' : 'completed',
     reason: result.oom || result.state?.oom ? 'Simulation reached OOM or hard pressure.' : '',
@@ -215,8 +264,8 @@ function summarizeSweepResult(result) {
     ttftMeanMs: mean,
     ttftP50Ms: sweepPercentile(ttfts, 0.5),
     ttftP95Ms: sweepPercentile(ttfts, 0.95),
-    singleTPS: Number(result.tps || 0),
-    aggregateTPS: Number(result.serving?.throughputTPS ?? result.agg ?? result.tps ?? 0)
+    singleTPS,
+    aggregateTPS
   };
 }
 

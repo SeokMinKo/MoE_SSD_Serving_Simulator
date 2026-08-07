@@ -67,16 +67,31 @@ function captureSweepParameterDrafts() {
 }
 
 function readCurrentSweepConfig() {
-  return $('mode').value === 'afm3' ? readAFM() : readColibri();
+  const mode = $('mode').value;
+  if (mode === 'bigmoe-edge') return readBigMoeEdge();
+  return mode === 'afm3' ? readAFM() : readColibri();
+}
+
+function sweepDataPathHtml(config) {
+  return config?.mode === 'bigmoe-edge'
+    ? 'SSD/NAND <strong>ssdBW</strong> → Host DRAM <strong>dramBW</strong> → serial CPU Expert execution <strong>runtime.threads</strong>'
+    : 'SSD/NAND <strong>ssdBW</strong> → Host DRAM <strong>dramBW</strong> → 개별 GPU 링크 <strong>pcieBW</strong>';
 }
 
 function sweepBaselineSummaryHtml(config, source = '현재 입력값 스냅샷') {
   if (!config) return '<b>기준값을 사용할 수 없습니다.</b>';
-  const fields = [
-    ['엔진', config.mode], ['메모리 구조', config.arch], ['Host 메모리', `${config.host} GB`], ['DRAM 대역폭', `${config.dramBW} GB/s`],
-    ['SSD 대역폭', `${config.ssdBW} GB/s`], ['PCIe 대역폭', config.arch === 'unified' ? '통합 메모리에서는 사용 안 함' : `${config.pcieBW} GB/s`],
-    ['프롬프트 / 출력', `${config.prompt} / ${config.output} 토큰`], ['동시 시퀀스', `${config.conc}개`]
-  ];
+  const fields = config.mode === 'bigmoe-edge'
+    ? [
+        ['엔진', config.mode], ['실행', `CPU-only ${config.runtime.execution}`], ['Host 메모리', `${config.host} GB`],
+        ['DRAM 대역폭', `${config.dramBW} GB/s`], ['SSD 대역폭', `${config.ssdBW} GB/s`],
+        ['I/O 실행 lane', `${config.runtime.ioThreads}개`], ['Expert cache', `${config.runtime.cacheMiB} MiB`],
+        ['프롬프트 / 출력', `${config.prompt} / ${config.output} 토큰`], ['동시 시퀀스', `${config.conc}개`]
+      ]
+    : [
+        ['엔진', config.mode], ['메모리 구조', config.arch], ['Host 메모리', `${config.host} GB`], ['DRAM 대역폭', `${config.dramBW} GB/s`],
+        ['SSD 대역폭', `${config.ssdBW} GB/s`], ['PCIe 대역폭', config.arch === 'unified' ? '통합 메모리에서는 사용 안 함' : `${config.pcieBW} GB/s`],
+        ['프롬프트 / 출력', `${config.prompt} / ${config.output} 토큰`], ['동시 시퀀스', `${config.conc}개`]
+      ];
   return `<div class="baselineTitle"><b>스윕 기준값</b><span>${advisorEscape(source)}</span></div><p>스윕 시작 시점의 스냅샷입니다. 실행 후 입력 폼을 바꿔도 이미 생성된 시나리오는 변경되지 않습니다.</p><dl>${fields.map(([label, value]) => `<div><dt>${advisorEscape(label)}</dt><dd>${advisorEscape(String(value))}</dd></div>`).join('')}</dl>`;
 }
 
@@ -137,6 +152,8 @@ function localizeSweepMessage(message) {
 }
 
 function renderSweepBaselineSummary(config = readCurrentSweepConfig(), source) {
+  const dataPath = $('sweepDataPath');
+  if (dataPath) dataPath.innerHTML = sweepDataPathHtml(config);
   const target = $('sweepBaselineSummary');
   if (target) target.innerHTML = sweepBaselineSummaryHtml(config, source);
 }
@@ -441,7 +458,9 @@ async function runSweepFromUI(options = {}) {
   const generation = ++sweepGeneration;
   try {
     const requestedBaseline = readCurrentSweepConfig();
-    const validation = validateSimulationConfig(requestedBaseline);
+    const validation = requestedBaseline.mode === 'bigmoe-edge'
+      ? validateBigMoeEdgeConfig(requestedBaseline)
+      : validateSimulationConfig(requestedBaseline);
     if (!validation.valid) throw new Error(`기준 설정이 잘못되었습니다: ${formatConfigErrors(validation)}`);
     resetSweepResults();
     $('sweepOutput').hidden = false;

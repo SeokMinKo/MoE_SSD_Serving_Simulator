@@ -150,7 +150,11 @@ function guidedSweepParameterFor(resourceId, config) {
     if (config?.mode === 'afm3') return 'patchBW';
     return config?.arch === 'discrete' ? 'pcieBW' : 'dramBW';
   }
-  if (resourceId === 'compute') return config?.mode === 'afm3' ? 'ffn' : 'attn';
+  if (resourceId === 'compute') {
+    if (config?.mode === 'afm3') return 'ffn';
+    if (config?.mode === 'bigmoe-edge') return 'runtime.attentionMs';
+    return 'attn';
+  }
   if (resourceId === 'capacity-policy') return 'host';
   return null;
 }

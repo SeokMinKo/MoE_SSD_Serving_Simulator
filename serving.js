@@ -134,10 +134,40 @@ function defaultServingRequests(config) {
   return Array.from({ length: config.conc }, (_, index) => ({ id: `request-${index + 1}`, arrivalMs: 0, output: config.output }));
 }
 
+function bigMoeCanonicalRequestError(config, requests, servingOptions) {
+  if (!servingOptions || typeof servingOptions !== 'object' || Array.isArray(servingOptions) || Object.keys(servingOptions).length !== 0) {
+    return 'BigMoEEdge serial v1 does not support scheduler options.';
+  }
+  const requestError = validateServingRequests(config, requests, servingOptions);
+  if (requestError) return requestError;
+  const request = requests[0];
+  const keys = Object.keys(request).sort();
+  if (keys.length !== 3 || keys[0] !== 'arrivalMs' || keys[1] !== 'id' || keys[2] !== 'output' ||
+      request.id !== 'request-1' || request.arrivalMs !== 0 || request.output !== config.output) {
+    return "BigMoEEdge serial v1 requires the canonical BigMoEEdge request: id 'request-1', arrivalMs 0, and output equal to config.output.";
+  }
+  return null;
+}
+
 function runSimulationConfig(config, servingOptions = {}, requestSpecs = undefined) {
+  if (!config || !['colibri', 'afm3', 'bigmoe-edge'].includes(config.mode)) {
+    return {
+      error: `Unsupported simulation mode: ${config?.mode ?? 'missing'}`,
+      errorCode: 'UNSUPPORTED_MODE'
+    };
+  }
+  const requests = requestSpecs === undefined ? defaultServingRequests(config) : requestSpecs;
+  if (config.mode === 'bigmoe-edge') {
+    const requestError = bigMoeCanonicalRequestError(config, requests, servingOptions);
+    if (requestError) return { error: requestError, errorCode: 'INVALID_REQUESTS' };
+    const result = simulateBigMoeEdge(config);
+    result.c = config;
+    result.agg = result.tps || 0;
+    result.runId = servingRunId(config, requests);
+    return result;
+  }
   const engine = config.mode === 'afm3' ? simulateAFM : simulateColibri;
   const placedConfig = config.mode === 'colibri' ? applyColibriPlacement(config) : config;
-  const requests = requestSpecs === undefined ? defaultServingRequests(config) : requestSpecs;
   const aggregateMemoryResult = engine(placedConfig);
   if (aggregateMemoryResult.error) {
     aggregateMemoryResult.runId = servingRunId(aggregateMemoryResult.c || placedConfig, requests);

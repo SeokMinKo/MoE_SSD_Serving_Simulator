@@ -19,7 +19,7 @@ function helpDirection(id) {
 
 function parameterHelpForControl(id, labelText = '') {
   const key = HELP_KEY_OVERRIDES[id] || id;
-  const engine = COLIBRI_HELP_IDS.has(id) ? 'Colibri 전용' : AFM_HELP_IDS.has(id) ? 'AFM 전용' : '모든 엔진 (Colibri 및 AFM)';
+  const engine = COLIBRI_HELP_IDS.has(id) ? 'Colibri 전용' : AFM_HELP_IDS.has(id) ? 'AFM 전용' : '모든 엔진 (AFM, Colibri 및 BigMoEEdge)';
   const label = labelText || ({ ssdBW: '유효 SSD / NAND 대역폭' })[id] || id;
   return `${label}: 이 입력은 시뮬레이터 설정 \`${key}\`를 지정합니다. 단위: ${helpUnit(id, label)}. 적용 대상: ${engine}. ${helpDirection(id)} 추정 민감도 시뮬레이터 · 미검증 알파 경계의 상대 민감도 입력입니다.`;
 }

@@ -1,6 +1,6 @@
 # MoE SSD Serving Simulator
 
-브라우저에서 실행되는 Colibri 및 AFM 3 Core Advanced용 SSD/NAND offloading 시뮬레이터입니다. 절대 성능 예측보다 **Storage·DRAM·Memory Capacity·Swap 정책 변화에 따른 병목과 상대 트렌드 분석**을 목표로 합니다.
+브라우저에서 실행되는 **Colibri**, **AFM 3 Core Advanced**, **BigMoEEdge** 3-engine MoE SSD/NAND offloading 시뮬레이터입니다. 절대 성능 예측보다 **Storage·DRAM·Memory Capacity 정책 변화에 따른 병목과 상대 트렌드 분석**을 목표로 합니다. BigMoEEdge는 llama.cpp 기반 CPU-only serial Expert streaming을 별도 계약으로 모델링합니다.
 
 > Current version: **V1.6.2 — Estimated sensitivity simulator / Unvalidated Alpha**
 
@@ -43,6 +43,14 @@ node tools/hardware-sweep.cjs
   - 32-token selection window
   - Delta Routed Expert loading
   - Shared/Current Routed weight pinned
+- **BigMoEEdge · llama.cpp CPU Streaming**
+  - CPU-only serial execution, request concurrency 1
+  - GGUF gate/up/down projection byte geometry와 projection별 O_DIRECT 4 KiB alignment
+  - Global `(layer, expert)` byte-LRU와 SSD I/O lane timing
+  - CPU Expert kernel/DRAM roofline 분리, Host DRAM pre-decode admission
+  - GPU/VRAM/PCIe work 0의 fail-closed backend contract
+  - `bmoe_metrics v2` residual telemetry evidence와 `moe-ssd-sim/v6` deterministic replay
+  - Native holdout 전까지 **Unvalidated Alpha**이며 절대 TPS/TPOT 예측에 사용하지 않음
 
 ## Published topology presets
 
@@ -60,6 +68,9 @@ HW selector는 Synthetic 이름 대신 NVIDIA DGX Spark, Apple MacBook Pro/Studi
 
 ## V1.6.2 주요 변경
 
+- AFM / Colibri / BigMoEEdge 3-engine selector와 main-thread·simulation Worker·replay Worker의 명시적 backend dispatch
+- BigMoEEdge CPU-only serial GGUF Expert streaming, fixed global byte-LRU, CPU/storage/DRAM Advisor·Sweep, telemetry importer 및 V6 artifact/replay
+- BigMoEEdge에서 아직 모델링하지 않은 concurrency, overlap, compression, swap, reclaim, dense mmap/page-cache 동작을 fail-closed하고 GPU/PCIe/VRAM work를 0으로 고정
 - 압축 KV partial-touch에서 이번에 swap-in한 원본에 재접근 비율을 두 번 적용하던 해제 비용 과소계산 수정
 - AFM `totalB`를 성능 Sweep에서 제외하고 NAND 저장 용량 산정용 메타데이터로 명시
 - `prompt`, `output`, `swapWriteRatio`의 검증·Sweep·브라우저 허용 범위를 단일 계약으로 통합
@@ -101,7 +112,8 @@ HW selector는 Synthetic 이름 대신 NVIDIA DGX Spark, Apple MacBook Pro/Studi
 - 각 scenario 사이에서 pause/resume/cancel할 수 있으며 이미 완료된 결과는 보존합니다.
 - 결과는 baseline과 함께 TTFT mean/p50/p95, single-sequence TPS, aggregate TPS를 별도 그래프와 raw table로 표시합니다.
 - invalid/OOM point는 raw status와 reason을 보존하고 그래프에서 정상점으로 연결하지 않습니다.
-- CSV export와 scenario V5 JSON export를 지원합니다. JSON import는 exact schema와 동일 build provenance를 검증하고, 저장된 sweep 결과를 신뢰하지 않은 채 최대 50개 scenario를 deterministic replay합니다.
+- CSV export와 scenario JSON export를 지원합니다. AFM/Colibri는 V5, BigMoEEdge는 CPU-only 실행·telemetry evidence·scheduler identity를 결속하는 V6를 사용합니다. JSON import는 exact schema와 동일 build provenance를 검증하고, 저장된 sweep 결과를 신뢰하지 않은 채 최대 50개 scenario를 deterministic replay합니다.
+- Clean release에는 `release-manifest.json`과 `release-manifest.sha256`이 포함됩니다. Manifest는 UTF-8/LF, 2-space JSON, UTF-8 bytewise path ordering, final LF를 사용하며 각 payload path의 SHA-256을 기록합니다. `release-manifest.sha256`은 manifest 파일의 exact bytes를 검증합니다.
 
 이 기능은 사용자 실행형 synthetic counterfactual 분석이며 Advisor가 자동으로 개선율을 예측하는 기능이 아닙니다.
 

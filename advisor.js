@@ -74,27 +74,28 @@ function advisorQueueFraction(serving, resourceName, phase) {
 function advisorRecommendation(resourceId, score, mode, urgent = false) {
   const priority = urgent ? 'Urgent' : score >= 35 ? 'Consider' : 'Monitor';
   const afm = mode === 'afm3';
+  const bigMoe = mode === 'bigmoe-edge';
   const recommendations = {
     storage: {
-      controls: afm ? 'ssdBW, lat, afmOverlap, afmFreq' : 'ssdBW, lat, qd, dcache, page, pinned, prefetch controls',
-      direction: afm ? 'ssdBW ↑; lat ↓; overlap/frequency를 조정해 window read ↓' : 'ssdBW/qd/cache 용량 ↑; lat/Expert miss/낭비된 prefetch ↓',
+      controls: afm ? 'ssdBW, lat, afmOverlap, afmFreq' : bigMoe ? 'ssdBW, lat, runtime.ioThreads, runtime.cacheMiB, runtime.odirect' : 'ssdBW, lat, qd, dcache, page, pinned, prefetch controls',
+      direction: afm ? 'ssdBW ↑; lat ↓; overlap/frequency를 조정해 window read ↓' : bigMoe ? 'ssdBW/runtime.ioThreads/cacheMiB ↑; lat/O_DIRECT amplification/Expert miss ↓' : 'ssdBW/qd/cache 용량 ↑; lat/Expert miss/낭비된 prefetch ↓',
       condition: '스토리지 서비스 요구량 또는 모델링된 큐 지연이 이 단계에서 유의미한 비중을 차지합니다.',
       tradeoff: '높은 queue depth는 경합과 tail latency를 늘릴 수 있고, 큰 cache는 메모리를 사용합니다. 유효 SSD 대역폭에는 장치 보정이 필요합니다.'
     },
     'data-movement': {
-      controls: afm ? 'dramBW, afmPatchBW, afmDoubleBuffer, afmChunkMode' : 'pcieBW, dramBW, vcache, pinned, placement',
-      direction: afm ? 'dramBW/patchBW ↑; 검증된 pipelining과 double buffer 고려' : 'pcieBW/dramBW/VRAM 상주량 ↑; Host→Device 전송 ↓',
+      controls: afm ? 'dramBW, afmPatchBW, afmDoubleBuffer, afmChunkMode' : bigMoe ? 'dramBW, runtime.threads, runtime.referenceThreads, runtime.threadScalingExponent' : 'pcieBW, dramBW, vcache, pinned, placement',
+      direction: afm ? 'dramBW/patchBW ↑; 검증된 pipelining과 double buffer 고려' : bigMoe ? 'dramBW ↑ 또는 routed projection bytes ↓; CPU thread assumption은 native holdout으로 보정' : 'pcieBW/dramBW/VRAM 상주량 ↑; Host→Device 전송 ↓',
       condition: 'PCIe 전송 요구량 또는 노출된 DRAM 지연이 이 단계에서 유의미합니다.',
       tradeoff: '상주량 증가는 VRAM/RAM을 사용하고 pipelining에는 buffer 용량이 필요합니다. 설정 대역폭은 실측 service curve가 아닙니다.'
     },
     compute: {
-      controls: afm ? 'afmAttn, afmFFN, afmRuntime, afmPrefillTPS' : 'attn, ems, par, prefillSpeedup',
-      direction: afm ? '모델링된 연산 비용 ↓ 또는 보정된 prefillTPS ↑' : '모델링된 Attention/Expert 비용 ↓; 가능한 병렬성/prefill 가속 ↑',
+      controls: afm ? 'afmAttn, afmFFN, afmRuntime, afmPrefillTPS' : bigMoe ? 'runtime.threads, runtime.referenceThreads, runtime.threadScalingExponent, runtime.attentionMs, runtime.expertMs, runtime.prefillTPS' : 'attn, ems, par, prefillSpeedup',
+      direction: afm ? '모델링된 연산 비용 ↓ 또는 보정된 prefillTPS ↑' : bigMoe ? '보정된 Attention/Expert kernel 비용 ↓; threads scaling은 reference와 holdout 범위 안에서만 사용' : '모델링된 Attention/Expert 비용 ↓; 가능한 병렬성/prefill 가속 ↑',
       condition: '모델링된 연산 요구량이 단계 경과시간에서 유의미한 비중을 차지합니다.',
       tradeoff: 'Kernel 실행 가능성, 수치 품질, batch 효과, 실제 accelerator 점유율은 이 시뮬레이터의 범위 밖입니다.'
     },
     'capacity-policy': {
-      controls: afm ? 'host, context, conc, memPolicy, compression/swap controls, afmDoubleBuffer' : 'host, vram, context, conc, placement/cache budgets, compression/swap controls',
+      controls: afm ? 'host, context, conc, memPolicy, compression/swap controls, afmDoubleBuffer' : bigMoe ? 'host, context, runtime.cacheMiB, model.denseResidentGB, model.sharedExpertGB, model.kvKB' : 'host, vram, context, conc, placement/cache budgets, compression/swap controls',
       direction: '사용 가능 용량/상주량 ↑ 또는 context/concurrency/cache 압력 ↓; reclaim/compression/swap 정책 검토',
       condition: urgent ? '합성 실행이 OOM에 도달했으므로 완료된 토큰의 근거만 유효합니다.' : '메모리 사용률 또는 모델링된 압력 상태의 심각도가 높습니다.',
       tradeoff: '용량 증가는 비용을 바꾸고, compression은 연산을 사용하며, swap은 SSD 쓰기와 지연을 늘립니다. workload 축소는 시나리오 자체를 바꿉니다.'
