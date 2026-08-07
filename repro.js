@@ -24,7 +24,9 @@ function summarizeSimulationResult(result) {
     peakSwapGB: Number(result.state?.peakSwapGB ?? 0),
     storagePerTokenGB: Number(serving?.completedTokens ? schedulerStorageGB / serving.completedTokens : result.ssdPt ?? 0),
     oom: Boolean(result.oom || result.state?.oom),
-    modelStatus: serving?.modelStatus || 'Estimated · single-request trend model'
+    modelStatus: serving?.modelStatus || (result.mode === 'bigmoe-edge'
+      ? 'Estimated · BigMoEEdge CPU serial Unvalidated Alpha'
+      : 'Estimated · single-request trend model')
   };
 }
 
@@ -61,6 +63,8 @@ function serializeSweepExecution(execution) {
 function scenarioReplayWork(config) {
   if (config?.mode === 'colibri') return colibriSimulationWork(config).replayWork;
   if (config?.mode === 'afm3') return config.layers * config.output * (config.conc > 1 ? config.conc + 1 : 1);
+  if (config?.mode === 'bigmoe-edge') return config.model.layers * config.model.active *
+    config.model.expertProjectionMiB.length * config.output;
   return Infinity;
 }
 
@@ -75,7 +79,9 @@ function assertScenarioReplayBudget(config, sweep) {
 
 function createScenarioArtifact(config, result, sweepExecution = null) {
   const canonicalConfig = sweepClone(result?.c || config);
-  const validation = validateSimulationConfig(canonicalConfig);
+  const validation = canonicalConfig?.mode === 'bigmoe-edge'
+    ? validateBigMoeEdgeConfig(canonicalConfig)
+    : validateSimulationConfig(canonicalConfig);
   if (!validation.valid) throw new Error(`Invalid configuration: ${formatConfigErrors(validation)}`);
   if (result?.oom || result?.state?.oom) throw new Error('OOM scenario results cannot be exported as completed-population artifacts.');
   if (result?.error) throw new Error(`Canonical scenario simulation failed: ${result.error}`);
@@ -126,7 +132,9 @@ function validateAndReplaySweep(sweep) {
   if (sweep === null) return;
   if (!sweep || sweep.schema !== 'parameter-sweep/v1') throw new Error('Invalid imported sweep schema.');
   if (sweep.status !== 'completed') throw new Error('Only completed sweep snapshots can be imported.');
-  const baselineValidation = validateSimulationConfig(sweep.baselineConfig);
+  const baselineValidation = sweep.baselineConfig?.mode === 'bigmoe-edge'
+    ? validateBigMoeEdgeConfig(sweep.baselineConfig)
+    : validateSimulationConfig(sweep.baselineConfig);
   if (!baselineValidation.valid) throw new Error(`Invalid imported sweep baseline: ${formatConfigErrors(baselineValidation)}`);
   if (!sweep.definition || !['oat', 'grid'].includes(sweep.definition.mode) || !Number.isSafeInteger(sweep.definition.total) || sweep.definition.total < 1 || !Number.isSafeInteger(sweep.definition.omitted) || sweep.definition.omitted < 0) throw new Error('Invalid imported sweep definition.');
   if (!Array.isArray(sweep.selections) || !Array.isArray(sweep.results) || sweep.results.length > SWEEP_LIMIT) throw new Error('Invalid imported sweep result collection.');
@@ -353,6 +361,22 @@ function applyScenarioConfig(config) {
     setControlValue('afmActive', config.active);
     setControlValue('afmAttn', config.attn);
   }
+  if (config.mode === 'bigmoe-edge') {
+    const modelControls = {
+      arch: 'bmoeArch', layers: 'bmoeLayers', experts: 'bmoeExperts', active: 'bmoeActive',
+      denseResidentGB: 'bmoeDenseGB', sharedExpertGB: 'bmoeSharedGB', kvKB: 'bmoeKvKB', quantization: 'bmoeQuantization'
+    };
+    const runtimeControls = {
+      threads: 'bmoeThreads', referenceThreads: 'bmoeRefThreads', threadScalingExponent: 'bmoeThreadExponent',
+      ioThreads: 'bmoeIoThreads', odirect: 'bmoeOdirect', cacheMode: 'bmoeCacheMode', cacheMiB: 'bmoeCacheMiB',
+      denseWeights: 'bmoeDenseWeights', attentionMs: 'bmoeAttentionMs', expertMs: 'bmoeExpertMs',
+      prefillTPS: 'bmoePrefillTPS', managementMs: 'bmoeManagementMs', loopOverheadMs: 'bmoeLoopMs'
+    };
+    for (const [key, id] of Object.entries(modelControls)) setControlValue(id, config.model?.[key]);
+    for (const [key, id] of Object.entries(runtimeControls)) setControlValue(id, config.runtime?.[key]);
+    const projections = config.model?.expertProjectionMiB || [];
+    ['bmoeGateMiB', 'bmoeUpMiB', 'bmoeDownMiB'].forEach((id, index) => setControlValue(id, projections[index]));
+  }
 }
 
 let baselineScenario = null;
@@ -377,8 +401,13 @@ function updateComparison(candidate) {
 
 function downloadScenario() {
   if (!lastResult || lastResult.error) return;
-  const config = lastResult.c || ($('mode').value === 'afm3' ? readAFM() : readColibri());
-  const artifact = createScenarioArtifact(config, lastResult, typeof activeSweepExecution !== 'undefined' ? activeSweepExecution : null);
+  const config = lastResult.c || ($('mode').value === 'afm3'
+    ? readAFM()
+    : $('mode').value === 'bigmoe-edge' ? readBigMoeEdge() : readColibri());
+  const telemetryEvidence = config.mode === 'bigmoe-edge' && typeof getBigMoeImportedEvidence === 'function'
+    ? getBigMoeImportedEvidence()
+    : null;
+  const artifact = createScenarioArtifact(config, lastResult, typeof activeSweepExecution !== 'undefined' ? activeSweepExecution : null, telemetryEvidence);
   const blob = new Blob([JSON.stringify(artifact, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -440,7 +469,7 @@ async function importScenarioFile(file) {
       const result = verified.replayResult;
       lastResult = result;
       render(result);
-      const replay = createScenarioArtifact(result.c, result, null);
+      const replay = createScenarioArtifact(result.c, result, null, artifact.telemetryEvidence);
       if (replay.runId !== artifact.runId) throw new Error('Imported scenario replay produced a different run ID.');
       if (!resultSummariesMatch(artifact.result, replay.result)) throw new Error('Imported scenario replay did not reproduce the stored result summary.');
       if (!bottleneckInsightsMatch(artifact.insight, replay.insight)) throw new Error('Imported scenario replay did not reproduce the stored bottleneck insight.');

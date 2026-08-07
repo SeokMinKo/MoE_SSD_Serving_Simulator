@@ -194,6 +194,59 @@ function readColibri() {
   return c;
 }
 
+function readBigMoeEdge() {
+  const preset = bigMoeEdgePreset();
+  const controlValue = (id, fallback) => {
+    const control = $(id);
+    return control && control.value !== '' ? control.value : fallback;
+  };
+  return {
+    mode: 'bigmoe-edge',
+    prompt: intVal('prompt', preset.prompt),
+    output: intVal('output', preset.output),
+    context: intVal('context', preset.context),
+    conc: intVal('conc', 1),
+    seed: intVal('seed', preset.seed),
+    host: val('host', preset.host),
+    dramBW: val('dramBW', preset.dramBW),
+    ssdBW: val('ssdBW', preset.ssdBW),
+    lat: val('lat', preset.lat),
+    mem: { ...preset.mem },
+    model: {
+      arch: controlValue('bmoeArch', preset.model.arch),
+      layers: intVal('bmoeLayers', preset.model.layers),
+      experts: intVal('bmoeExperts', preset.model.experts),
+      active: intVal('bmoeActive', preset.model.active),
+      expertProjectionMiB: [
+        val('bmoeGateMiB', preset.model.expertProjectionMiB[0]),
+        val('bmoeUpMiB', preset.model.expertProjectionMiB[1]),
+        val('bmoeDownMiB', preset.model.expertProjectionMiB[2])
+      ],
+      denseResidentGB: val('bmoeDenseGB', preset.model.denseResidentGB),
+      kvKB: val('bmoeKvKB', preset.model.kvKB),
+      quantization: controlValue('bmoeQuantization', preset.model.quantization),
+      sharedExpertGB: val('bmoeSharedGB', preset.model.sharedExpertGB)
+    },
+    runtime: {
+      threads: intVal('bmoeThreads', preset.runtime.threads),
+      referenceThreads: intVal('bmoeRefThreads', preset.runtime.referenceThreads),
+      threadScalingExponent: val('bmoeThreadExponent', preset.runtime.threadScalingExponent),
+      ioThreads: intVal('bmoeIoThreads', preset.runtime.ioThreads),
+      odirect: $('bmoeOdirect')?.checked ?? preset.runtime.odirect,
+      execution: 'serial',
+      cacheMode: controlValue('bmoeCacheMode', preset.runtime.cacheMode),
+      cacheMiB: val('bmoeCacheMiB', preset.runtime.cacheMiB),
+      denseWeights: controlValue('bmoeDenseWeights', preset.runtime.denseWeights),
+      attentionMs: val('bmoeAttentionMs', preset.runtime.attentionMs),
+      expertMs: val('bmoeExpertMs', preset.runtime.expertMs),
+      prefillTPS: val('bmoePrefillTPS', preset.runtime.prefillTPS),
+      managementMs: val('bmoeManagementMs', preset.runtime.managementMs),
+      loopOverheadMs: val('bmoeLoopMs', preset.runtime.loopOverheadMs)
+    },
+    calibration: { ...preset.calibration }
+  };
+}
+
 function readAFM() {
   const b = readCommon();
   const active = intVal('afmActive', 46);

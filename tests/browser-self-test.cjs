@@ -39,7 +39,7 @@ const document = {
   }
 };
 
-const moduleSource = ['core.js', 'help.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'serving.js', 'advisor.js', 'storage-io.js', 'sweep.js', 'repro.js', 'playback.js', 'render.js', 'sweep-ui.js', 'ui.js']
+const moduleSource = ['core.js', 'help.js', 'presets.js', 'config.js', 'memory.js', 'colibri.js', 'afm.js', 'bigmoe-config.js', 'bigmoe-cache.js', 'bigmoe-edge.js', 'serving.js', 'advisor.js', 'storage-io.js', 'sweep.js', 'repro.js', 'playback.js', 'render.js', 'sweep-ui.js', 'ui.js']
   .filter(file => fs.existsSync(path.join(root, file)))
   .map(file => fs.readFileSync(path.join(root, file), 'utf8'))
   .join('\n');
@@ -199,6 +199,145 @@ test('P1: topology preset control is accessible and wired into the browser entry
   assert.match(testsInitFull, /initializeModelPresets\(\)/);
   assert.match(testsInitFull, /\$\('modelPreset'\)\.onchange/);
   assert.match(testsInitFull, /for \(const id of \['layers', 'experts', 'active'\]\) \$\(id\)\.oninput = markModelPresetCustom/);
+});
+
+test('P0: browser entry exposes exactly AFM, Colibri, and BigMoEEdge with safe script order', () => {
+  const modeBody = html.match(/<select id="mode">([\s\S]*?)<\/select>/)?.[1] || '';
+  const modes = [...modeBody.matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)]
+    .map(match => [match[1], match[2]]);
+
+  assert.deepEqual(modes, [
+    ['colibri', 'Colibri Token-Routed MoE'],
+    ['afm3', 'AFM 3 Core Advanced IFP'],
+    ['bigmoe-edge', 'BigMoEEdge · llama.cpp CPU Streaming']
+  ]);
+  assert.ok(html.indexOf('<script src="bigmoe-config.js"></script>') < html.indexOf('<script src="bigmoe-edge.js"></script>'));
+  assert.ok(html.indexOf('<script src="bigmoe-cache.js"></script>') < html.indexOf('<script src="bigmoe-edge.js"></script>'));
+  assert.ok(html.indexOf('<script src="bigmoe-edge.js"></script>') < html.indexOf('<script src="serving.js"></script>'));
+});
+
+test('P0: BigMoEEdge browser reader returns a valid CPU-only exact schema', () => {
+  const available = vm.runInContext("typeof readBigMoeEdge === 'function'", sandbox);
+  assert.equal(available, true, 'readBigMoeEdge must exist');
+  const config = vm.runInContext('readBigMoeEdge()', sandbox);
+  const valid = vm.runInContext('validateBigMoeEdgeConfig(readBigMoeEdge()).valid', sandbox);
+
+  assert.equal(valid, true);
+  assert.equal(config.mode, 'bigmoe-edge');
+  assert.equal('vram' in config, false);
+  assert.equal('pcieBW' in config, false);
+  assert.equal(config.runtime.execution, 'serial');
+});
+
+test('P1: Sweep Lab reads the selected BigMoEEdge baseline instead of Colibri', () => {
+  const original = elements.get('mode').value;
+  elements.get('mode').value = 'bigmoe-edge';
+  const config = vm.runInContext('readCurrentSweepConfig()', sandbox);
+  const summary = vm.runInContext('sweepBaselineSummaryHtml(readCurrentSweepConfig())', sandbox);
+  const dataPath = vm.runInContext('sweepDataPathHtml(readCurrentSweepConfig())', sandbox);
+  elements.get('mode').value = original;
+
+  assert.equal(config.mode, 'bigmoe-edge');
+  assert.equal(config.runtime.execution, 'serial');
+  assert.equal('vram' in config, false);
+  assert.equal('pcieBW' in config, false);
+  assert.doesNotMatch(summary, /undefined|PCIe|GPU/);
+  assert.match(summary, /CPU|serial/);
+  assert.doesNotMatch(dataPath, /PCIe|GPU/);
+  assert.match(dataPath, /CPU|Expert/);
+});
+
+test('P1: BigMoEEdge Sweep Lab run handler validates and plans with the BigMoE Worker baseline', async () => {
+  const original = elements.get('mode').value;
+  const progressTrack = document.getElementById('sweepProgressTrack');
+  progressTrack.setAttribute = (name, value) => { progressTrack[name] = String(value); };
+  elements.get('mode').value = 'bigmoe-edge';
+  const outcome = await vm.runInContext(`(async () => {
+    const originalSimulate = simulateSweepInWorker;
+    const originalSchedule = scheduleSweepTick;
+    simulateSweepInWorker = async config => {
+      const result = runSimulationConfig(config, {}, [{ id: 'request-1', arrivalMs: 0, output: config.output }]);
+      return { config: sweepClone(result.c), metrics: summarizeSweepResult(result), runId: result.runId };
+    };
+    scheduleSweepTick = () => {};
+    await runSweepFromUI({ guidedContract: {
+      schema: 'guided-oat/v1', objective: 'aggregateTPS',
+      selections: [{ path: 'runtime.threads', values: [4, 8] }]
+    } });
+    const snapshot = activeSweepExecution ? {
+      mode: activeSweepExecution.baselineConfig.mode,
+      execution: activeSweepExecution.baselineConfig.runtime.execution,
+      baselineStatus: activeSweepExecution.baselineMetrics.status,
+      scenarios: activeSweepExecution.scenarios.map(row => row.config.mode),
+      status: activeSweepExecution.status
+    } : null;
+    activeSweepExecution = null;
+    sweepGeneration += 1;
+    simulateSweepInWorker = originalSimulate;
+    scheduleSweepTick = originalSchedule;
+    return snapshot;
+  })()`, sandbox);
+  elements.get('mode').value = original;
+
+  assert.ok(outcome, 'run handler must create a sweep execution');
+  assert.equal(outcome.mode, 'bigmoe-edge');
+  assert.equal(outcome.execution, 'serial');
+  assert.equal(outcome.baselineStatus, 'completed');
+  assert.ok(outcome.scenarios.length > 0);
+  assert.equal(outcome.scenarios.every(mode => mode === 'bigmoe-edge'), true);
+});
+
+test('P0: simulate routes the BigMoEEdge selector through the CPU streaming reader', () => {
+  const original = elements.get('mode').value;
+  elements.get('mode').value = 'bigmoe-edge';
+  const result = vm.runInContext('simulate()', sandbox);
+  elements.get('mode').value = original;
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.engine, 'BigMoEEdge');
+  assert.equal(result.c.mode, 'bigmoe-edge');
+});
+
+test('P1: BigMoEEdge exposes dedicated CPU, GGUF, lane, and cache controls', () => {
+  const requiredIds = [
+    'bmoeArch', 'bmoeLayers', 'bmoeExperts', 'bmoeActive',
+    'bmoeGateMiB', 'bmoeUpMiB', 'bmoeDownMiB', 'bmoeDenseGB', 'bmoeSharedGB',
+    'bmoeKvKB', 'bmoeQuantization', 'bmoeThreads', 'bmoeRefThreads', 'bmoeThreadExponent',
+    'bmoeIoThreads', 'bmoeOdirect',
+    'bmoeCacheMode', 'bmoeCacheMiB', 'bmoeDenseWeights', 'bmoeAttentionMs',
+    'bmoeExpertMs', 'bmoePrefillTPS', 'bmoeManagementMs', 'bmoeLoopMs'
+  ];
+  for (const id of requiredIds) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(html, /class="section bigmoeOnly"/);
+  assert.match(html, /CPU-only/);
+  assert.match(html, /O_DIRECT/);
+  assert.match(html, /미검증 알파/);
+});
+
+test('P0: mode visibility handles Colibri, AFM, and BigMoEEdge independently', () => {
+  assert.match(testsInitFull, /const mode = \$\('mode'\)\.value;/);
+  assert.match(testsInitFull, /const bigmoe = mode === 'bigmoe-edge';/);
+  assert.match(testsInitFull, /querySelectorAll\('\.bigmoeOnly'\)/);
+  assert.match(testsInitFull, /BigMoEEdge/);
+});
+
+test('P0: BigMoEEdge renders a dedicated CPU streaming summary', () => {
+  const original = elements.get('mode').value;
+  elements.get('mode').value = 'bigmoe-edge';
+  const result = vm.runInContext('simulate()', sandbox);
+  assert.doesNotThrow(() => vm.runInContext('renderBigMoeEdge(globalThis.__renderInput)', Object.assign(sandbox, { __renderInput: result })));
+  elements.get('mode').value = original;
+
+  assert.match(elements.get('modelStatus').innerHTML, /BigMoEEdge/);
+  assert.match(elements.get('modelStatus').innerHTML, /Unvalidated Alpha/);
+  assert.match(elements.get('summary').innerHTML, /CPU threads/);
+  assert.doesNotMatch(elements.get('summary').innerHTML, /PCIe/);
+});
+
+test('P0: BigMoEEdge token playback copy never falls back to Colibri', () => {
+  const copy = vm.runInContext("sampleText('bigmoe-edge')", sandbox);
+  assert.match(copy, /BigMoEEdge/);
+  assert.doesNotMatch(copy, /Colibri/);
 });
 
 test('P1: topology preset provenance is repository-local and checked by the quality gate', () => {
@@ -1003,6 +1142,42 @@ test('P1: guided bottleneck analysis deduplicates resources and chooses at most 
     assert.ok(selection.values.length >= 2 && selection.values.length <= 5, JSON.stringify(selection));
     assert.equal(new Set(selection.values).size, selection.values.length);
   }
+});
+
+test('BigMoE guided compute and imported nested controls preserve the CPU-only scenario', () => {
+  const result = vm.runInContext(`(() => {
+    const config = bigMoeEdgePreset();
+    config.model.layers = 12;
+    config.model.expertProjectionMiB = [1.1, 2.2, 3.3];
+    config.runtime.threads = 7;
+    config.runtime.cacheMode = 'off';
+    config.runtime.cacheMiB = 0;
+    applyScenarioConfig(config);
+    return {
+      computePath: guidedSweepParameterFor('compute', config),
+      layers: $('bmoeLayers').value,
+      gate: $('bmoeGateMiB').value,
+      up: $('bmoeUpMiB').value,
+      down: $('bmoeDownMiB').value,
+      threads: $('bmoeThreads').value,
+      cacheMode: $('bmoeCacheMode').value,
+      cacheMiB: $('bmoeCacheMiB').value,
+      help: parameterHelpForControl('speed', '재생 속도')
+    };
+  })()`, sandbox);
+  assert.match(result.help, /BigMoEEdge/);
+  delete result.help;
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    computePath: 'runtime.attentionMs', layers: '12', gate: '1.1', up: '2.2', down: '3.3',
+    threads: '7', cacheMode: 'off', cacheMiB: '0'
+  });
+});
+
+test('BigMoE mode hides unsupported hardware and memory-policy controls and locks concurrency one', () => {
+  assert.match(html, /class="guidedHardware nonBigmoeHardware"/);
+  assert.match(html, /class="nonBigmoeMemoryPolicy"/);
+  assert.match(testsInitFull, /querySelectorAll\('\.nonBigmoeHardware, \.nonBigmoeMemoryPolicy'\)/);
+  assert.match(testsInitFull, /\$\('conc'\)\.disabled = bigmoe/);
 });
 
 test('P1: guided throughput summary derives improvement only from completed counterfactual metrics', () => {

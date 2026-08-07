@@ -1,5 +1,6 @@
 function simulate() {
-  const config = $('mode').value === 'afm3' ? readAFM() : readColibri();
+  const mode = $('mode').value;
+  const config = mode === 'afm3' ? readAFM() : mode === 'bigmoe-edge' ? readBigMoeEdge() : readColibri();
   return runSimulationConfig(config);
 }
 
@@ -18,9 +19,13 @@ function schedule(fn, sim) {
   anim.timer = setTimeout(() => { anim.timer = null; fn(); }, d);
 }
 function sampleText(mode) {
-  return mode === 'afm3'
-    ? 'AFM 3 Core Advanced는 선택된 Expert 집합을 윈도 동안 유지하고 메모리 압력이 발생하면 KV 압축과 스왑 트래픽이 NAND 및 DRAM 대역폭을 사용합니다. '
-    : 'Colibri는 필요한 MoE Expert를 SSD에서 DRAM으로 가져오며 캐시와 스왑 트래픽이 스토리지 및 DRAM 대역폭을 함께 사용합니다. ';
+  if (mode === 'afm3') {
+    return 'AFM 3 Core Advanced는 선택된 Expert 집합을 윈도 동안 유지하고 메모리 압력이 발생하면 KV 압축과 스왑 트래픽이 NAND 및 DRAM 대역폭을 사용합니다. ';
+  }
+  if (mode === 'bigmoe-edge') {
+    return 'BigMoEEdge는 llama.cpp CPU-only serial 실행으로 필요한 Expert projection을 SSD에서 읽고 global byte-LRU cache와 Host DRAM을 사용합니다. ';
+  }
+  return 'Colibri는 필요한 MoE Expert를 SSD에서 DRAM으로 가져오며 캐시와 스왑 트래픽이 스토리지 및 DRAM 대역폭을 함께 사용합니다. ';
 }
 function startAnim(r) {
   stop();

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const vm = require('node:vm');
@@ -553,6 +554,13 @@ test('P1: sweep metrics expose TTFT distribution plus single and aggregate TPS',
   for (const key of ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms', 'singleTPS', 'aggregateTPS']) assert.ok(Number.isFinite(summary[key]) && summary[key] >= 0, key);
   assert.ok(summary.ttftP95Ms >= summary.ttftP50Ms);
   assert.ok(summary.aggregateTPS > 0);
+});
+
+test('P1: sweep metrics reject non-finite populations instead of reporting completed zeroes', () => {
+  const summary = simulator.summarizeSweepResult({ ttft: Infinity, tps: Infinity, agg: Infinity, state: { oom: false } });
+  assert.equal(summary.status, 'invalid');
+  assert.match(summary.reason, /finite|numeric/i);
+  for (const key of ['ttftMeanMs', 'ttftP50Ms', 'ttftP95Ms', 'singleTPS', 'aggregateTPS']) assert.equal(summary[key], null);
 });
 
 test('P0: shared config runner preserves placement, concurrency, and run ID semantics', () => {
@@ -2454,6 +2462,35 @@ test('P0: release bundle derives exact clean HEAD identity from a tracked runtim
     assert.equal(fs.existsSync(path.join(output, '.env')), false, 'ignored or tracked secrets must not enter the runtime manifest');
     assert.equal(fs.existsSync(path.join(output, 'tests')), false, 'tests must not enter the runtime manifest');
     assert.equal(fs.existsSync(path.join(output, 'tools')), false, 'build tooling must not enter the runtime manifest');
+
+    const manifestPath = path.join(output, 'release-manifest.json');
+    const manifestDigestPath = path.join(output, 'release-manifest.sha256');
+    assert.equal(fs.existsSync(manifestPath), true, 'release must carry its canonical per-path manifest');
+    assert.equal(fs.existsSync(manifestDigestPath), true, 'release must carry the manifest-byte digest');
+    const manifestBytes = fs.readFileSync(manifestPath);
+    const manifest = JSON.parse(manifestBytes.toString('utf8'));
+    assert.equal(manifest.schema, 'moe-ssd-release-manifest/v1');
+    assert.equal(manifest.commit, commit);
+    assert.deepEqual(manifest.serialization, {
+      encoding: 'UTF-8',
+      jsonIndent: 2,
+      lineEnding: 'LF',
+      finalLF: true,
+      pathOrder: 'UTF-8 bytewise ascending',
+      selfReference: 'release-manifest.json and release-manifest.sha256 are excluded from files'
+    });
+    assert.equal(manifestBytes.at(-1), 0x0a, 'canonical manifest must end in LF');
+    const paths = manifest.files.map(entry => entry.path);
+    assert.deepEqual(paths, [...paths].sort((a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'))));
+    assert.equal(paths.includes('release-manifest.json'), false);
+    assert.equal(paths.includes('release-manifest.sha256'), false);
+    for (const entry of manifest.files) {
+      assert.match(entry.sha256, /^[0-9a-f]{64}$/);
+      const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(output, entry.path))).digest('hex');
+      assert.equal(entry.sha256, actual, entry.path);
+    }
+    const manifestDigest = crypto.createHash('sha256').update(manifestBytes).digest('hex');
+    assert.equal(fs.readFileSync(manifestDigestPath, 'utf8'), `${manifestDigest}  release-manifest.json\n`);
 
     fs.rmSync(output, { recursive: true, force: true });
     const capturedMarker = 'CAPTURED_COMMIT_RUNTIME_BYTES';

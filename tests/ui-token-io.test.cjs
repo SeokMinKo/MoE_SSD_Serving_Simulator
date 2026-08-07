@@ -33,6 +33,13 @@ test('I/O contract uses mode-specific demand fields without fallback double coun
   assert.equal(afm.demand, 7);
 });
 
+test('compute chart description follows the active engine without BigMoEEdge falling back to Colibri GPU copy', () => {
+  const bigmoe = tokenIO.computeDescriptionForMode('bigmoe-edge');
+  assert.match(bigmoe, /BigMoEEdge/);
+  assert.match(bigmoe, /CPU-only serial/);
+  assert.doesNotMatch(bigmoe, /Colibri|GPU/);
+});
+
 test('compute trace uses modeled compute-path elapsed time instead of wall-clock TPOT or storage waits', () => {
   const colibri = tokenIO.tokenIOBreakdown({
     tpot: 900,

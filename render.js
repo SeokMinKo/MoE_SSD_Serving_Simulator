@@ -142,6 +142,43 @@ function renderPressure(r) {
     ['DRAM 유발 지연', ms(s.totalDramStallMs / Math.max(1, r.tokens.length)) + ' / token']
   ]);
 }
+function renderBigMoeEdge(r) {
+  $('tpotLabel').textContent = '평균 TPOT';
+  $('tpsLabel').textContent = '전체 TPS';
+  $('storageLabel').textContent = '토큰당 정렬 Storage I/O';
+  $('hitLabel').textContent = '(layer, expert) LRU 적중률';
+  const count = Math.max(1, r.tokens.length);
+  const average = selector => r.tokens.reduce((sum, token) => sum + selector(token), 0) / count;
+  const averageRequestedMiB = average(token => token.requestedReadMiB);
+  const averageAlignedMiB = average(token => token.alignedReadMiB);
+  const averageStorageMs = average(token => token.timing.storageBandwidthMs + token.timing.storageCommandMs);
+  const averageCpuMs = average(token => token.computeOnlyMs);
+  $('summary').innerHTML = rows([
+    ['Backend contract', 'bigmoe-llamacpp-cpu/v1'],
+    ['Execution', 'serial · CPU-only'],
+    ['CPU threads', r.c.runtime.threads],
+    ['I/O lanes / O_DIRECT', `${r.c.runtime.ioThreads} / ${r.c.runtime.odirect ? '사용' : '사용 안 함'}`],
+    ['Architecture / quantization', `${r.c.model.arch} / ${r.c.model.quantization}`],
+    ['평균 요청 / 정렬 읽기', `${fmt(averageRequestedMiB, 3)} / ${fmt(averageAlignedMiB, 3)} MiB/token`],
+    ['평균 Storage service', ms(averageStorageMs)],
+    ['평균 CPU phase', ms(averageCpuMs)],
+    ['Global LRU / 용량', `${r.c.runtime.cacheMode} / ${fmt(r.c.runtime.cacheMiB, 0)} MiB`],
+    ['Cache hit / eviction', `${pct(r.hit)} / ${r.cacheEvictions}`],
+    ['SSD 관측 / 설정', `${fmt(r.observed, 2)} / ${fmt(r.c.ssdBW, 2)} GB/s`],
+    ['누적 Expert read', `${fmt(r.decodeStorageGB, 3)} GB`]
+  ]);
+  const last = r.tokens[r.tokens.length - 1].memory;
+  $('memory').innerHTML = rows([
+    ['물리 Host 메모리', `${fmt(last.physicalUsedGB, 3)} / ${fmt(r.c.host, 1)} GB`],
+    ['Dense 상주 가중치', `${fmt(r.c.model.denseResidentGB, 3)} GB`],
+    ['Global Expert cache', `${fmt(last.expertCacheGB, 3)} GB`],
+    ['Shared Expert', `${fmt(r.c.model.sharedExpertGB, 3)} GB`],
+    ['상주 KV', `${fmt(last.kvResidentGB, 3)} GB`],
+    ['스왑', 'V1 serial baseline에서 사용 안 함']
+  ]);
+  $('modelStatus').innerHTML = `<b>BigMoEEdge · llama.cpp CPU Expert streaming · Unvalidated Alpha</b><br>Run ID: <code>${r.runId || 'single-request'}</code><br>Upstream <b>BigMoeOnEdge</b>의 telemetry/schema와 실행 의미를 독립 구현한 serial analytic baseline입니다. GGUF projection byte, O_DIRECT 정렬, I/O lane command wave, CPU Attention/Expert, global (layer, expert) byte-LRU를 모델링합니다.<br><br><b>신뢰 경계:</b> llama.cpp fork overlap, native kernel timing, mmap page-fault/readahead, NUMA, thermal 및 multi-request CPU contention은 아직 실측 보정되지 않았습니다. 이 결과는 절대 성능 예측이 아닙니다.`;
+}
+
 function renderColibri(r) {
   $('tpotLabel').textContent = '평균 TPOT';
   $('tpsLabel').textContent = '전체 TPS';
@@ -299,7 +336,9 @@ function render(r) {
   document.body?.classList.add('hasResults');
   renderBottleneckAdvisor(insight);
   if (typeof renderGuidedAnalysis === 'function') renderGuidedAnalysis(insight, r);
-  r.mode === 'afm3' ? renderAFM(r) : renderColibri(r);
+  if (r.mode === 'afm3') renderAFM(r);
+  else if (r.mode === 'bigmoe-edge') renderBigMoeEdge(r);
+  else renderColibri(r);
   renderPressure(r);
   renderTraceTable(r);
   drawPerformance(r);

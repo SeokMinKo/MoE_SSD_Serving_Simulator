@@ -34,13 +34,17 @@ importScripts(
   'memory.js',
   'colibri.js',
   'afm.js',
+  'bigmoe-config.js',
+  'bigmoe-cache.js',
+  'bigmoe-edge.js',
   'serving.js',
   'serving-device.js',
   'advisor.js',
   'sweep.js',
   'device-experience.js',
   'repro.js',
-  'artifact-v5.js'
+  'artifact-v5.js',
+  'artifact-v6.js'
 );
 
 installDevicePlacementModel();
@@ -48,6 +52,7 @@ installDeviceServingScheduler();
 installDeviceExperienceModel();
 installDeviceArtifactModel();
 installArtifactV5();
+installArtifactV6();
 
 self.onmessage = event => {
   try {

@@ -41,6 +41,16 @@
     return nonnegative(token?.ssdGB);
   }
 
+  function computeDescriptionForMode(mode) {
+    if (mode === 'afm3') {
+      return 'AFM3의 steady compute·재선택·메모리 CPU 작업을 합산한 compute 경로 경과시간입니다. Storage I/O 서비스·큐 대기와 DRAM stall은 포함하지 않습니다.';
+    }
+    if (mode === 'bigmoe-edge') {
+      return 'BigMoEEdge CPU-only serial 실행의 Attention·Expert kernel·management·loop overhead를 합산한 compute 경로 경과시간입니다. Storage I/O 서비스·큐 대기와 DRAM stall은 포함하지 않으며 실측 native kernel timing이 아닌 모델링된 값입니다.';
+    }
+    return 'Colibri의 Attention·Runtime·CPU/GPU Expert 실행에 설정된 CPU/GPU overlap을 반영한 compute 경로 경과시간입니다. Storage I/O 서비스·큐 대기와 DRAM stall은 포함하지 않습니다.';
+  }
+
   function computeMsForToken(token, mode) {
     if (mode === 'colibri' && Number.isFinite(Number(token?.computeBreakdown?.exposedComputeMs))) {
       return nonnegative(token.computeBreakdown.exposedComputeMs);
@@ -705,6 +715,7 @@
     if (state.completedCount > 0 && (state.selectedIndex < 0 || state.followLatest)) state.selectedIndex = state.completedCount - 1;
     if (typeof document === 'object') {
       const panel = ensurePanel(document);
+      panel.querySelector('#tokenComputeDescription').textContent = computeDescriptionForMode(result.mode || result.c?.mode || 'colibri');
       panel.querySelector('#tokenIOProgressLabel').textContent = `${state.completedCount} / ${state.values.length} 토큰`;
       renderSelectedToken();
       const details = panel.querySelector('#tokenIOTableDetails');
@@ -768,6 +779,7 @@
     setStatus,
     reset,
     tokenIOBreakdown,
+    computeDescriptionForMode,
     buildTokenIOValues,
     buildTokenIOGroups,
     tokenIOScaleMax,

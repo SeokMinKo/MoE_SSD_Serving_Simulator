@@ -90,12 +90,23 @@ function tests() {
 }
 
 function syncModeControls(applyPreset = false) {
-  const afm = $('mode').value === 'afm3';
+  const mode = $('mode').value;
+  const afm = mode === 'afm3';
+  const bigmoe = mode === 'bigmoe-edge';
+  const colibri = mode === 'colibri';
   document.querySelectorAll('.afmOnly').forEach(e => e.classList.toggle('hidden', !afm));
-  document.querySelectorAll('.colibriOnly').forEach(e => e.classList.toggle('hidden', afm));
-  $('modeBadge').textContent = afm ? 'AFM 3 IFP' : 'Colibri';
+  document.querySelectorAll('.colibriOnly').forEach(e => e.classList.toggle('hidden', !colibri));
+  document.querySelectorAll('.bigmoeOnly').forEach(e => e.classList.toggle('hidden', !bigmoe));
+  document.querySelectorAll('.nonBigmoeHardware, .nonBigmoeMemoryPolicy').forEach(e => e.classList.toggle('hidden', bigmoe));
+  $('conc').disabled = bigmoe;
+  if (bigmoe) $('conc').value = '1';
+  $('modeBadge').textContent = afm ? 'AFM 3 IFP' : bigmoe ? 'BigMoEEdge' : 'Colibri';
   if (afm && applyPreset) {
     $('arch').value = 'unified'; $('host').value = '128'; $('dramBW').value = '273'; $('ssdBW').value = '9.2';
+  }
+  if (bigmoe && applyPreset) {
+    $('arch').value = 'unified'; $('host').value = '11.3'; $('dramBW').value = '60'; $('ssdBW').value = '4.5'; $('lat').value = '120'; $('conc').value = '1';
+    $('memPolicy').value = 'strict'; $('backgroundGB').value = '0.5'; $('osReservedGB').value = '1'; $('minHeadroomGB').value = '0.5';
   }
   syncPlacement();
 }

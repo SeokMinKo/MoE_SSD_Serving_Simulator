@@ -2,12 +2,13 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'dist');
 const releaseFiles = Object.freeze([
-  'index.html','build-info.js','core.js','help.js','presets.js','config.js','memory.js','colibri.js','compute.js','compute-placement.js','afm.js','storage-io.js','serving.js','serving-device.js','device-experience.js','artifact-v5.js','advisor.js','sweep.js','repro.js','ui.js','render.js','playback.js','token-io.js','ui-shadcn.css','sweep-ui.js','export-ui.js','tests-init.js','replay-worker.js','simulation-worker.js','package.json','README.md'
+  'index.html','build-info.js','core.js','help.js','presets.js','config.js','bigmoe-config.js','bigmoe-cache.js','bigmoe-edge.js','bigmoe-telemetry.js','memory.js','colibri.js','compute.js','compute-placement.js','afm.js','storage-io.js','serving.js','serving-device.js','device-experience.js','artifact-v5.js','artifact-v6.js','advisor.js','sweep.js','repro.js','ui.js','render.js','playback.js','token-io.js','ui-shadcn.css','sweep-ui.js','export-ui.js','bigmoe-telemetry-ui.js','tests-init.js','replay-worker.js','simulation-worker.js','package.json','README.md'
 ]);
 
 if (process.argv.length > 2) throw new Error('Release output is fixed to repository dist/.');
@@ -33,4 +34,25 @@ const html = fs.readFileSync(path.join(output, 'index.html'), 'utf8');
 const buildMarker = '<script src="build-info.js"></script>';
 const coreMarker = '<script src="core.js"></script>';
 if (!html.includes(buildMarker) || !html.includes(coreMarker) || html.indexOf(buildMarker) > html.indexOf(coreMarker)) throw new Error('Release index must load build-info.js before core.js.');
-process.stdout.write(`${output}\n${commit}\n${buildVersion}\n`);
+const hashFile = relative => crypto.createHash('sha256').update(fs.readFileSync(path.join(output, relative))).digest('hex');
+const bytewisePathCompare = (a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+const manifest = {
+  schema: 'moe-ssd-release-manifest/v1',
+  commit,
+  buildVersion,
+  hashAlgorithm: 'sha256',
+  serialization: {
+    encoding: 'UTF-8',
+    jsonIndent: 2,
+    lineEnding: 'LF',
+    finalLF: true,
+    pathOrder: 'UTF-8 bytewise ascending',
+    selfReference: 'release-manifest.json and release-manifest.sha256 are excluded from files'
+  },
+  files: [...releaseFiles].sort(bytewisePathCompare).map(relative => ({ path: relative, sha256: hashFile(relative) }))
+};
+const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+const manifestDigest = crypto.createHash('sha256').update(manifestBytes).digest('hex');
+fs.writeFileSync(path.join(output, 'release-manifest.json'), manifestBytes);
+fs.writeFileSync(path.join(output, 'release-manifest.sha256'), `${manifestDigest}  release-manifest.json\n`, 'utf8');
+process.stdout.write(`${output}\n${commit}\n${buildVersion}\n${manifest.files.length + 2} files\n${manifestDigest}\n`);
