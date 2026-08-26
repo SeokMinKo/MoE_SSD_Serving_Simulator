@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test tests/*.cjs",
     "test:simulator": "node --test tests/simulator.test.cjs",
+    "calibrate:mobile": "node tools/mobile-ap-calibrate.cjs",
     "check": "node tools/check-source.cjs && node tools/check-presets.cjs",
     "build:release": "node tools/build-release.cjs"
   },
